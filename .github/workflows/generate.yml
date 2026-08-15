@@ -1,0 +1,35 @@
+name: Generate AI Debate
+
+on:
+  push:
+    paths:
+      - 'topic.txt' # Triggers automatically whenever you edit topic.txt
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: pip install requests asyncio
+
+      - name: Run Debate Engine Script
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+        run: python main.py
+
+      - name: Commit Generated Audio & Scores back to GitHub
+        run: |
+          git config --global user.name "DebateBot"
+          git config --global user.email "bot@github.com"
+          git add output_audio.mp3 scores.json
+          git commit -m "Auto-generated debate assets"
+          git push
