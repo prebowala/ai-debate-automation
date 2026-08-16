@@ -3,6 +3,12 @@ import json
 import asyncio
 import requests
 import re
+import PIL.Image
+
+# Patch Pillow to support legacy MoviePy 1.x calls
+if not hasattr(PIL.Image, 'ANTIALIAS'):
+    PIL.Image.ANTIALIAS = PIL.Image.Resampling.LANCZOS
+
 from PIL import Image, ImageDraw
 from moviepy.editor import (
     AudioFileClip,
@@ -56,11 +62,12 @@ def generate_debate():
     headers = {"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"}
     
     prompt = (
-        f"Write a formal 4-round debate on '{topic}'.\n"
-        "1. Include Narrator Intro setting up the topic.\n"
-        "2. Provide speeches for Debater A and Debater B for 4 rounds.\n"
-        "3. Include Narrator Conclusion at the end.\n"
-        "Return ONLY a JSON array of objects with keys: 'speaker' ('NARRATOR', 'A', 'B'), 'round' (0-4), and 'text'."
+        f"Write a formal broadcast YouTube debate on '{topic}'.\n"
+        "Requirements for Flow & Style:\n"
+        "1. Start with an energetic Narrator Intro: 'Welcome back to the AI Debate Show! Today we tackle a controversial question: {topic}. Let's introduce our debaters and jump into Round 1.'\n"
+        "2. Write 4 comprehensive rounds with substantial speeches for Debater A and Debater B.\n"
+        "3. Conclude with a Narrator Outro: 'What a battle! The AI judges have cast their final tallies. Drop a comment below with who you think won, hit like, and subscribe for the next AI clash!'\n"
+        "Return ONLY a JSON array of objects with keys: 'speaker' ('NARRATOR', 'A', 'B'), 'round' (0 for intro/outro, 1-4 for rounds), and 'text'."
     )
     
     res = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json={
@@ -72,7 +79,7 @@ def generate_debate():
 
 async def get_judge_feedback(judge_name, model, arg_a, arg_b):
     headers = {"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"}
-    prompt = f"Debate A: {arg_a}\nDebate B: {arg_b}\nDeclare winner ('A' or 'B') and critique in 2 sentences."
+    prompt = f"Debate Speech A: {arg_a}\nDebate Speech B: {arg_b}\nDeclare winner ('A' or 'B') and critique in 2 concise sentences."
     try:
         res = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json={
             "model": model, "messages": [{"role": "user", "content": prompt}]
@@ -89,9 +96,12 @@ async def run_round_judging(arg_a, arg_b):
 
 def build_full_show_script(raw_script, judging_results):
     full_timeline = []
+    
+    # YouTube Opening Hook
     intro = next((i for i in raw_script if i['speaker'] == 'NARRATOR' and i['round'] == 0), None)
-    full_timeline.append(intro or {"speaker": "NARRATOR", "round": 0, "text": "Welcome to today's AI debate match."})
+    full_timeline.append(intro or {"speaker": "NARRATOR", "round": 0, "text": "Welcome back to the AI Debate Arena! Today we put two top-tier artificial intelligences to the test."})
 
+    # Rounds with live judge commentary
     for r in range(1, 5):
         arg_a = next((i for i in raw_script if i['round'] == r and i['speaker'] == 'A'), None)
         arg_b = next((i for i in raw_script if i['round'] == r and i['speaker'] == 'B'), None)
@@ -102,13 +112,15 @@ def build_full_show_script(raw_script, judging_results):
             round_votes = judging_results[r]
             a_votes = sum(1 for v in round_votes if v['winner'] == 'A')
             b_votes = sum(1 for v in round_votes if v['winner'] == 'B')
-            summary = f"Round {r} results: Debater A {a_votes} votes, Debater B {b_votes} votes. "
+            summary = f"That brings us to the end of Round {r}. Here is how the AI panel scored this round: Debater A secured {a_votes} votes, and Debater B secured {b_votes} votes. "
             for j in round_votes:
-                summary += f"{j['judge']} noted: {j['reasoning']} "
+                summary += f"{j['judge']} stated: {j['reasoning']} "
             full_timeline.append({"speaker": "NARRATOR", "round": r, "text": summary})
 
+    # YouTube Ending Call-to-Action
     outro = next((i for i in raw_script if i['speaker'] == 'NARRATOR' and i['round'] > 4), None)
-    full_timeline.append(outro or {"speaker": "NARRATOR", "round": 5, "text": "Thanks for watching. Leave your vote in the comments!"})
+    full_timeline.append(outro or {"speaker": "NARRATOR", "round": 5, "text": "That wraps up today's debate! Check the scoreboard, drop your thoughts in the comments, and don't forget to like and subscribe for the next matchup!"})
+    
     return full_timeline
 
 def render_video_and_audio(show_script):
@@ -184,4 +196,4 @@ if __name__ == "__main__":
 
     full_show_script = build_full_show_script(raw_script, judging_results)
     render_video_and_audio(full_show_script)
-    print("Video Render Complete! Created final_debate.mp4")
+    print("Video Render Complete! Created final_debate.mp4 with YouTube flow structure.")
