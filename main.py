@@ -13,7 +13,6 @@ from PIL import Image, ImageDraw
 from moviepy.editor import (
     AudioFileClip,
     ImageClip,
-    TextClip,
     CompositeVideoClip,
     concatenate_videoclips,
     concatenate_audioclips
@@ -54,6 +53,13 @@ def ensure_avatar_images():
             draw.text((300, 300), label, fill=(255, 255, 255), anchor="mm")
             img.save(filename)
 
+def create_banner_image(text, output_filename):
+    """Generates text banners using Pillow to bypass ImageMagick requirement."""
+    img = Image.new("RGBA", (1920, 100), color=(0, 0, 0, 200))
+    draw = ImageDraw.Draw(img)
+    draw.text((960, 50), text, fill=(255, 255, 255), anchor="mm")
+    img.save(output_filename)
+
 def generate_debate():
     with open("topic.txt", "r") as f:
         topic = f.read().strip()
@@ -64,9 +70,9 @@ def generate_debate():
     prompt = (
         f"Write a formal broadcast YouTube debate on '{topic}'.\n"
         "Requirements for Flow & Style:\n"
-        "1. Start with an energetic Narrator Intro: 'Welcome back to the AI Debate Show! Today we tackle a controversial question: {topic}. Let's introduce our debaters and jump into Round 1.'\n"
-        "2. Write 4 comprehensive rounds with substantial speeches for Debater A and Debater B.\n"
-        "3. Conclude with a Narrator Outro: 'What a battle! The AI judges have cast their final tallies. Drop a comment below with who you think won, hit like, and subscribe for the next AI clash!'\n"
+        "1. Start with an energetic Narrator Intro setting up the controversial stakes.\n"
+        "2. Write 4 comprehensive rounds with substantial arguments for Debater A and Debater B.\n"
+        "3. Conclude with a Narrator Outro summarizing the debate and encouraging viewers to comment, like, and subscribe.\n"
         "Return ONLY a JSON array of objects with keys: 'speaker' ('NARRATOR', 'A', 'B'), 'round' (0 for intro/outro, 1-4 for rounds), and 'text'."
     )
     
@@ -97,11 +103,9 @@ async def run_round_judging(arg_a, arg_b):
 def build_full_show_script(raw_script, judging_results):
     full_timeline = []
     
-    # YouTube Opening Hook
     intro = next((i for i in raw_script if i['speaker'] == 'NARRATOR' and i['round'] == 0), None)
     full_timeline.append(intro or {"speaker": "NARRATOR", "round": 0, "text": "Welcome back to the AI Debate Arena! Today we put two top-tier artificial intelligences to the test."})
 
-    # Rounds with live judge commentary
     for r in range(1, 5):
         arg_a = next((i for i in raw_script if i['round'] == r and i['speaker'] == 'A'), None)
         arg_b = next((i for i in raw_script if i['round'] == r and i['speaker'] == 'B'), None)
@@ -117,7 +121,6 @@ def build_full_show_script(raw_script, judging_results):
                 summary += f"{j['judge']} stated: {j['reasoning']} "
             full_timeline.append({"speaker": "NARRATOR", "round": r, "text": summary})
 
-    # YouTube Ending Call-to-Action
     outro = next((i for i in raw_script if i['speaker'] == 'NARRATOR' and i['round'] > 4), None)
     full_timeline.append(outro or {"speaker": "NARRATOR", "round": 5, "text": "That wraps up today's debate! Check the scoreboard, drop your thoughts in the comments, and don't forget to like and subscribe for the next matchup!"})
     
@@ -141,6 +144,7 @@ def render_video_and_audio(show_script):
         text = line['text']
         vid = VOICE_NARRATOR_ID if speaker == "NARRATOR" else (VOICE_A_ID if speaker == "A" else VOICE_B_ID)
         
+        # 1. ElevenLabs Speech Synthesis
         res = requests.post(
             f"https://api.elevenlabs.io/v1/text-to-speech/{vid}",
             headers={"xi-api-key": ELEVENLABS_API_KEY, "Content-Type": "application/json"},
@@ -155,13 +159,18 @@ def render_video_and_audio(show_script):
         duration = audio_clip.duration
         audio_segments.append(audio_clip)
 
+        # 2. Avatar Card
         img_clip = (ImageClip(avatar_paths[speaker])
                     .set_duration(duration)
                     .resize(height=500)
                     .set_position("center"))
         
+        # 3. Pure Pillow Text Banner (No ImageMagick)
+        banner_filename = f"temp_banner_{idx}.png"
         title_text = f"NOW SPEAKING: {speaker} | ROUND {line['round']}"
-        txt_clip = (TextClip(title_text, fontsize=40, color='white', bg_color='black', size=(1920, 100))
+        create_banner_image(title_text, banner_filename)
+        
+        txt_clip = (ImageClip(banner_filename)
                     .set_duration(duration)
                     .set_position(("center", 80)))
         
@@ -177,9 +186,12 @@ def render_video_and_audio(show_script):
     final_audio.write_audiofile("output_audio.mp3")
     final_video.write_videofile("final_debate.mp4", fps=24, codec="libx264", audio_codec="aac")
 
+    # Clean up temp files
     for idx in range(len(show_script)):
         if os.path.exists(f"temp_{idx}.mp3"):
             os.remove(f"temp_{idx}.mp3")
+        if os.path.exists(f"temp_banner_{idx}.png"):
+            os.remove(f"temp_banner_{idx}.png")
 
 if __name__ == "__main__":
     raw_script = generate_debate()
@@ -196,4 +208,4 @@ if __name__ == "__main__":
 
     full_show_script = build_full_show_script(raw_script, judging_results)
     render_video_and_audio(full_show_script)
-    print("Video Render Complete! Created final_debate.mp4 with YouTube flow structure.")
+    print("Video Render Complete! Created final_debate.mp4 without ImageMagick dependencies.")
