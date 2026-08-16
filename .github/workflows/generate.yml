@@ -1,6 +1,7 @@
 name: Generate AI Debate
 
 on:
+  workflow_dispatch: # Enables the manual "Run workflow" button
   push:
     paths:
       - 'topic.txt'
@@ -14,8 +15,6 @@ jobs:
     steps:
       - name: Check out repo
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -40,7 +39,7 @@ jobs:
           git commit -m "Auto-generated debate assets" || true
           git push origin main || true
 
-      - name: Upload Output Assets (Direct Download)
+      - name: Upload Output Assets
         uses: actions/upload-artifact@v4
         with:
           name: debate-assets
