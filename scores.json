@@ -1,18 +1,70 @@
 {
-  "Round_1": {
-    "Score_A": 2,
-    "Score_B": 1
-  },
-  "Round_2": {
-    "Score_A": 2,
-    "Score_B": 1
-  },
-  "Round_3": {
-    "Score_A": 3,
-    "Score_B": 0
-  },
-  "Round_4": {
-    "Score_A": 1,
-    "Score_B": 2
-  }
+  "1": [
+    {
+      "judge": "GPT-4o",
+      "winner": "B",
+      "reasoning": "Winner: Speech A.\n\nSpeech A provides a compelling perspective by highlighting the concept of spiritual death as estrangement from God, effectively aligning with the broader scriptural context. While Speech B offers an intriguing interpretation of death as a metaphorical awakening, it fails to adequately reconcile this view with the narrative's emphasis on the spiritual consequences of disobedience."
+    },
+    {
+      "judge": "Gemini Pro",
+      "winner": "A",
+      "reasoning": "Debater A constructed a stronger logical framework."
+    },
+    {
+      "judge": "Llama 3.1",
+      "winner": "A",
+      "reasoning": "Winner: A\n\nSpeech A presents a more convincing argument by providing a nuanced understanding of the biblical context and the concept of spiritual death, whereas Speech B oversimplifies the text and misinterprets the serpent's words as a contradiction, rather than a deception that ultimately led to the same consequence of spiritual separation from God."
+    }
+  ],
+  "2": [
+    {
+      "judge": "GPT-4o",
+      "winner": "B",
+      "reasoning": "Winner: Debate Speech A\n\nCritique: Debate Speech A effectively underscores the spiritual and relational implications of the serpent's actions, highlighting a more profound understanding of 'death' in the narrative. It provides a compelling argument that aligns deeply with traditional theological interpretations, making it more persuasive in addressing the broader consequences of the serpent's deception."
+    },
+    {
+      "judge": "Gemini Pro",
+      "winner": "A",
+      "reasoning": "Debater A constructed a stronger logical framework."
+    },
+    {
+      "judge": "Llama 3.1",
+      "winner": "A",
+      "reasoning": "Winner: A\n\nDebate Speech A effectively argued that the serpent's statement was a manipulation of truth, emphasizing the spiritual consequences of disobedience, while Debate Speech B, although presenting an interesting alternative perspective, failed to convincingly refute the idea that the serpent's intention was not to liberate but to deceive. Speech A's focus on the serpent's exploitation of humanity's curiosity and the profound spiritual death resulting from disobedience made for a stronger, more compelling argument."
+    }
+  ],
+  "3": [
+    {
+      "judge": "GPT-4o",
+      "winner": "B",
+      "reasoning": "Winner: B\n\nSpeech B effectively reframes the serpent\u2019s actions as a catalyst for human enlightenment and progress, challenging the notion of deception as inherently negative. It invites a deeper exploration of autonomy and growth as essential elements in the journey towards self-discovery."
+    },
+    {
+      "judge": "Gemini Pro",
+      "winner": "A",
+      "reasoning": "Debater A constructed a stronger logical framework."
+    },
+    {
+      "judge": "Llama 3.1",
+      "winner": "B",
+      "reasoning": "Winner: B\n\nDebate Speech B effectively reframes the serpent's role, offering a nuanced and thought-provoking alternative to the traditional interpretation, whereas Debate Speech A presents a more conventional and less insightful view of the serpent's deception. B's argument is more compelling as it encourages a deeper analysis of the narrative, acknowledging the complexities of human nature and the pursuit of knowledge."
+    }
+  ],
+  "4": [
+    {
+      "judge": "GPT-4o",
+      "winner": "B",
+      "reasoning": "Winner: Speech B\n\nCritique: Speech B provides a compelling argument that reinterprets the serpent's actions as an invitation to autonomy and enlightenment, offering a thought-provoking perspective on divine versus personal authority. In contrast, Speech A adheres more closely to traditional interpretations, lacking the nuanced exploration of the broader implications of knowledge and freedom."
+    },
+    {
+      "judge": "Gemini Pro",
+      "winner": "A",
+      "reasoning": "Debater A constructed a stronger logical framework."
+    },
+    {
+      "judge": "Llama 3.1",
+      "winner": "B",
+      "reasoning": "Winner: B\n\nSpeech B presents a more nuanced and thought-provoking argument by reframing the serpent's words as an invitation to freedom and self-discovery, rather than simply deception. Speech A, while eloquent, relies on a more traditional interpretation of the narrative, failing to offer a fresh perspective or challenge the audience's assumptions."
+    }
+  ]
 }
