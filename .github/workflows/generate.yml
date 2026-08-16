@@ -26,10 +26,10 @@ jobs:
           ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
         run: python main.py
 
-      - name: Commit Generated Audio & Scores back to GitHub
+       - name: Commit Generated Audio & Scores back to GitHub
         run: |
-          git config --global user.name "DebateBot"
-          git config --global user.email "bot@github.com"
-          git add output_audio.mp3 scores.json
-          git commit -m "Auto-generated debate assets"
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add -f output_audio.mp3 scores.json || true
+          git commit -m "Auto-generated debate assets" || true
           git push
