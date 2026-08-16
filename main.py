@@ -3,7 +3,7 @@ import json
 import asyncio
 import requests
 import re
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw
 from moviepy.editor import (
     AudioFileClip,
     ImageClip,
@@ -83,6 +83,10 @@ async def get_judge_feedback(judge_name, model, arg_a, arg_b):
     except:
         return {"judge": judge_name, "winner": "A", "reasoning": "Debater A constructed a stronger logical framework."}
 
+async def run_round_judging(arg_a, arg_b):
+    tasks = [get_judge_feedback(name, model, arg_a, arg_b) for name, model in JUDGES.items()]
+    return await asyncio.gather(*tasks)
+
 def build_full_show_script(raw_script, judging_results):
     full_timeline = []
     intro = next((i for i in raw_script if i['speaker'] == 'NARRATOR' and i['round'] == 0), None)
@@ -114,7 +118,6 @@ def render_video_and_audio(show_script):
     video_segments = []
     audio_segments = []
     
-    # Preload base avatar graphics
     avatar_paths = {
         "NARRATOR": "narrator.png",
         "A": "debater_a.png",
@@ -126,7 +129,6 @@ def render_video_and_audio(show_script):
         text = line['text']
         vid = VOICE_NARRATOR_ID if speaker == "NARRATOR" else (VOICE_A_ID if speaker == "A" else VOICE_B_ID)
         
-        # 1. Fetch ElevenLabs Line Audio
         res = requests.post(
             f"https://api.elevenlabs.io/v1/text-to-speech/{vid}",
             headers={"xi-api-key": ELEVENLABS_API_KEY, "Content-Type": "application/json"},
@@ -141,19 +143,17 @@ def render_video_and_audio(show_script):
         duration = audio_clip.duration
         audio_segments.append(audio_clip)
 
-        # 2. Build Visual Clip (1920x1080 YouTube Canvas)
         img_clip = (ImageClip(avatar_paths[speaker])
                     .set_duration(duration)
                     .resize(height=500)
                     .set_position("center"))
         
-        # Speaker Title Overlay Banner
         title_text = f"NOW SPEAKING: {speaker} | ROUND {line['round']}"
         txt_clip = (TextClip(title_text, fontsize=40, color='white', bg_color='black', size=(1920, 100))
                     .set_duration(duration)
                     .set_position(("center", 80)))
         
-        bg_clip = ImageClip(avatar_paths[speaker]).set_duration(duration).resize((1920, 1080)).fl_image(lambda image: image // 3) # Dimmed Background
+        bg_clip = ImageClip(avatar_paths[speaker]).set_duration(duration).resize((1920, 1080)).fl_image(lambda image: image // 3)
         
         composite = CompositeVideoClip([bg_clip, img_clip, txt_clip]).set_audio(audio_clip)
         video_segments.append(composite)
@@ -165,7 +165,6 @@ def render_video_and_audio(show_script):
     final_audio.write_audiofile("output_audio.mp3")
     final_video.write_videofile("final_debate.mp4", fps=24, codec="libx264", audio_codec="aac")
 
-    # Clean up temp mp3 files
     for idx in range(len(show_script)):
         if os.path.exists(f"temp_{idx}.mp3"):
             os.remove(f"temp_{idx}.mp3")
@@ -178,7 +177,7 @@ if __name__ == "__main__":
         arg_a = next((i['text'] for i in raw_script if i['round'] == r and i['speaker'] == 'A'), "")
         arg_b = next((i['text'] for i in raw_script if i['round'] == r and i['speaker'] == 'B'), "")
         if arg_a and arg_b:
-            judging_results[r] = asyncio.run(asyncio.gather(*[get_judge_feedback(name, model, arg_a, arg_b) for name, model in JUDGES.items()]))
+            judging_results[r] = asyncio.run(run_round_judging(arg_a, arg_b))
 
     with open("scores.json", "w") as f:
         json.dump(judging_results, f, indent=2)
