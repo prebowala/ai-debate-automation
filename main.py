@@ -205,12 +205,15 @@ def render_debate_video(raw_script, apologist_name, skeptic_name):
         else:
             vid = VOICE_SKEPTIC_ID
             
-        # ElevenLabs Request
+        # ElevenLabs Request with status code validation
         res = requests.post(
             f"https://api.elevenlabs.io/v1/text-to-speech/{vid}",
             headers={"xi-api-key": ELEVENLABS_API_KEY, "Content-Type": "application/json"},
             json={"text": text}
         )
+        
+        if res.status_code != 200:
+            raise RuntimeError(f"ElevenLabs API Error (Status {res.status_code}): {res.text}")
         
         temp_audio = f"temp_{idx}.mp3"
         with open(temp_audio, "wb") as f:
