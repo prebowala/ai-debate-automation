@@ -24,10 +24,10 @@ from moviepy.editor import (
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
 
-# ElevenLabs Voices (Male Narrator, Male Apologist, Female Skeptic)
-VOICE_NARRATOR_ID = "pNInz6obpgDQGcFmaJgB"  # Adam
-VOICE_APOLOGIST_ID = "FQ2p14jU7A9C9K5b7D0a" # Marcus
-VOICE_SKEPTIC_ID   = "21m00Tcm4TlvDq8ikWAM" # Rachel
+# ElevenLabs Voices
+VOICE_NARRATOR_ID = "QIhD5ivPGEoYZQDocuHI"   # Adam (Narrator)
+VOICE_APOLOGIST_ID = "GZ4PpFJV8ikEGUtBrjK7"  # Laura (Apologist)
+VOICE_SKEPTIC_ID   = "gPPH6SLdL8XSX6GNJ40G"  # Brian (Skeptic)
 
 # 10 AI Judges Panel with matching icons
 JUDGES = [
@@ -43,8 +43,8 @@ JUDGES = [
     {"name": "Perplexity Pro", "model": "perplexity/sonar-reasoning", "icon": "icons/perplexity.png"}
 ]
 
-NAMES_APOLOGIST = ["Marcus", "David", "Thomas", "James"]
-NAMES_SKEPTIC = ["Rachel", "Sarah", "Elena", "Claire"]
+NAMES_APOLOGIST = ["Laura", "Sarah", "Elena", "Claire"]
+NAMES_SKEPTIC = ["Brian", "Marcus", "David", "Thomas"]
 
 def clean_json_string(text):
     text = re.sub(r"^```(json)?", "", text, flags=re.MULTILINE)
@@ -205,7 +205,7 @@ def render_debate_video(raw_script, apologist_name, skeptic_name):
         else:
             vid = VOICE_SKEPTIC_ID
             
-        # ElevenLabs Request with status code validation
+        # ElevenLabs Request with status validation
         res = requests.post(
             f"https://api.elevenlabs.io/v1/text-to-speech/{vid}",
             headers={"xi-api-key": ELEVENLABS_API_KEY, "Content-Type": "application/json"},
@@ -214,7 +214,7 @@ def render_debate_video(raw_script, apologist_name, skeptic_name):
         
         if res.status_code != 200:
             raise RuntimeError(f"ElevenLabs API Error (Status {res.status_code}): {res.text}")
-        
+            
         temp_audio = f"temp_{idx}.mp3"
         with open(temp_audio, "wb") as f:
             f.write(res.content)
