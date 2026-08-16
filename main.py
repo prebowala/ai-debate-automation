@@ -81,6 +81,9 @@ def generate_debate():
         "messages": [{"role": "user", "content": prompt}]
     }, timeout=60)
     
+    if res.status_code != 200:
+        raise RuntimeError(f"OpenRouter Script Generation failed ({res.status_code}): {res.text}")
+
     return json.loads(clean_json_string(res.json()['choices'][0]['message']['content']))
 
 async def get_judge_feedback(judge_name, model, arg_a, arg_b):
@@ -93,7 +96,7 @@ async def get_judge_feedback(judge_name, model, arg_a, arg_b):
         content = res.json()['choices'][0]['message']['content'].strip()
         winner = "A" if "winner: a" in content.lower() or "debater a" in content.lower()[:30] else "B"
         return {"judge": judge_name, "winner": winner, "reasoning": content}
-    except:
+    except Exception as e:
         return {"judge": judge_name, "winner": "A", "reasoning": "Debater A constructed a stronger logical framework."}
 
 async def run_round_judging(arg_a, arg_b):
@@ -144,13 +147,19 @@ def render_video_and_audio(show_script):
         text = line['text']
         vid = VOICE_NARRATOR_ID if speaker == "NARRATOR" else (VOICE_A_ID if speaker == "A" else VOICE_B_ID)
         
-        # 1. ElevenLabs Speech Synthesis
+        # 1. ElevenLabs Speech Synthesis with Strict Verification
         res = requests.post(
             f"https://api.elevenlabs.io/v1/text-to-speech/{vid}",
             headers={"xi-api-key": ELEVENLABS_API_KEY, "Content-Type": "application/json"},
             json={"text": text}
         )
         
+        if res.status_code != 200:
+            raise RuntimeError(
+                f"ElevenLabs TTS failed at index {idx} ({speaker}) with status code {res.status_code}.\n"
+                f"Response body: {res.text}"
+            )
+            
         temp_audio_file = f"temp_{idx}.mp3"
         with open(temp_audio_file, "wb") as f:
             f.write(res.content)
@@ -165,7 +174,7 @@ def render_video_and_audio(show_script):
                     .resize(height=500)
                     .set_position("center"))
         
-        # 3. Pure Pillow Text Banner (No ImageMagick)
+        # 3. Pure Pillow Text Banner
         banner_filename = f"temp_banner_{idx}.png"
         title_text = f"NOW SPEAKING: {speaker} | ROUND {line['round']}"
         create_banner_image(title_text, banner_filename)
@@ -208,4 +217,4 @@ if __name__ == "__main__":
 
     full_show_script = build_full_show_script(raw_script, judging_results)
     render_video_and_audio(full_show_script)
-    print("Video Render Complete! Created final_debate.mp4 without ImageMagick dependencies.")
+    print("Video Render Complete! Created final_debate.mp4.")
