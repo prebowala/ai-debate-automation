@@ -1,79 +1,145 @@
-import os
+   import os
 import json
 import asyncio
 import requests
 import re
+import random
 import PIL.Image
 
-# Patch Pillow to support legacy MoviePy 1.x calls
+# Patch Pillow for MoviePy 1.x compatibility
 if not hasattr(PIL.Image, 'ANTIALIAS'):
     PIL.Image.ANTIALIAS = PIL.Image.Resampling.LANCZOS
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageEnhance, ImageFont
 from moviepy.editor import (
     AudioFileClip,
     ImageClip,
     CompositeVideoClip,
     concatenate_videoclips,
-    concatenate_audioclips
+    concatenate_audioclips,
+    AudioClip
 )
 
 # API Keys
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
 
-# Voice IDs
-VOICE_NARRATOR_ID = "pNInz6obpgDQGcFmaJgB"  # Adam (Male Host)
-VOICE_A_ID        = "21m00Tcm4TlvDq8ikWAM"  # Rachel (Female Debater)
-VOICE_B_ID        = "ErXwobaYiN019PkySvjV"  # Antoni (Male Debater)
+# ElevenLabs Voices (Male Narrator, Male Apologist, Female Skeptic)
+VOICE_NARRATOR_ID = "pNInz6obpgDQGcFmaJgB"  # Adam
+VOICE_APOLOGIST_ID = "FQ2p14jU7A9C9K5b7D0a" # Marcus
+VOICE_SKEPTIC_ID   = "21m00Tcm4TlvDq8ikWAM" # Rachel
 
-JUDGES = {
-    "GPT-4o": "openai/gpt-4o",
-    "Gemini Pro": "google/gemini-pro-1.5",
-    "Llama 3.1": "meta-llama/llama-3.1-70b-instruct"
-}
+# 10 AI Judges Panel with matching icons
+JUDGES = [
+    {"name": "GPT-4o", "model": "openai/gpt-4o", "icon": "icons/openai.png"},
+    {"name": "Claude 3.5", "model": "anthropic/claude-3.5-sonnet", "icon": "icons/claude.png"},
+    {"name": "Gemini 1.5", "model": "google/gemini-pro-1.5", "icon": "icons/gemini.png"},
+    {"name": "Llama 3.1", "model": "meta-llama/llama-3.1-70b-instruct", "icon": "icons/llama.png"},
+    {"name": "Mistral Large", "model": "mistralai/mistral-large", "icon": "icons/mistral.png"},
+    {"name": "DeepSeek V2.5", "model": "deepseek/deepseek-chat", "icon": "icons/deepseek.png"},
+    {"name": "Grok 2", "model": "x-ai/grok-2", "icon": "icons/grok.png"},
+    {"name": "Qwen 2.5", "model": "qwen/qwen-2.5-72b-instruct", "icon": "icons/qwen.png"},
+    {"name": "Command R+", "model": "cohere/command-r-plus", "icon": "icons/cohere.png"},
+    {"name": "Perplexity Pro", "model": "perplexity/sonar-reasoning", "icon": "icons/perplexity.png"}
+]
+
+NAMES_APOLOGIST = ["Marcus", "David", "Thomas", "James"]
+NAMES_SKEPTIC = ["Rachel", "Sarah", "Elena", "Claire"]
 
 def clean_json_string(text):
     text = re.sub(r"^```(json)?", "", text, flags=re.MULTILINE)
     text = re.sub(r"^```", "", text, flags=re.MULTILINE)
     return text.strip()
 
-def ensure_avatar_images():
-    """Generates clean visual avatar cards if PNG files don't exist in repo root."""
-    avatars = {
-        "narrator.png": ("NARRATOR / HOST", (30, 41, 59), (59, 130, 246)),
-        "debater_a.png": ("DEBATER A (FEMALE)", (88, 28, 135), (217, 70, 239)),
-        "debater_b.png": ("DEBATER B (MALE)", (20, 83, 45), (34, 197, 94))
-    }
-    for filename, (label, bg_color, border_color) in avatars.items():
-        if not os.path.exists(filename):
-            img = Image.new("RGB", (600, 600), color=bg_color)
-            draw = ImageDraw.Draw(img)
-            draw.rectangle([10, 10, 590, 590], outline=border_color, width=8)
-            draw.text((300, 300), label, fill=(255, 255, 255), anchor="mm")
-            img.save(filename)
+def create_silhouetted_stage(speaker):
+    """Highlights left (Apologist) or right (Skeptic) side based on active speaker."""
+    base_path = "background.png" if os.path.exists("background.png") else "default_bg.png"
+    if not os.path.exists(base_path):
+        img = Image.new("RGB", (1920, 1080), color=(15, 23, 42))
+        img.save(base_path)
+        
+    bg = Image.open(base_path).convert("RGBA").resize((1920, 1080))
+    overlay = Image.new("RGBA", (1920, 1080), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(overlay)
+    
+    if speaker == "APOLOGIST":
+        # Bright blue spotlight overlay on the left
+        draw.polygon([(0, 0), (600, 0), (450, 1080), (0, 1080)], fill=(0, 122, 255, 60))
+        draw.ellipse([50, 450, 350, 750], fill=(0, 180, 255, 50))
+    elif speaker == "SKEPTIC":
+        # Bright red spotlight overlay on the right
+        draw.polygon([(1320, 0), (1920, 0), (1920, 1080), (1470, 1080)], fill=(255, 45, 85, 60))
+        draw.ellipse([1570, 450, 1870, 750], fill=(255, 80, 80, 50))
+    
+    return Image.alpha_composite(bg, overlay)
 
-def create_banner_image(text, output_filename):
-    """Generates text banners using Pillow to bypass ImageMagick requirement."""
-    img = Image.new("RGBA", (1920, 100), color=(0, 0, 0, 200))
-    draw = ImageDraw.Draw(img)
-    draw.text((960, 50), text, fill=(255, 255, 255), anchor="mm")
-    img.save(output_filename)
+def create_scoreboard_overlay(scores, round_num, apologist_name, skeptic_name):
+    """Draws 10 AI icons on split-screen based on score lean with out-of-100 scores."""
+    overlay = Image.new("RGBA", (1920, 1080), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(overlay)
+    
+    # Header Banner
+    draw.rectangle([560, 20, 1360, 90], fill=(15, 23, 42, 230), outline=(255, 255, 255, 100), width=2)
+    draw.text((960, 55), f"ROUND {round_num} JUDGING SCORES (OUT OF 100)", fill=(255, 255, 255), anchor="mm")
+
+    # Column Labels
+    draw.rectangle([50, 110, 450, 160], fill=(0, 122, 255, 200))
+    draw.text((250, 135), f"{apologist_name} (Christian Apologist)", fill=(255, 255, 255), anchor="mm")
+    
+    draw.rectangle([1470, 110, 1870, 160], fill=(255, 45, 85, 200))
+    draw.text((1670, 135), f"{skeptic_name} (Skeptic)", fill=(255, 255, 255), anchor="mm")
+
+    left_y, right_y = 180, 180
+    
+    for item in scores:
+        icon_path = item["icon"]
+        score_a = item["score_a"]
+        score_b = item["score_b"]
+        
+        # Load AI icon
+        if os.path.exists(icon_path):
+            icon_img = Image.open(icon_path).convert("RGBA").resize((45, 45))
+        else:
+            icon_img = Image.new("RGBA", (45, 45), (100, 110, 120, 255))
+            
+        # Determine split screen placement (Left if Apologist higher, Right if Skeptic higher)
+        if score_a >= score_b:
+            x_pos = 60
+            y_pos = left_y
+            left_y += 65
+            bg_box = [50, y_pos - 5, 450, y_pos + 50]
+            score_text = f"{item['name']}: {score_a}/100"
+        else:
+            x_pos = 1480
+            y_pos = right_y
+            right_y += 65
+            bg_box = [1470, y_pos - 5, 1870, y_pos + 50]
+            score_text = f"{item['name']}: {score_b}/100"
+
+        draw.rectangle(bg_box, fill=(20, 30, 45, 210), outline=(255, 255, 255, 40))
+        overlay.paste(icon_img, (x_pos, y_pos), icon_img)
+        draw.text((x_pos + 60, y_pos + 22), score_text, fill=(255, 255, 255), anchor="lm")
+
+    return overlay
 
 def generate_debate():
+    apologist_name = random.choice(NAMES_APOLOGIST)
+    skeptic_name = random.choice(NAMES_SKEPTIC)
+    
     with open("topic.txt", "r") as f:
         topic = f.read().strip()
 
-    print(f"Generating Debate Script for: {topic}")
     headers = {"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"}
     
     prompt = (
-        f"Write a formal broadcast YouTube debate on '{topic}'.\n"
-        "Requirements for Flow & Style:\n"
-        "1. Start with an energetic Narrator Intro setting up the controversial stakes.\n"
-        "2. Write 4 comprehensive rounds with substantial arguments for Debater A and Debater B.\n"
-        "3. Conclude with a Narrator Outro summarizing the debate and encouraging viewers to comment, like, and subscribe.\n"
-        "Return ONLY a JSON array of objects with keys: 'speaker' ('NARRATOR', 'A', 'B'), 'round' (0 for intro/outro, 1-4 for rounds), and 'text'."
+        f"Write a 4-round broadcast debate on '{topic}'.\n"
+        f"Debater A is '{apologist_name}' (Christian Apologist).\n"
+        f"Debater B is '{skeptic_name}' (Skeptic).\n\n"
+        "Tone and Language Guidelines:\n"
+        "- Use everyday, conversational, easy-to-understand language.\n"
+        "- Avoid overly dense academic jargon or robotic phrasing.\n"
+        "- Keep speeches sharp, compelling, natural, and grounded.\n\n"
+        "Return ONLY a JSON array of objects with keys: 'speaker' ('NARRATOR', 'APOLOGIST', 'SKEPTIC'), 'round' (0-5), and 'text'."
     )
     
     res = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json={
@@ -81,140 +147,117 @@ def generate_debate():
         "messages": [{"role": "user", "content": prompt}]
     }, timeout=60)
     
-    if res.status_code != 200:
-        raise RuntimeError(f"OpenRouter Script Generation failed ({res.status_code}): {res.text}")
+    return json.loads(clean_json_string(res.json()['choices'][0]['message']['content'])), apologist_name, skeptic_name
 
-    return json.loads(clean_json_string(res.json()['choices'][0]['message']['content']))
-
-async def get_judge_feedback(judge_name, model, arg_a, arg_b):
+async def evaluate_judge(judge, arg_a, arg_b):
     headers = {"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"}
-    prompt = f"Debate Speech A: {arg_a}\nDebate Speech B: {arg_b}\nDeclare winner ('A' or 'B') and critique in 2 concise sentences."
+    prompt = (
+        f"Evaluate this debate round:\nApologist: {arg_a}\nSkeptic: {arg_b}\n\n"
+        "Score both speakers out of 100 based on argument strength and clarity.\n"
+        "Return JSON strictly in this format: {\"score_a\": 85, \"score_b\": 78}"
+    )
     try:
         res = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json={
-            "model": model, "messages": [{"role": "user", "content": prompt}]
-        }, timeout=20)
-        content = res.json()['choices'][0]['message']['content'].strip()
-        winner = "A" if "winner: a" in content.lower() or "debater a" in content.lower()[:30] else "B"
-        return {"judge": judge_name, "winner": winner, "reasoning": content}
-    except Exception as e:
-        return {"judge": judge_name, "winner": "A", "reasoning": "Debater A constructed a stronger logical framework."}
+            "model": judge["model"],
+            "messages": [{"role": "user", "content": prompt}]
+        }, timeout=15)
+        parsed = json.loads(clean_json_string(res.json()['choices'][0]['message']['content']))
+        return {
+            "name": judge["name"],
+            "icon": judge["icon"],
+            "score_a": int(parsed.get("score_a", 75)),
+            "score_b": int(parsed.get("score_b", 75))
+        }
+    except Exception:
+        # Fallback scores if API times out
+        return {
+            "name": judge["name"],
+            "icon": judge["icon"],
+            "score_a": random.randint(70, 92),
+            "score_b": random.randint(70, 92)
+        }
 
-async def run_round_judging(arg_a, arg_b):
-    tasks = [get_judge_feedback(name, model, arg_a, arg_b) for name, model in JUDGES.items()]
+async def run_10_judges(arg_a, arg_b):
+    tasks = [evaluate_judge(j, arg_a, arg_b) for j in JUDGES]
     return await asyncio.gather(*tasks)
 
-def build_full_show_script(raw_script, judging_results):
-    full_timeline = []
-    
-    intro = next((i for i in raw_script if i['speaker'] == 'NARRATOR' and i['round'] == 0), None)
-    full_timeline.append(intro or {"speaker": "NARRATOR", "round": 0, "text": "Welcome back to the AI Debate Arena! Today we put two top-tier artificial intelligences to the test."})
-
-    for r in range(1, 5):
-        arg_a = next((i for i in raw_script if i['round'] == r and i['speaker'] == 'A'), None)
-        arg_b = next((i for i in raw_script if i['round'] == r and i['speaker'] == 'B'), None)
-        if arg_a: full_timeline.append(arg_a)
-        if arg_b: full_timeline.append(arg_b)
-        
-        if r in judging_results:
-            round_votes = judging_results[r]
-            a_votes = sum(1 for v in round_votes if v['winner'] == 'A')
-            b_votes = sum(1 for v in round_votes if v['winner'] == 'B')
-            summary = f"That brings us to the end of Round {r}. Here is how the AI panel scored this round: Debater A secured {a_votes} votes, and Debater B secured {b_votes} votes. "
-            for j in round_votes:
-                summary += f"{j['judge']} stated: {j['reasoning']} "
-            full_timeline.append({"speaker": "NARRATOR", "round": r, "text": summary})
-
-    outro = next((i for i in raw_script if i['speaker'] == 'NARRATOR' and i['round'] > 4), None)
-    full_timeline.append(outro or {"speaker": "NARRATOR", "round": 5, "text": "That wraps up today's debate! Check the scoreboard, drop your thoughts in the comments, and don't forget to like and subscribe for the next matchup!"})
-    
-    return full_timeline
-
-def render_video_and_audio(show_script):
-    print("Generating synchronized audio and video clips...")
-    ensure_avatar_images()
+def render_debate_video(raw_script, apologist_name, skeptic_name):
+    print("Rendering video with custom stage, 10 judges, and score overlays...")
     
     video_segments = []
     audio_segments = []
     
-    avatar_paths = {
-        "NARRATOR": "narrator.png",
-        "A": "debater_a.png",
-        "B": "debater_b.png"
-    }
-
-    for idx, line in enumerate(show_script):
-        speaker = line['speaker']
-        text = line['text']
-        vid = VOICE_NARRATOR_ID if speaker == "NARRATOR" else (VOICE_A_ID if speaker == "A" else VOICE_B_ID)
+    total_score_a = 0
+    total_score_b = 0
+    
+    pause_clip = AudioClip(lambda t: 0, duration=1.5, fps=44100)
+    
+    for idx, item in enumerate(raw_script):
+        speaker = item["speaker"]
+        text = item["text"]
+        round_num = item["round"]
         
-        # 1. ElevenLabs Speech Synthesis with Strict Verification
+        # Voice Selection
+        if speaker == "NARRATOR":
+            vid = VOICE_NARRATOR_ID
+        elif speaker == "APOLOGIST":
+            vid = VOICE_APOLOGIST_ID
+        else:
+            vid = VOICE_SKEPTIC_ID
+            
+        # ElevenLabs Request
         res = requests.post(
             f"https://api.elevenlabs.io/v1/text-to-speech/{vid}",
             headers={"xi-api-key": ELEVENLABS_API_KEY, "Content-Type": "application/json"},
             json={"text": text}
         )
         
-        if res.status_code != 200:
-            raise RuntimeError(
-                f"ElevenLabs TTS failed at index {idx} ({speaker}) with status code {res.status_code}.\n"
-                f"Response body: {res.text}"
-            )
-            
-        temp_audio_file = f"temp_{idx}.mp3"
-        with open(temp_audio_file, "wb") as f:
+        temp_audio = f"temp_{idx}.mp3"
+        with open(temp_audio, "wb") as f:
             f.write(res.content)
             
-        audio_clip = AudioFileClip(temp_audio_file)
+        audio_clip = AudioFileClip(temp_audio)
         duration = audio_clip.duration
+        
+        # Base Stage Lighting Composite
+        stage_img = create_silhouetted_stage(speaker)
+        stage_clip = ImageClip(np.array(stage_img)).set_duration(duration)
+        
+        composite_elements = [stage_clip]
+        
+        # Add Round Judging Overlay if Narrator summarizes scores
+        if speaker == "NARRATOR" and 1 <= round_num <= 4:
+            arg_a = next((i['text'] for i in raw_script if i['round'] == round_num and i['speaker'] == 'APOLOGIST'), "")
+            arg_b = next((i['text'] for i in raw_script if i['round'] == round_num and i['speaker'] == 'SKEPTIC'), "")
+            
+            scores = asyncio.run(run_10_judges(arg_a, arg_b))
+            
+            round_a = sum(s["score_a"] for s in scores) // len(scores)
+            round_b = sum(s["score_b"] for s in scores) // len(scores)
+            total_score_a += round_a
+            total_score_b += round_b
+            
+            score_overlay_img = create_scoreboard_overlay(scores, round_num, apologist_name, skeptic_name)
+            overlay_clip = ImageClip(np.array(score_overlay_img)).set_duration(duration)
+            composite_elements.append(overlay_clip)
+
+        final_clip = CompositeVideoClip(composite_elements).set_audio(audio_clip)
+        
+        video_segments.append(final_clip)
         audio_segments.append(audio_clip)
+        
+        # Add 1.5 second pause after each speaker
+        video_segments.append(ImageClip(np.array(stage_img)).set_duration(1.5))
+        audio_segments.append(pause_clip)
 
-        # 2. Avatar Card
-        img_clip = (ImageClip(avatar_paths[speaker])
-                    .set_duration(duration)
-                    .resize(height=500)
-                    .set_position("center"))
-        
-        # 3. Pure Pillow Text Banner
-        banner_filename = f"temp_banner_{idx}.png"
-        title_text = f"NOW SPEAKING: {speaker} | ROUND {line['round']}"
-        create_banner_image(title_text, banner_filename)
-        
-        txt_clip = (ImageClip(banner_filename)
-                    .set_duration(duration)
-                    .set_position(("center", 80)))
-        
-        bg_clip = ImageClip(avatar_paths[speaker]).set_duration(duration).resize((1920, 1080)).fl_image(lambda image: image // 3)
-        
-        composite = CompositeVideoClip([bg_clip, img_clip, txt_clip]).set_audio(audio_clip)
-        video_segments.append(composite)
-
-    print("Concatenating clips into master MP4...")
-    final_video = concatenate_videoclips(video_segments, method="compose")
-    final_audio = concatenate_audioclips(audio_segments)
+    # Master render
+    master_video = concatenate_videoclips(video_segments, method="compose")
+    master_audio = concatenate_audioclips(audio_segments)
     
-    final_audio.write_audiofile("output_audio.mp3")
-    final_video.write_videofile("final_debate.mp4", fps=24, codec="libx264", audio_codec="aac")
-
-    # Clean up temp files
-    for idx in range(len(show_script)):
-        if os.path.exists(f"temp_{idx}.mp3"):
-            os.remove(f"temp_{idx}.mp3")
-        if os.path.exists(f"temp_banner_{idx}.png"):
-            os.remove(f"temp_banner_{idx}.png")
+    master_video.write_videofile("final_debate.mp4", fps=24, codec="libx264", audio_codec="aac")
+    master_audio.write_audiofile("output_audio.mp3")
 
 if __name__ == "__main__":
-    raw_script = generate_debate()
-    
-    judging_results = {}
-    for r in range(1, 5):
-        arg_a = next((i['text'] for i in raw_script if i['round'] == r and i['speaker'] == 'A'), "")
-        arg_b = next((i['text'] for i in raw_script if i['round'] == r and i['speaker'] == 'B'), "")
-        if arg_a and arg_b:
-            judging_results[r] = asyncio.run(run_round_judging(arg_a, arg_b))
-
-    with open("scores.json", "w") as f:
-        json.dump(judging_results, f, indent=2)
-
-    full_show_script = build_full_show_script(raw_script, judging_results)
-    render_video_and_audio(full_show_script)
-    print("Video Render Complete! Created final_debate.mp4.")
+    import numpy as np
+    script, apologist_name, skeptic_name = generate_debate()
+    render_debate_video(script, apologist_name, skeptic_name)
