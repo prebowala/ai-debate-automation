@@ -27,7 +27,7 @@ jobs:
           sudo apt-get install -y ffmpeg
 
       - name: Install Python Dependencies
-        run: pip install requests asyncio moviepy pillow imageio-ffmpeg
+        run: pip install requests asyncio "moviepy<2.0.0" pillow imageio-ffmpeg
 
       - name: Run Debate Engine & Video Renderer
         env:
