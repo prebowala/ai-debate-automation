@@ -103,17 +103,17 @@ def render_frame_with_animation(t, speaker, text, bible_quote=None):
     if speaker == "APOLOGIST":
         draw.polygon([(0, 0), (600, 0), (450, 1080), (0, 1080)], fill=(0, 122, 255, 60))
         draw.ellipse([50, 450, 350, 750], fill=(0, 180, 255, 50))
-        # Moving Sound Wave Bar Animation
+        # Moving Sound Wave Bar Animation (Fixed with abs() to prevent y1 < y0 crash)
         for i in range(12):
-            h = int(20 + 35 * math.sin(t * 12 + i * 0.8))
+            h = abs(int(20 + 35 * math.sin(t * 12 + i * 0.8)))
             draw.rectangle([100 + (i * 18), 720 - h, 112 + (i * 18), 720 + h], fill=(0, 200, 255, 220))
             
     elif speaker == "SKEPTIC":
         draw.polygon([(1320, 0), (1920, 0), (1920, 1080), (1470, 1080)], fill=(255, 45, 85, 60))
         draw.ellipse([1570, 450, 1870, 750], fill=(255, 80, 80, 50))
-        # Moving Sound Wave Bar Animation
+        # Moving Sound Wave Bar Animation (Fixed with abs() to prevent y1 < y0 crash)
         for i in range(12):
-            h = int(20 + 35 * math.cos(t * 12 + i * 0.8))
+            h = abs(int(20 + 35 * math.cos(t * 12 + i * 0.8)))
             draw.rectangle([1600 + (i * 18), 720 - h, 1612 + (i * 18), 720 + h], fill=(255, 80, 100, 220))
 
     # NIV Bible Quote Overlay Box
