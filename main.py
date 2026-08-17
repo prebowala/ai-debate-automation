@@ -41,23 +41,23 @@ JUDGE_VOICE_POOL = [
     "XB0fDUnXU5powFXDhCwa", "JBFqnCBsd6RMkjVDRZzb", "cjVigY5qzO86Huf0OWal"
 ]
 
-# 15 Latest OpenRouter AI Judges Panel
+# 15 AI Judges Panel using latest OpenRouter AI models
 JUDGES = [
-    {"name": "GPT-4o", "model": "openai/gpt-4o", "icon": "icons/openai.png"},
-    {"name": "Claude 3.5 Sonnet", "model": "anthropic/claude-3.5-sonnet", "icon": "icons/claude.png"},
-    {"name": "Gemini 1.5 Pro", "model": "google/gemini-pro-1.5", "icon": "icons/gemini.png"},
-    {"name": "Llama 3.3 70B", "model": "meta-llama/llama-3.3-70b-instruct", "icon": "icons/llama.png"},
-    {"name": "DeepSeek V3", "model": "deepseek/deepseek-chat", "icon": "icons/deepseek.png"},
-    {"name": "Mistral Large 2", "model": "mistralai/mistral-large-2407", "icon": "icons/mistral.png"},
-    {"name": "Grok 2", "model": "x-ai/grok-2", "icon": "icons/grok.png"},
-    {"name": "Qwen 2.5 72B", "model": "qwen/qwen-2.5-72b-instruct", "icon": "icons/qwen.png"},
-    {"name": "Command R+", "model": "cohere/command-r-plus", "icon": "icons/cohere.png"},
-    {"name": "Perplexity Sonar", "model": "perplexity/sonar-reasoning", "icon": "icons/perplexity.png"},
-    {"name": "Claude 3 Opus", "model": "anthropic/claude-3-opus", "icon": "icons/claude.png"},
-    {"name": "OpenAI o1", "model": "openai/o1", "icon": "icons/openai.png"},
-    {"name": "Gemini 1.5 Flash", "model": "google/gemini-flash-1.5", "icon": "icons/gemini.png"},
-    {"name": "Llama 3.1 405B", "model": "meta-llama/llama-3.1-405b-instruct", "icon": "icons/llama.png"},
-    {"name": "Mistral Nemo", "model": "mistralai/mistral-nemo", "icon": "icons/mistral.png"}
+    {"name": "GPT-5.6 Sol", "model": "openai/gpt-5.6-sol", "icon": "icons/openai.png"},
+    {"name": "GPT-5.6 Terra", "model": "openai/gpt-5.6-terra", "icon": "icons/openai.png"},
+    {"name": "GPT-5.6 Luna", "model": "openai/gpt-5.6-luna", "icon": "icons/openai.png"},
+    {"name": "GPT-OSS 120B", "model": "openai/gpt-oss-120b:free", "icon": "icons/openai.png"},
+    {"name": "Claude Opus 5", "model": "anthropic/claude-opus-5", "icon": "icons/claude.png"},
+    {"name": "Grok 4.6", "model": "xai/grok-4.6", "icon": "icons/grok.png"},
+    {"name": "Gemini 3.7 Flash", "model": "google/gemini-3.7-flash", "icon": "icons/gemini.png"},
+    {"name": "Gemma 4 31B", "model": "google/gemma-4-31b-it:free", "icon": "icons/gemini.png"},
+    {"name": "DeepSeek V4 Pro", "model": "deepseek/deepseek-v4-pro", "icon": "icons/deepseek.png"},
+    {"name": "DeepSeek V4 Flash", "model": "deepseek/deepseek-v4-flash", "icon": "icons/deepseek.png"},
+    {"name": "GLM 5.2", "model": "zhipu/glm-5.2", "icon": "icons/glm.png"},
+    {"name": "Nemotron 3 Ultra", "model": "nvidia/nemotron-3-ultra-550b-a55b:free", "icon": "icons/nvidia.png"},
+    {"name": "North Mini", "model": "cohere/north-mini-code:free", "icon": "icons/cohere.png"},
+    {"name": "Laguna S 2.1", "model": "poolside/laguna-s-2.1:free", "icon": "icons/poolside.png"},
+    {"name": "Llama 3.3 70B", "model": "meta-llama/llama-3.3-70b-instruct", "icon": "icons/llama.png"}
 ]
 
 NAMES_APOLOGIST = ["Laura"]
@@ -125,7 +125,6 @@ def render_frame_with_animation(t, speaker, text, bible_quote=None):
     # Closed Captions Overlay
     if text:
         draw.rectangle([260, 920, 1660, 1020], fill=(15, 23, 42, 230), outline=(255, 255, 255, 80), width=2)
-        # Basic word wrap logic
         words = text.split()
         lines, curr = [], ""
         for w in words:
@@ -136,7 +135,6 @@ def render_frame_with_animation(t, speaker, text, bible_quote=None):
                 curr += " " + w
         lines.append(curr)
         
-        # Draw last 2 active caption lines
         disp_lines = lines[-2:]
         y_c = 950 if len(disp_lines) == 1 else 940
         for l in disp_lines:
@@ -147,7 +145,7 @@ def render_frame_with_animation(t, speaker, text, bible_quote=None):
     return np.array(composite.convert("RGB"))
 
 def create_scoreboard_overlay(scores, round_num, apologist_name, skeptic_name):
-    """Draws 15 AI judge icons and scores across split screen with reliable icon fallbacks."""
+    """Draws 15 AI judge icons and scores across split screen with dynamic Y-spacing."""
     overlay = Image.new("RGBA", (1920, 1080), (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay)
     
@@ -230,8 +228,8 @@ def generate_debate():
     
     prompt = (
         f"Write a full 10-minute broadcast debate on: '{topic}'.\n\n"
-        f"Key Narrator Rule:\n"
-        f"- In Round 0, Narrator MUST explicitly state that 'There are no emotions or personal biases in this debate—only pure objective reasoning, logical analysis, and scripture.'\n\n"
+        f"Key Narrator Rules:\n"
+        f"- In Round 0, Narrator MUST explicitly mention that 'This debate is evaluated by 15 of the latest frontier AI models—including GPT-5.6 Sol, Claude Opus 5, Grok 4.6, DeepSeek V4 Pro, and Gemini 3.7 Flash. There are no personal emotions or biases here—only pure objective reasoning, logical analysis, and scripture.'\n\n"
         f"Bible References:\n"
         f"- Whenever Laura (Apologist) quotes or cites the Bible, provide exact scriptural text using the New International Version (NIV).\n\n"
         f"JSON Schema:\n"
@@ -243,7 +241,7 @@ def generate_debate():
     )
     
     res = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json={
-        "model": "openai/gpt-4o",
+        "model": "openai/gpt-5.6-sol",
         "messages": [{"role": "user", "content": prompt}]
     }, timeout=90)
     
@@ -253,7 +251,7 @@ async def evaluate_judge(judge, arg_a, arg_b):
     headers = {"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"}
     prompt = (
         f"Evaluate this debate round:\nApologist: {arg_a}\nSkeptic: {arg_b}\n\n"
-        "Score both speakers out of 100. Provide a concise 1-sentence reasoning statement.\n"
+        "Score both speakers out of 100 based on argument strength. Provide a concise 1-sentence reasoning statement.\n"
         "Return JSON strictly in format: {\"score_a\": 85, \"score_b\": 78, \"reasoning\": \"Laura provided stronger textual grounding.\"}"
     )
     try:
@@ -283,7 +281,7 @@ async def run_15_judges(arg_a, arg_b):
     return await asyncio.gather(*tasks)
 
 def render_debate_video(raw_script, apologist_name, skeptic_name):
-    print("Rendering video with 15 AI judges, active speaker sound bars, subtitles, NIV quotes, and audio glitch fixes...")
+    print("Rendering debate video with 15 AI judges, active speaker sound bars, subtitles, NIV quotes, and audio glitch fixes...")
     
     video_segments = []
     audio_segments = []
@@ -318,7 +316,7 @@ def render_debate_video(raw_script, apologist_name, skeptic_name):
         with open(temp_audio, "wb") as f:
             f.write(res.content)
             
-        # Fix trailing audio glitch: trim 0.05s buffer artifacts & pad with explicit silent array
+        # Fix trailing audio glitch: trim 0.05s buffer artifacts
         audio_clip = AudioFileClip(temp_audio)
         if audio_clip.duration > 0.1:
             audio_clip = audio_clip.subclip(0, audio_clip.duration - 0.05)
@@ -353,7 +351,7 @@ def render_debate_video(raw_script, apologist_name, skeptic_name):
             video_segments.append(main_speaker_clip)
             audio_segments.append(audio_clip)
             
-            # Add audio silence buffer between clips to eliminate audio boundary pop
+            # Silence buffer between clips to eliminate audio pop
             audio_segments.append(buffer_silence)
             video_segments.append(VideoClip(lambda t: render_frame_with_animation(t, speaker, text, bible_quote), duration=0.3))
             
@@ -394,7 +392,7 @@ def render_debate_video(raw_script, apologist_name, skeptic_name):
         audio_segments.append(buffer_silence)
         video_segments.append(VideoClip(lambda t: render_frame_with_animation(t, speaker, text, bible_quote), duration=0.3))
 
-    # Master render with multi-threading and ultrafast encoding preset
+    # Master render
     master_video = concatenate_videoclips(video_segments, method="compose")
     master_audio = concatenate_audioclips(audio_segments)
     
