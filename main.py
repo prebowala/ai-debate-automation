@@ -11,7 +11,6 @@ from chatterbox.tts_turbo import ChatterboxTurboTTS
 # ==========================================
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
 
-# Load Chatterbox Turbo model locally (optimized for speed/efficiency)
 log_msg = lambda msg: print(f"[DEBATE-PIPELINE] {msg}")
 log_msg("Loading Chatterbox TTS model...")
 tts_model = ChatterboxTurboTTS.from_pretrained(device="cuda" if torch.cuda.is_available() else "cpu")
@@ -21,17 +20,17 @@ def log(message):
 
 
 # ==========================================
-# 1. CHATTERBOX TTS AUDIO SYNTHESIS
+# 1. CHATTERBOX TTS AUDIO SYNTHESIS (Standard Audio Generation)
 # ==========================================
-def synthesize_speech(text, reference_audio_path, output_path):
-    log(f"Synthesizing audio with Chatterbox TTS ({len(text)} chars)...")
+def synthesize_speech(text, output_path):
+    log(f"Synthesizing speech with Chatterbox TTS ({len(text)} chars)...")
     try:
-        # Generate audio using Chatterbox voice cloning reference clip
-        wav = tts_model.generate(text, audio_prompt_path=reference_audio_path)
+        # Generate speech using Chatterbox's default intrinsic profile (prompt path omitted)
+        wav = tts_model.generate(text, audio_prompt_path=None)
         torchaudio.save(output_path, wav, tts_model.sr)
         return output_path
     except Exception as e:
-        log(f"Chatterbox TTS failed: {e}. Generating silent placeholder audio.")
+        log(f"Chatterbox generation failed: {e}. Generating tone fallback.")
         cmd = [
             "ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo", 
             "-t", "3", "-q:a", "9", "-acodec", "libmp3lame", output_path
@@ -46,7 +45,6 @@ def synthesize_speech(text, reference_audio_path, output_path):
 def evaluate_debate_round(transcript_text):
     log("Evaluating debate round with top frontier flagship models via OpenRouter...")
     
-    # Industry-leading frontier models, strictly one unique flagship per provider
     judge_models = [
         "openai/gpt-5.6-terra",          # OpenAI
         "anthropic/claude-sonnet-5",     # Anthropic
@@ -126,12 +124,9 @@ def render_debate_video(audio_a, audio_b, output_filename="final_debate_output.m
 if __name__ == "__main__":
     log("Starting automated long-form debate generation pipeline...")
     
-    # Note: Ensure you have a reference voice clip named reference_clip.wav in your directory
-    ref_voice = "reference_clip.wav"
-    
-    narrator_audio = synthesize_speech("Welcome to today's AI debate showdown.", ref_voice, "narrator.wav")
-    debater_a_audio = synthesize_speech("My position is clear and backed by core principles.", ref_voice, "debater_a.wav")
-    debater_b_audio = synthesize_speech("I completely disagree; the counter-evidence reveals a different reality.", ref_voice, "debater_b.wav")
+    narrator_audio = synthesize_speech("Welcome to today's AI debate showdown.", "narrator.wav")
+    debater_a_audio = synthesize_speech("My position is clear and backed by core principles.", "debater_a.wav")
+    debater_b_audio = synthesize_speech("I completely disagree; the counter-evidence reveals a different reality.", "debater_b.wav")
     
     debate_transcript = "Debater A: Technology centralizes efficiency. Debater B: Decentralization protects autonomy."
     debate_scores = evaluate_debate_round(debate_transcript)
