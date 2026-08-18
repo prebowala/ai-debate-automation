@@ -23,18 +23,16 @@ JUDGE_VOICE_POOL = [
 COMPLIANCE_BANNER_TEXT = "INDEPENDENT AI EVALUATION • NOT AFFILIATED WITH OR ENDORSED BY ANY FEATURED PROVIDERS"
 
 JUDGES = [
-    {"name": "GPT-4o", "company": "OpenAI", "model": "openai/gpt-4o", "icon": "icons/openai.png"},
-    {"name": "Claude 3.5 Sonnet", "company": "Anthropic", "model": "anthropic/claude-3.5-sonnet", "icon": "icons/claude.png"},
-    {"name": "Gemini Flash 1.5", "company": "Google", "model": "google/gemini-flash-1.5", "icon": "icons/gemini.png"},
-    {"name": "Grok 2", "company": "xAI", "model": "xai/grok-2-vision-1212", "icon": "icons/grok.png"},
-    {"name": "DeepSeek R1", "company": "DeepSeek", "model": "deepseek/deepseek-r1", "icon": "icons/deepseek.png"},
-    {"name": "GLM 4 9B", "company": "Zhipu AI", "model": "thm/glm-4-9b-chat:free", "icon": "icons/glm.png"},
-    {"name": "Nemotron 70B", "company": "NVIDIA", "model": "nvidia/llama-3.1-nemotron-70b-instruct", "icon": "icons/nvidia.png"},
-    {"name": "Command R+", "company": "Cohere", "model": "cohere/command-r-plus", "icon": "icons/cohere.png"},
-    {"name": "Llama 3.3 70B", "company": "Meta", "model": "meta-llama/llama-3.3-70b-instruct", "icon": "icons/llama.png"},
-    {"name": "Mistral Large 2", "company": "Mistral AI", "model": "mistralai/mistral-large-2407", "icon": "icons/mistral.png"},
-    {"name": "Qwen 2.5 72B", "company": "Alibaba Cloud", "model": "qwen/qwen-2.5-72b-instruct", "icon": "icons/qwen.png"},
-    {"name": "Phi 3 Medium", "company": "Microsoft", "model": "microsoft/phi-3-medium-128k-instruct", "icon": "icons/microsoft.png"}
+    {"name": "GPT-4o", "company": "OpenAI", "model": "openai/gpt-4o-2024-11-20", "icon": "icons/openai.png"},
+    {"name": "Claude 3.5 Sonnet", "company": "Anthropic", "model": "anthropic/claude-3.5-sonnet:beta", "icon": "icons/claude.png"},
+    {"name": "Gemini Flash 1.5", "company": "Google", "model": "google/gemini-flash-1.5-8b", "icon": "icons/gemini.png"},
+    {"name": "Grok 2", "company": "xAI", "model": "xai/grok-2", "icon": "icons/grok.png"},
+    {"name": "DeepSeek R1", "company": "DeepSeek", "model": "deepseek/deepseek-r1:free", "icon": "icons/deepseek.png"},
+    {"name": "Nemotron 70B", "company": "NVIDIA", "model": "nvidia/llama-3.1-nemotron-70b-instruct:free", "icon": "icons/nvidia.png"},
+    {"name": "Command R+", "company": "Cohere", "model": "cohere/command-r-plus-08-2024", "icon": "icons/cohere.png"},
+    {"name": "Llama 3.3 70B", "company": "Meta", "model": "meta-llama/llama-3.3-70b-instruct:free", "icon": "icons/llama.png"},
+    {"name": "Mistral Small", "company": "Mistral AI", "model": "mistralai/mistral-small-24b-instruct-2501:free", "icon": "icons/mistral.png"},
+    {"name": "Qwen 2.5 72B", "company": "Alibaba Cloud", "model": "qwen/qwen-2.5-72b-instruct:free", "icon": "icons/qwen.png"}
 ]
 
 BG_IMAGE_CACHE = None
@@ -135,7 +133,7 @@ def generate_debate():
     res = requests.post(
         "https://openrouter.ai/api/v1/chat/completions", 
         headers={"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"},
-        json={"model": "openai/gpt-4o", "messages": [{"role": "user", "content": prompt}]}, 
+        json={"model": "openai/gpt-4o-2024-11-20", "messages": [{"role": "user", "content": prompt}]}, 
         timeout=(5, 15)
     )
     
@@ -343,7 +341,7 @@ def render_debate_video(data):
             render_frame_image(speaker, text, quote_text, f_path)
             add_clip(f_path, a_path)
 
-        log(f"Evaluating Round {r} with 12 AI judge models...")
+        log(f"Evaluating Round {r} with {len(JUDGES)} AI judge models...")
         arg_a = next((sanitize_speech_text(i.get('text') or i.get('content')) for i in round_items if safe_str(i.get('speaker') or i.get('role')).upper() in ['DEBATER_A', 'PRO', 'ROLE_A']), "")
         arg_b = next((sanitize_speech_text(i.get('text') or i.get('content')) for i in round_items if safe_str(i.get('speaker') or i.get('role')).upper() in ['DEBATER_B', 'CON', 'ROLE_B']), "")
 
