@@ -45,6 +45,11 @@ BG_IMAGE_CACHE = None
 def log(msg):
     print(f"[BUILD LOG] {msg}", flush=True)
 
+def safe_str(val, default=""):
+    if isinstance(val, dict):
+        return str(val.get("name") or val.get("title") or val.get("role") or default)
+    return str(val) if val else default
+
 def get_font(size):
     font_paths = [
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
@@ -81,7 +86,8 @@ def load_or_create_icon(icon_path, name):
 def sanitize_speech_text(text):
     if not text:
         return ""
-    return re.sub(r'^(laura|brian|narrator|apologist|skeptic|debater_a|debater_b)(\s*\([^)]*\))?:\s*', '', text, flags=re.IGNORECASE).strip()
+    text_str = safe_str(text)
+    return re.sub(r'^(laura|brian|narrator|apologist|skeptic|debater_a|debater_b)(\s*\([^)]*\))?:\s*', '', text_str, flags=re.IGNORECASE).strip()
 
 def clean_json_string(text):
     text = re.sub(r"^```(json)?", "", text, flags=re.MULTILINE)
@@ -152,13 +158,19 @@ async def evaluate_judge(judge, role_a, role_b, arg_a, arg_b):
             "https://openrouter.ai/api/v1/chat/completions", 
             headers={"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"},
             json={"model": judge["model"], "messages": [{"role": "user", "content": prompt}]}, 
-            timeout=(3, 5)
+            timeout=(3, 10)
         )
 
     try:
-        # Enforces a hard 6-second timeout per judge thread
-        res = await asyncio.wait_for(asyncio.to_thread(_call_api), timeout=6.0)
-        parsed = json.loads(clean_json_string(res.json()['choices'][0]['message']['content']))
+        res = await asyncio.wait_for(asyncio.to_thread(_call_api), timeout=12.0)
+        data = res.json()
+
+        if res.status_code != 200 or 'choices' not in data:
+            err_msg = data.get('error', {}).get('message', f"HTTP {res.status_code}")
+            log(f"Judge {judge['name']} API Error: {err_msg}")
+            raise ValueError(err_msg)
+
+        parsed = json.loads(clean_json_string(data['choices'][0]['message']['content']))
         return {
             "score_a": int(parsed.get("score_a", 75)), 
             "score_b": int(parsed.get("score_b", 75)),
@@ -182,10 +194,12 @@ def render_frame_image(speaker, text, quote_text, output_path):
     bg = get_cached_bg()
     draw = ImageDraw.Draw(bg)
 
-    if speaker in ["DEBATER_A", "ROLE_A", "PRO", "APOLOGIST"]:
+    speaker_str = safe_str(speaker).upper()
+
+    if speaker_str in ["DEBATER_A", "ROLE_A", "PRO", "APOLOGIST"]:
         draw.ellipse([250, 150, 450, 350], outline=(0, 210, 255), width=6)
         draw.text((350, 250), "A", font=get_font(48), fill=(0, 210, 255), anchor="mm")
-    elif speaker in ["DEBATER_B", "ROLE_B", "CON", "SKEPTIC"]:
+    elif speaker_str in ["DEBATER_B", "ROLE_B", "CON", "SKEPTIC"]:
         draw.ellipse([830, 150, 1030, 350], outline=(255, 60, 90), width=6)
         draw.text((930, 250), "B", font=get_font(48), fill=(255, 60, 90), anchor="mm")
     else:
@@ -196,9 +210,10 @@ def render_frame_image(speaker, text, quote_text, output_path):
         draw_captions(draw, text)
 
     if quote_text:
+        quote_str = safe_str(quote_text)
         draw.rectangle([100, 600, 1180, 660], fill=(15, 23, 42, 245), outline=(234, 179, 8), width=2)
         draw.text((640, 615), "SCRIPTURE REFERENCE (NIV)", font=get_font(12), fill=(234, 179, 8), anchor="mm")
-        draw.text((640, 638), f'"{quote_text}"', font=get_font(18), fill=(255, 255, 255), anchor="mm")
+        draw.text((640, 638), f'"{quote_str}"', font=get_font(18), fill=(255, 255, 255), anchor="mm")
 
     draw_compliance_banner(draw)
     bg.convert("RGB").save(output_path)
@@ -207,13 +222,16 @@ def render_score_board_frame(round_num, scores, role_a, role_b, total_a, total_b
     bg = Image.new("RGBA", (1280, 720), (15, 23, 42, 255))
     draw = ImageDraw.Draw(bg)
 
+    role_a_str = safe_str(role_a, "Proponent")
+    role_b_str = safe_str(role_b, "Opponent")
+
     draw.text((640, 40), f"ROUND {round_num} JUDGING BREAKDOWN", font=get_font(28), fill=(234, 179, 8), anchor="mm")
-    draw.text((640, 75), f"TOTAL: {role_a} ({total_a} PTS)  vs  {role_b} ({total_b} PTS)", font=get_font(18), fill=(255, 255, 255), anchor="mm")
+    draw.text((640, 75), f"TOTAL: {role_a_str} ({total_a} PTS)  vs  {role_b_str} ({total_b} PTS)", font=get_font(18), fill=(255, 255, 255), anchor="mm")
 
     favored_a = [ (j, s) for j, s in zip(JUDGES, scores) if s["score_a"] >= s["score_b"] ]
     favored_b = [ (j, s) for j, s in zip(JUDGES, scores) if s["score_b"] > s["score_a"] ]
 
-    draw.text((320, 110), f"FAVORING {role_a.upper()}", font=get_font(16), fill=(0, 210, 255), anchor="mm")
+    draw.text((320, 110), f"FAVORING {role_a_str.upper()}", font=get_font(16), fill=(0, 210, 255), anchor="mm")
     for idx, (j, s) in enumerate(favored_a[:5]):
         y = 135 + idx * 70
         draw.rectangle([50, y, 590, y + 60], fill=(30, 41, 59, 255), outline=(51, 65, 85), width=1)
@@ -223,7 +241,7 @@ def render_score_board_frame(round_num, scores, role_a, role_b, total_a, total_b
         draw.text((120, y + 38), j["company"], font=get_font(12), fill=(148, 163, 184))
         draw.text((550, y + 30), f"{s['score_a']} pts", font=get_font(18), fill=(0, 210, 255), anchor="rm")
 
-    draw.text((960, 110), f"FAVORING {role_b.upper()}", font=get_font(16), fill=(255, 60, 90), anchor="mm")
+    draw.text((960, 110), f"FAVORING {role_b_str.upper()}", font=get_font(16), fill=(255, 60, 90), anchor="mm")
     for idx, (j, s) in enumerate(favored_b[:5]):
         y = 135 + idx * 70
         draw.rectangle([690, y, 1230, y + 60], fill=(30, 41, 59, 255), outline=(51, 65, 85), width=1)
@@ -252,9 +270,9 @@ def render_judge_intro_frame(judge, speech_text, output_path):
     bg.convert("RGB").save(output_path)
 
 def render_debate_video(data):
-    topic = data.get("topic", "AI Debate")
-    role_a = data.get("role_a", "Proponent")
-    role_b = data.get("role_b", "Opponent")
+    topic = safe_str(data.get("topic"), "AI Debate")
+    role_a = safe_str(data.get("role_a"), "Proponent")
+    role_b = safe_str(data.get("role_b"), "Opponent")
     raw_script = data.get("script", [])
 
     os.makedirs("build_temp", exist_ok=True)
@@ -314,19 +332,8 @@ def render_debate_video(data):
         round_items = [item for item in raw_script if item.get("round") == r]
 
         for idx, item in enumerate(round_items):
-            # Defensive speaker key extraction
-            raw_speaker = (
-                item.get("speaker") or 
-                item.get("role") or 
-                item.get("character") or 
-                item.get("name") or 
-                "NARRATOR"
-            )
-            speaker = str(raw_speaker).upper()
-
-            # Defensive text key extraction
-            raw_text = item.get("text") or item.get("content") or item.get("speech") or ""
-            text = sanitize_speech_text(raw_text)
+            speaker = safe_str(item.get("speaker") or item.get("role") or item.get("character") or item.get("name"), "NARRATOR").upper()
+            text = sanitize_speech_text(item.get("text") or item.get("content") or item.get("speech"))
 
             if not text:
                 continue
@@ -340,8 +347,8 @@ def render_debate_video(data):
             add_clip(f_path, a_path)
 
         log(f"Evaluating Round {r} with 15 AI judge models...")
-        arg_a = next((sanitize_speech_text(i.get('text') or i.get('content') or '') for i in round_items if str(i.get('speaker') or i.get('role')).upper() in ['DEBATER_A', 'PRO', 'ROLE_A']), "")
-        arg_b = next((sanitize_speech_text(i.get('text') or i.get('content') or '') for i in round_items if str(i.get('speaker') or i.get('role')).upper() in ['DEBATER_B', 'CON', 'ROLE_B']), "")
+        arg_a = next((sanitize_speech_text(i.get('text') or i.get('content')) for i in round_items if safe_str(i.get('speaker') or i.get('role')).upper() in ['DEBATER_A', 'PRO', 'ROLE_A']), "")
+        arg_b = next((sanitize_speech_text(i.get('text') or i.get('content')) for i in round_items if safe_str(i.get('speaker') or i.get('role')).upper() in ['DEBATER_B', 'CON', 'ROLE_B']), "")
 
         async def run_evals():
             return await asyncio.gather(*[evaluate_judge(j, role_a, role_b, arg_a, arg_b) for j in JUDGES])
