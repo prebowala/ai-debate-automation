@@ -32,15 +32,13 @@ VOICE_NARRATOR_ID = "QIhD5ivPGEoYZQDocuHI"   # Adam (Narrator)
 VOICE_APOLOGIST_ID = "GZ4PpFJV8ikEGUtBrjK7"  # Laura (Apologist)
 VOICE_SKEPTIC_ID   = "gPPH6SLdL8XSX6GNJ40G"  # Brian (Skeptic)
 
-# Pool of distinct ElevenLabs voices for representative AI Judges
+# Voice pool for representative AI Judges
 JUDGE_VOICE_POOL = [
     "21m00Tcm4TlvDq8ikWAM", "AZnzlk1XvdvUeBnXmlld", "EXAVITQu4vr4xnSDxMaL",
-    "ErXwobaYiN019PkySvjV", "MF3mGyEYCl7XYWbV9V6O", "TxGEqnHWrfWFTfGW9XjX",
-    "VR6AewLTigWG4xSOukaG", "yoZ06aGfMX9Vf31mJ64n", "z9fAnlkO2m35B221Ekg3",
-    "pNInz6obpgDQGcFmaJgB"
+    "ErXwobaYiN019PkySvjV", "MF3mGyEYCl7XYWbV9V6O", "TxGEqnHWrfWFTfGW9XjX"
 ]
 
-# Panel featuring EXACTLY ONE top flagship model per AI company
+# Top 10 Flagship AI Judge Models (1 per company)
 JUDGES = [
     {"name": "GPT-5.6 Sol", "model": "openai/gpt-5.6-sol", "icon": "icons/openai.png"},
     {"name": "Claude Opus 5", "model": "anthropic/claude-opus-5", "icon": "icons/claude.png"},
@@ -57,8 +55,23 @@ JUDGES = [
 NAMES_APOLOGIST = ["Laura"]
 NAMES_SKEPTIC = ["Brian"]
 
-# Cache background Image canvas to reduce per-frame loading overhead
 BG_IMAGE_CACHE = None
+
+def get_font(size):
+    """Loads system TTF fonts for large, high-resolution text rendering on Linux/Windows runners."""
+    font_paths = [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "C:\\Windows\\Fonts\\arialbd.ttf",
+        "arial.ttf"
+    ]
+    for path in font_paths:
+        if os.path.exists(path):
+            try:
+                return ImageFont.truetype(path, size)
+            except Exception:
+                pass
+    return ImageFont.load_default()
 
 def get_cached_bg():
     global BG_IMAGE_CACHE
@@ -70,13 +83,17 @@ def get_cached_bg():
         BG_IMAGE_CACHE = Image.open(base_path).convert("RGBA").resize((1920, 1080))
     return BG_IMAGE_CACHE.copy()
 
+def sanitize_speech_text(text):
+    """Strips character name headers so speakers don't read out their own names."""
+    clean = re.sub(r'^(laura|brian|narrator|apologist|skeptic)(\s*\([^)]*\))?:\s*', '', text, flags=re.IGNORECASE)
+    return clean.strip()
+
 def clean_json_string(text):
     text = re.sub(r"^```(json)?", "", text, flags=re.MULTILINE)
     text = re.sub(r"^```", "", text, flags=re.MULTILINE)
     return text.strip()
 
 def create_silent_audio(duration=0.6, fps=44100):
-    """Creates a clean 0.6s silent buffer to eliminate pops and give natural pauses."""
     samples = int(fps * duration)
     return AudioArrayClip(np.zeros((samples, 2), dtype=np.float32), fps=fps)
 
@@ -93,94 +110,108 @@ def load_or_create_icon(icon_path, name):
     draw.text((22, 22), initials, fill=(255, 255, 255), anchor="mm")
     return badge
 
-def render_frame_with_animation(t, speaker, text, bible_quote=None):
-    """Renders dynamic zoomed cameras, prominent sound bars, big center captions, and bottom Bible overlays."""
+def get_current_caption_chunk(text, t, duration):
+    """Splits full text into timed phrases that change dynamically with voice audio."""
+    words = text.split()
+    if not words:
+        return ""
+    chunk_size = 5
+    chunks = [' '.join(words[i:i+chunk_size]) for i in range(0, len(words), chunk_size)]
+    if not chunks:
+        return text
+    idx = min(int((t / max(duration, 0.01)) * len(chunks)), len(chunks) - 1)
+    return chunks[idx]
+
+def render_frame_with_animation(t, duration, speaker, text, bible_quote=None):
+    """Renders dynamic camera zooms, prominent sound bars, big captions, and bottom Bible quotes without boxes."""
     bg_full = get_cached_bg()
     
-    # 1. Dynamic Camera Zooms According to Speaker
+    # 1. Dynamic Camera Zooming
     if speaker == "APOLOGIST":
-        bg = bg_full.crop((0, 0, 1440, 1080)).resize((1920, 1080))
+        bg = bg_full.crop((0, 0, 1280, 1080)).resize((1920, 1080))
     elif speaker == "SKEPTIC":
-        bg = bg_full.crop((480, 0, 1920, 1080)).resize((1920, 1080))
+        bg = bg_full.crop((640, 0, 1920, 1080)).resize((1920, 1080))
     else:
         bg = bg_full
         
     overlay = Image.new("RGBA", (1920, 1080), (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay)
     
-    # 2. Prominent Active Speaker Indicator & Wave Sound Bars
+    # Fonts
+    font_cc = get_font(48)
+    font_bible_head = get_font(32)
+    font_bible_text = get_font(40)
+    
+    # 2. Prominent Bouncing Equalizer Bars
     if speaker == "APOLOGIST":
-        draw.rectangle([0, 0, 40, 1080], fill=(0, 180, 255, 255))
-        for i in range(16):
-            h = abs(int(35 + 75 * math.sin(t * 14 + i * 0.7)))
-            draw.rectangle([80 + (i * 24), 820 - h, 98 + (i * 24), 820 + h], fill=(0, 210, 255, 240))
+        for i in range(14):
+            h = int(30 + 110 * abs(math.sin(t * 14 + i * 0.5)))
+            x = 100 + (i * 28)
+            draw.rectangle([x, 780 - h, x + 20, 780 + h], fill=(0, 210, 255, 240))
             
     elif speaker == "SKEPTIC":
-        draw.rectangle([1880, 0, 1920, 1080], fill=(255, 45, 85, 255))
-        for i in range(16):
-            h = abs(int(35 + 75 * math.cos(t * 14 + i * 0.7)))
-            draw.rectangle([1450 + (i * 24), 820 - h, 1468 + (i * 24), 820 + h], fill=(255, 80, 100, 240))
+        for i in range(14):
+            h = int(30 + 110 * abs(math.sin(t * 14 + i * 0.5)))
+            x = 1480 + (i * 28)
+            draw.rectangle([x, 780 - h, x + 20, 780 + h], fill=(255, 60, 90, 240))
             
     elif speaker == "NARRATOR":
-        draw.rectangle([0, 0, 1920, 15], fill=(234, 179, 8, 255))
+        for i in range(24):
+            h = int(10 + 35 * abs(math.sin(t * 10 + i * 0.4)))
+            x = 120 + (i * 70)
+            draw.rectangle([x, 25, x + 40, 25 + h], fill=(234, 179, 8, 240))
 
-    # 3. Closed Captions in Middle of Screen (Large & Visible)
+    # 3. Dynamic Closed Captions in Center (Big Words, No Box/Border)
     if text:
-        border_color = (0, 180, 255, 200) if speaker == "APOLOGIST" else ((255, 45, 85, 200) if speaker == "SKEPTIC" else (234, 179, 8, 200))
-        draw.rectangle([180, 420, 1740, 620], fill=(10, 15, 30, 235), outline=border_color, width=3)
-        
-        words = text.split()
-        lines, curr = [], ""
-        for w in words:
-            if len(curr + " " + w) > 48:
-                lines.append(curr)
-                curr = w
-            else:
-                curr += " " + w
-        lines.append(curr)
-        
-        disp_lines = lines[-3:]
-        y_c = 520 - (len(disp_lines) * 22)
-        for l in disp_lines:
-            draw.text((960, y_c), l.strip(), fill=(255, 255, 255), anchor="mm")
-            y_c += 44
+        current_chunk = get_current_caption_chunk(text, t, duration)
+        draw.text(
+            (960, 520), 
+            current_chunk, 
+            font=font_cc, 
+            fill=(255, 255, 255), 
+            anchor="mm", 
+            stroke_width=4, 
+            stroke_fill=(0, 0, 0)
+        )
 
-    # 4. Bible Quotes at Bottom of Screen (Large & Clear)
+    # 4. Bible Reference at Bottom (Big Words, No Box/Border)
     if bible_quote:
-        draw.rectangle([180, 880, 1740, 1020], fill=(15, 23, 42, 245), outline=(234, 179, 8, 240), width=3)
-        draw.text((960, 912), "HOLY BIBLE (NIV REFERENCE)", fill=(234, 179, 8), anchor="mm")
-        
-        q_words = f'"{bible_quote}"'.split()
-        q_lines, q_curr = [], ""
-        for qw in q_words:
-            if len(q_curr + " " + qw) > 65:
-                q_lines.append(q_curr)
-                q_curr = qw
-            else:
-                q_curr += " " + qw
-        q_lines.append(q_curr)
-        
-        qy = 955
-        for ql in q_lines[:2]:
-            draw.text((960, qy), ql.strip(), fill=(255, 255, 255), anchor="mm")
-            qy += 32
+        draw.text(
+            (960, 910), 
+            "HOLY BIBLE (NIV)", 
+            font=font_bible_head, 
+            fill=(234, 179, 8), 
+            anchor="mm", 
+            stroke_width=3, 
+            stroke_fill=(0, 0, 0)
+        )
+        draw.text(
+            (960, 960), 
+            f'"{bible_quote}"', 
+            font=font_bible_text, 
+            fill=(255, 255, 255), 
+            anchor="mm", 
+            stroke_width=3, 
+            stroke_fill=(0, 0, 0)
+        )
 
     composite = Image.alpha_composite(bg, overlay)
     return np.array(composite.convert("RGB"))
 
-def create_scoreboard_overlay(scores, round_num, apologist_name, skeptic_name):
-    """Draws clean split-screen scoreboard featuring 1 model per company."""
+def create_scoreboard_overlay(scores, round_num, apologist_name, skeptic_name, total_a, total_b):
+    """Renders round scoreboard and cumulative totals."""
     overlay = Image.new("RGBA", (1920, 1080), (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay)
+    font_main = get_font(28)
     
-    draw.rectangle([560, 20, 1360, 80], fill=(15, 23, 42, 230), outline=(255, 255, 255, 100), width=2)
-    draw.text((960, 50), f"ROUND {round_num} PANEL SCORES (TOP 10 FRONTIER AI MODELS)", fill=(255, 255, 255), anchor="mm")
+    draw.rectangle([500, 20, 1420, 80], fill=(15, 23, 42, 230), outline=(255, 255, 255, 100), width=2)
+    draw.text((960, 50), f"ROUND {round_num} SCORES | CUMULATIVE TOTAL: {apologist_name} {total_a} - {total_b} {skeptic_name}", font=font_main, fill=(255, 255, 255), anchor="mm")
 
     draw.rectangle([50, 90, 450, 135], fill=(0, 122, 255, 200))
-    draw.text((250, 112), f"{apologist_name} (Apologist)", fill=(255, 255, 255), anchor="mm")
+    draw.text((250, 112), f"{apologist_name} (Apologist)", font=font_main, fill=(255, 255, 255), anchor="mm")
     
     draw.rectangle([1470, 90, 1870, 135], fill=(255, 45, 85, 200))
-    draw.text((1670, 112), f"{skeptic_name} (Skeptic)", fill=(255, 255, 255), anchor="mm")
+    draw.text((1670, 112), f"{skeptic_name} (Skeptic)", font=font_main, fill=(255, 255, 255), anchor="mm")
 
     left_y, right_y = 150, 150
     
@@ -201,12 +232,34 @@ def create_scoreboard_overlay(scores, round_num, apologist_name, skeptic_name):
 
         draw.rectangle(bg_box, fill=(20, 30, 45, 220), outline=(255, 255, 255, 50))
         overlay.paste(icon_img, (x_pos, y_pos), mask=icon_img)
-        draw.text((x_pos + 55, y_pos + 25), score_text, fill=(255, 255, 255), anchor="lm")
+        draw.text((x_pos + 55, y_pos + 25), score_text, font=get_font(22), fill=(255, 255, 255), anchor="lm")
 
     return overlay
 
+def create_final_winner_overlay(total_a, total_b, apologist_name, skeptic_name):
+    """Renders final aggregate scoreboard and declares debate winner."""
+    overlay = Image.new("RGBA", (1920, 1080), (15, 23, 42, 245))
+    draw = ImageDraw.Draw(overlay)
+    
+    font_title = get_font(56)
+    font_score = get_font(42)
+    
+    draw.text((960, 180), "FINAL DEBATE RESULTS", font=font_title, fill=(234, 179, 8), anchor="mm")
+    
+    winner = f"{apologist_name} (Apologist)" if total_a > total_b else f"{skeptic_name} (Skeptic)"
+    draw.text((960, 270), f"WINNER: {winner.upper()}", font=font_title, fill=(0, 220, 255) if total_a > total_b else (255, 60, 90), anchor="mm")
+    
+    draw.rectangle([320, 360, 900, 520], fill=(0, 122, 255, 220))
+    draw.text((610, 410), f"{apologist_name}", font=font_score, fill=(255, 255, 255), anchor="mm")
+    draw.text((610, 470), f"{total_a} TOTAL POINTS", font=font_score, fill=(255, 255, 255), anchor="mm")
+    
+    draw.rectangle([1020, 360, 1600, 520], fill=(255, 45, 85, 220))
+    draw.text((1310, 410), f"{skeptic_name}", font=font_score, fill=(255, 255, 255), anchor="mm")
+    draw.text((1310, 470), f"{total_b} TOTAL POINTS", font=font_score, fill=(255, 255, 255), anchor="mm")
+    
+    return overlay
+
 def create_judge_speech_overlay(judge_name, icon_path, reasoning, score_a, score_b, apologist_name, skeptic_name):
-    """Displays single representative AI judge verdict card."""
     overlay = Image.new("RGBA", (1920, 1080), (15, 23, 42, 240))
     draw = ImageDraw.Draw(overlay)
     
@@ -214,16 +267,16 @@ def create_judge_speech_overlay(judge_name, icon_path, reasoning, score_a, score
     icon_large = icon_img.resize((90, 90))
     overlay.paste(icon_large, (915, 100), mask=icon_large)
     
-    draw.text((960, 220), f"FEATURED REPRESENTATIVE AI JUDGE: {judge_name.upper()}", fill=(255, 255, 255), anchor="mm")
+    draw.text((960, 220), f"FEATURED REPRESENTATIVE AI JUDGE: {judge_name.upper()}", font=get_font(32), fill=(255, 255, 255), anchor="mm")
     
     draw.rectangle([460, 260, 900, 330], fill=(0, 122, 255, 200))
-    draw.text((680, 295), f"{apologist_name}: {score_a}/100", fill=(255, 255, 255), anchor="mm")
+    draw.text((680, 295), f"{apologist_name}: {score_a}/100", font=get_font(28), fill=(255, 255, 255), anchor="mm")
     
     draw.rectangle([1020, 260, 1460, 330], fill=(255, 45, 85, 200))
-    draw.text((1240, 295), f"{skeptic_name}: {score_b}/100", fill=(255, 255, 255), anchor="mm")
+    draw.text((1240, 295), f"{skeptic_name}: {score_b}/100", font=get_font(28), fill=(255, 255, 255), anchor="mm")
     
     draw.rectangle([320, 380, 1600, 680], fill=(30, 41, 59, 240), outline=(255, 255, 255, 80), width=2)
-    draw.text((960, 420), "OFFICIAL VERDICT & REASONING", fill=(148, 163, 184), anchor="mm")
+    draw.text((960, 420), "OFFICIAL VERDICT & REASONING", font=get_font(26), fill=(148, 163, 184), anchor="mm")
     
     words = reasoning.split()
     lines, curr = [], ""
@@ -237,7 +290,7 @@ def create_judge_speech_overlay(judge_name, icon_path, reasoning, score_a, score
     
     y_text = 480
     for line in lines:
-        draw.text((960, y_text), line.strip(), fill=(255, 255, 255), anchor="mm")
+        draw.text((960, y_text), line.strip(), font=get_font(30), fill=(255, 255, 255), anchor="mm")
         y_text += 42
         
     return overlay
@@ -252,16 +305,15 @@ def generate_debate():
     
     prompt = (
         f"Write a full 10-minute broadcast debate on: '{topic}'.\n\n"
-        f"Key Narrator Rules:\n"
-        f"- In Round 0, Narrator MUST explicitly mention that 'This debate is evaluated by top frontier AI models representing each leading AI company—including GPT-5.6 Sol, Claude Opus 5, Gemini 3.7 Flash, Grok 4.6, and DeepSeek V4 Pro. Pure objective reasoning, logical analysis, and scripture.'\n\n"
-        f"Bible References:\n"
-        f"- Whenever Laura (Apologist) quotes or cites the Bible, provide exact scriptural text using the New International Version (NIV).\n\n"
-        f"JSON Schema:\n"
-        f"Return ONLY a JSON array of objects with keys:\n"
+        f"Key Rules:\n"
+        f"- In Round 0, Narrator explicitly mentions 'This debate is evaluated by top AI models representing each leading AI company.'\n"
+        f"- Do NOT include speaker name prefixes in speech text (e.g., do not write 'Laura:').\n"
+        f"- Whenever Laura quotes scripture, provide exact NIV text in 'bible_quote'.\n\n"
+        f"JSON Schema Array strictly with keys:\n"
         f"- 'speaker': 'NARRATOR', 'APOLOGIST', or 'SKEPTIC'\n"
         f"- 'round': 0 to 5\n"
-        f"- 'text': The spoken speech\n"
-        f"- 'bible_quote': Optional field containing NIV verse (e.g. 'John 14:6 - I am the way...') or null.\n"
+        f"- 'text': The spoken speech text\n"
+        f"- 'bible_quote': Optional NIV quote or null\n"
     )
     
     res = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json={
@@ -275,8 +327,8 @@ async def evaluate_judge(judge, arg_a, arg_b):
     headers = {"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"}
     prompt = (
         f"Evaluate this debate round:\nApologist: {arg_a}\nSkeptic: {arg_b}\n\n"
-        "Score both speakers out of 100 based on argument strength. Provide a concise 1-sentence reasoning statement.\n"
-        "Return JSON strictly in format: {\"score_a\": 85, \"score_b\": 78, \"reasoning\": \"Laura provided stronger textual grounding.\"}"
+        "Score both speakers out of 100 based on argument strength. Provide concise 1-sentence reasoning.\n"
+        "Return JSON strictly: {\"score_a\": 85, \"score_b\": 78, \"reasoning\": \"Laura provided stronger textual grounding.\"}"
     )
     try:
         res = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json={
@@ -305,17 +357,17 @@ async def run_10_judges(arg_a, arg_b):
     return await asyncio.gather(*tasks)
 
 def render_debate_video(raw_script, apologist_name, skeptic_name):
-    print("Rendering optimized debate video...")
+    print("Rendering debate video with zoomed views, dynamic subtitles, NIV overlays, and cumulative scoring...")
     
     video_segments = []
     audio_segments = []
     
-    cumulative_a, cumulative_b = 0, 0
+    total_a, total_b = 0, 0
     buffer_silence = create_silent_audio(duration=0.6)
     
     for idx, item in enumerate(raw_script):
         speaker = item["speaker"]
-        text = item["text"]
+        text = sanitize_speech_text(item["text"])
         round_num = item["round"]
         bible_quote = item.get("bible_quote", None)
         
@@ -346,24 +398,25 @@ def render_debate_video(raw_script, apologist_name, skeptic_name):
         duration = audio_clip.duration
         
         stage_clip = VideoClip(
-            lambda t: render_frame_with_animation(t, speaker, text, bible_quote), 
+            lambda t: render_frame_with_animation(t, duration, speaker, text, bible_quote), 
             duration=duration
         )
         
         composite_elements = [stage_clip]
         
+        # Round Judging, Scoreboard & Winner Calculations
         if speaker == "NARRATOR" and 1 <= round_num <= 4:
-            arg_a = next((i['text'] for i in raw_script if i['round'] == round_num and i['speaker'] == 'APOLOGIST'), "")
-            arg_b = next((i['text'] for i in raw_script if i['round'] == round_num and i['speaker'] == 'SKEPTIC'), "")
+            arg_a = next((sanitize_speech_text(i['text']) for i in raw_script if i['round'] == round_num and i['speaker'] == 'APOLOGIST'), "")
+            arg_b = next((sanitize_speech_text(i['text']) for i in raw_script if i['round'] == round_num and i['speaker'] == 'SKEPTIC'), "")
             
             scores = asyncio.run(run_10_judges(arg_a, arg_b))
             
             avg_a = sum(s["score_a"] for s in scores) // len(scores)
             avg_b = sum(s["score_b"] for s in scores) // len(scores)
-            cumulative_a += avg_a
-            cumulative_b += avg_b
+            total_a += avg_a
+            total_b += avg_b
             
-            score_overlay_img = create_scoreboard_overlay(scores, round_num, apologist_name, skeptic_name)
+            score_overlay_img = create_scoreboard_overlay(scores, round_num, apologist_name, skeptic_name, total_a, total_b)
             overlay_clip = ImageClip(np.array(score_overlay_img)).set_duration(duration)
             composite_elements.append(overlay_clip)
             
@@ -372,8 +425,9 @@ def render_debate_video(raw_script, apologist_name, skeptic_name):
             audio_segments.append(audio_clip)
             
             audio_segments.append(buffer_silence)
-            video_segments.append(VideoClip(lambda t: render_frame_with_animation(t, speaker, text, bible_quote), duration=0.6))
+            video_segments.append(VideoClip(lambda t: render_frame_with_animation(t, duration, speaker, text, bible_quote), duration=0.6))
             
+            # Representative Judge speech
             rep_judge = random.choice(scores)
             rep_voice_id = JUDGE_VOICE_POOL[0]
             rep_speech_text = f"I am {rep_judge['name']}. I awarded {apologist_name} {rep_judge['score_a']} points and {skeptic_name} {rep_judge['score_b']} points. {rep_judge['reasoning']}"
@@ -410,12 +464,16 @@ def render_debate_video(raw_script, apologist_name, skeptic_name):
         audio_segments.append(audio_clip)
         
         audio_segments.append(buffer_silence)
-        video_segments.append(VideoClip(lambda t: render_frame_with_animation(t, speaker, text, bible_quote), duration=0.6))
+        video_segments.append(VideoClip(lambda t: render_frame_with_animation(t, duration, speaker, text, bible_quote), duration=0.6))
+
+    # Final Winner Announcement Card (Round 5 Conclusion)
+    winner_overlay = create_final_winner_overlay(total_a, total_b, apologist_name, skeptic_name)
+    winner_clip = ImageClip(np.array(winner_overlay)).set_duration(8.0)
+    video_segments.append(winner_clip)
 
     master_video = concatenate_videoclips(video_segments, method="compose")
     master_audio = concatenate_audioclips(audio_segments)
     
-    # Accelerated render parameters: fps=20, zerolatency tuning, disabled b-frames
     master_video.write_videofile(
         "final_debate.mp4", 
         fps=20, 
