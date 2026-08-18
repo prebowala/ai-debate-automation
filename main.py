@@ -2,34 +2,36 @@ import os
 import subprocess
 import requests
 import json
-import pykokoro
-import soundfile as sf
+import torch
+import torchaudio
+from chatterbox.tts_turbo import ChatterboxTurboTTS
 
 # ==========================================
 # CONFIGURATION & VOICE MAPPING
 # ==========================================
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
 
-# Kokoro Voice IDs (Natural-sounding local models)
-KOKORO_VOICE_NARRATOR  = "am_michael"
-KOKORO_VOICE_DEBATER_A = "am_adam"
-KOKORO_VOICE_DEBATER_B = "af_nicole"
+# Load Chatterbox Turbo model locally (optimized for speed/efficiency)
+log_msg = lambda msg: print(f"[DEBATE-PIPELINE] {msg}")
+log_msg("Loading Chatterbox TTS model...")
+tts_model = ChatterboxTurboTTS.from_pretrained(device="cuda" if torch.cuda.is_available() else "cpu")
 
 def log(message):
     print(f"[DEBATE-PIPELINE] {message}")
 
 
 # ==========================================
-# 1. KOKORO TTS AUDIO SYNTHESIS
+# 1. CHATTERBOX TTS AUDIO SYNTHESIS
 # ==========================================
-def synthesize_speech(text, voice_id, output_path):
-    log(f"Synthesizing natural audio with Kokoro TTS ({len(text)} chars)...")
+def synthesize_speech(text, reference_audio_path, output_path):
+    log(f"Synthesizing audio with Chatterbox TTS ({len(text)} chars)...")
     try:
-        samples, sample_rate = pykokoro.generate(text, voice=voice_id)
-        sf.write(output_path, samples, sample_rate)
+        # Generate audio using Chatterbox voice cloning reference clip
+        wav = tts_model.generate(text, audio_prompt_path=reference_audio_path)
+        torchaudio.save(output_path, wav, tts_model.sr)
         return output_path
     except Exception as e:
-        log(f"Kokoro TTS failed: {e}. Generating silent placeholder audio.")
+        log(f"Chatterbox TTS failed: {e}. Generating silent placeholder audio.")
         cmd = [
             "ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo", 
             "-t", "3", "-q:a", "9", "-acodec", "libmp3lame", output_path
@@ -124,9 +126,12 @@ def render_debate_video(audio_a, audio_b, output_filename="final_debate_output.m
 if __name__ == "__main__":
     log("Starting automated long-form debate generation pipeline...")
     
-    narrator_audio = synthesize_speech("Welcome to today's AI debate showdown.", KOKORO_VOICE_NARRATOR, "narrator.wav")
-    debater_a_audio = synthesize_speech("My position is clear and backed by core principles.", KOKORO_VOICE_DEBATER_A, "debater_a.wav")
-    debater_b_audio = synthesize_speech("I completely disagree; the counter-evidence reveals a different reality.", KOKORO_VOICE_DEBATER_B, "debater_b.wav")
+    # Note: Ensure you have a reference voice clip named reference_clip.wav in your directory
+    ref_voice = "reference_clip.wav"
+    
+    narrator_audio = synthesize_speech("Welcome to today's AI debate showdown.", ref_voice, "narrator.wav")
+    debater_a_audio = synthesize_speech("My position is clear and backed by core principles.", ref_voice, "debater_a.wav")
+    debater_b_audio = synthesize_speech("I completely disagree; the counter-evidence reveals a different reality.", ref_voice, "debater_b.wav")
     
     debate_transcript = "Debater A: Technology centralizes efficiency. Debater B: Decentralization protects autonomy."
     debate_scores = evaluate_debate_round(debate_transcript)
