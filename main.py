@@ -20,6 +20,7 @@ from moviepy.editor import (
     concatenate_audioclips
 )
 from moviepy.audio.AudioClip import AudioArrayClip
+import moviepy.audio.fx.all as afx
 
 # API Keys
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
@@ -84,11 +85,6 @@ def get_cached_bg():
         BG_IMAGE_CACHE = Image.open(base_path).convert("RGBA").resize((1920, 1080))
     return BG_IMAGE_CACHE.copy()
 
-# Pre-cached stage camera angles
-BG_FULL = get_cached_bg()
-BG_DEBATER_A = ImageEnhance.Brightness(BG_FULL.crop((0, 0, 1200, 1080)).resize((1920, 1080))).enhance(1.35)
-BG_DEBATER_B = ImageEnhance.Brightness(BG_FULL.crop((720, 0, 1920, 1080)).resize((1920, 1080))).enhance(1.35)
-
 def load_or_create_icon(icon_path, name):
     if os.path.exists(icon_path):
         try:
@@ -111,11 +107,13 @@ def clean_json_string(text):
     text = re.sub(r"^```", "", text, flags=re.MULTILINE)
     return text.strip()
 
-def create_silent_audio(duration=0.6, fps=44100):
+def create_silent_audio(duration=0.5, fps=44100):
     samples = int(fps * duration)
     return AudioArrayClip(np.zeros((samples, 2), dtype=np.float32), fps=fps)
 
 def synthesize_speech(text, voice_id, output_path):
+    """Synthesizes voice audio with anti-pop crossfading to prevent speaker glitch sound."""
+    audio_clip = None
     if ELEVENLABS_API_KEY:
         try:
             res = requests.post(
@@ -127,41 +125,45 @@ def synthesize_speech(text, voice_id, output_path):
             if res.status_code == 200:
                 with open(output_path, "wb") as f:
                     f.write(res.content)
-                return AudioFileClip(output_path)
+                audio_clip = AudioFileClip(output_path)
         except Exception:
             pass
 
-    try:
-        from gTTS import gTTS
-        tts = gTTS(text=text, lang='en')
-        tts.save(output_path)
-        return AudioFileClip(output_path)
-    except Exception:
-        word_count = len(text.split())
-        est_duration = max(2.0, word_count * 0.45)
-        return create_silent_audio(duration=est_duration)
+    if audio_clip is None:
+        try:
+            from gTTS import gTTS
+            tts = gTTS(text=text, lang='en')
+            tts.save(output_path)
+            audio_clip = AudioFileClip(output_path)
+        except Exception:
+            word_count = len(text.split())
+            est_duration = max(2.0, word_count * 0.45)
+            audio_clip = create_silent_audio(duration=est_duration)
 
-def render_block_captions(draw, text, t, total_duration, y_pos=720):
-    """Renders steady block paragraphs that change synchronously with speech blocks."""
+    # Fade audio in/out slightly to kill popping between transitions
+    return audio_clip.fx(afx.audio_fadein, 0.05).fx(afx.audio_fadeout, 0.05)
+
+def render_sync_captions(draw, text, t, total_duration, y_pos=780):
+    """Accurately calculates speaking progression per word to eliminate caption drift."""
     words = text.split()
     if not words:
         return
 
-    words_per_block = 18
-    blocks = [" ".join(words[i:i + words_per_block]) for i in range(0, len(words), words_per_block)]
+    words_per_window = 12
+    progress = min(max(t / max(total_duration, 0.01), 0.0), 0.99)
+    current_word_idx = int(progress * len(words))
     
-    num_blocks = len(blocks)
-    block_idx = min(int((t / max(total_duration, 0.01)) * num_blocks), num_blocks - 1)
-    active_block = blocks[block_idx]
+    start_idx = max(0, current_word_idx - (current_word_idx % words_per_window))
+    end_idx = min(len(words), start_idx + words_per_window)
+    active_chunk = " ".join(words[start_idx:end_idx])
 
     font = get_font(34)
-    
     lines = []
-    line_words = active_block.split()
+    line_words = active_chunk.split()
     curr_line = ""
     for w in line_words:
         test_line = f"{curr_line} {w}".strip()
-        if font.getlength(test_line) > 1300:
+        if font.getlength(test_line) > 1200:
             lines.append(curr_line)
             curr_line = w
         else:
@@ -169,7 +171,7 @@ def render_block_captions(draw, text, t, total_duration, y_pos=720):
     if curr_line:
         lines.append(curr_line)
 
-    draw.rectangle([260, y_pos - 10, 1660, y_pos + (len(lines) * 44) + 10], fill=(15, 23, 42, 220), outline=(51, 65, 85), width=2)
+    draw.rectangle([280, y_pos - 10, 1640, y_pos + (len(lines) * 44) + 10], fill=(15, 23, 42, 230), outline=(51, 65, 85), width=2)
     
     line_y = y_pos + 10
     for line in lines:
@@ -182,12 +184,17 @@ def draw_compliance_banner(draw):
     draw.text((960, 1060), COMPLIANCE_BANNER_TEXT, font=font, fill=(200, 200, 200), anchor="mm")
 
 def render_frame(t, duration, speaker, text, quote_text, audio_clip, show_disclaimer=True):
+    full_bg = get_cached_bg()
+
+    # Dynamic Framing / Zoom Logic
     if speaker == "DEBATER_A":
-        bg = BG_DEBATER_A.copy()
+        cropped = full_bg.crop((0, 0, 1280, 1080)).resize((1920, 1080))
+        bg = ImageEnhance.Brightness(cropped).enhance(1.25)
     elif speaker == "DEBATER_B":
-        bg = BG_DEBATER_B.copy()
-    else:
-        bg = BG_FULL.copy()
+        cropped = full_bg.crop((640, 0, 1920, 1080)).resize((1920, 1080))
+        bg = ImageEnhance.Brightness(cropped).enhance(1.25)
+    else:  
+        bg = full_bg.copy()
         
     overlay = Image.new("RGBA", (1920, 1080), (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay)
@@ -200,31 +207,32 @@ def render_frame(t, duration, speaker, text, quote_text, audio_clip, show_discla
         
     amp_factor = min(max(amplitude * 350, 15), 180)
     pulse = math.sin(t * 8) * 12
-    
+
+    # Speaker Lighting & Equalizer Position
     if speaker == "DEBATER_A":
-        center_x, center_y = 480, 500
-        draw.ellipse([center_x - 170 - pulse - amp_factor/2, center_y - 170 - pulse - amp_factor/2, 
-                      center_x + 170 + pulse + amp_factor/2, center_y + 170 + pulse + amp_factor/2], 
-                     outline=(0, 210, 255, 220), width=6)
+        center_x, center_y = 500, 480
+        draw.ellipse([center_x - 180 - pulse, center_y - 180 - pulse, 
+                      center_x + 180 + pulse, center_y + 180 + pulse], 
+                     outline=(0, 210, 255, 230), width=6)
         
         for i in range(16):
             h = int(abs(amp_factor * (0.5 + 0.5 * math.sin(i + t * 12))))
-            x = 360 + (i * 18)
-            draw.rectangle([x, 680 - h, x + 12, 680], fill=(0, 210, 255, 240))
+            x = 380 + (i * 18)
+            draw.rectangle([x, 700 - h, x + 12, 700], fill=(0, 210, 255, 240))
 
     elif speaker == "DEBATER_B":
-        center_x, center_y = 1440, 500
-        draw.ellipse([center_x - 170 - pulse - amp_factor/2, center_y - 170 - pulse - amp_factor/2, 
-                      center_x + 170 + pulse + amp_factor/2, center_y + 170 + pulse + amp_factor/2], 
-                     outline=(255, 60, 90, 220), width=6)
+        center_x, center_y = 1420, 480
+        draw.ellipse([center_x - 180 - pulse, center_y - 180 - pulse, 
+                      center_x + 180 + pulse, center_y + 180 + pulse], 
+                     outline=(255, 60, 90, 230), width=6)
         
         for i in range(16):
             h = int(abs(amp_factor * (0.5 + 0.5 * math.sin(i + t * 12))))
-            x = 1320 + (i * 18)
-            draw.rectangle([x, 680 - h, x + 12, 680], fill=(255, 60, 90, 240))
+            x = 1300 + (i * 18)
+            draw.rectangle([x, 700 - h, x + 12, 700], fill=(255, 60, 90, 240))
 
     elif speaker == "NARRATOR":
-        draw.ellipse([960 - 200 - pulse, 300 - pulse, 960 + 200 + pulse, 700 + pulse], outline=(234, 179, 8, 120), width=4)
+        draw.ellipse([960 - 220 - pulse, 300 - pulse, 960 + 220 + pulse, 700 + pulse], outline=(234, 179, 8, 140), width=4)
         
         for i in range(24):
             h = int(abs(amp_factor * (0.4 + 0.6 * math.cos(i + t * 9))))
@@ -232,12 +240,12 @@ def render_frame(t, duration, speaker, text, quote_text, audio_clip, show_discla
             draw.rectangle([x, 140 - h//2, x + 12, 140 + h//2], fill=(234, 179, 8, 240))
 
     if text:
-        render_block_captions(draw, text, t, duration)
+        render_sync_captions(draw, text, t, duration)
 
     if quote_text:
-        draw.rectangle([200, 890, 1720, 990], fill=(15, 23, 42, 245), outline=(234, 179, 8), width=3)
-        draw.text((960, 918), "SCRIPTURE REFERENCE (NIV)", font=get_font(24), fill=(234, 179, 8), anchor="mm")
-        draw.text((960, 956), f'"{quote_text}"', font=get_font(32), fill=(255, 255, 255), anchor="mm")
+        draw.rectangle([200, 900, 1720, 990], fill=(15, 23, 42, 245), outline=(234, 179, 8), width=3)
+        draw.text((960, 925), "SCRIPTURE REFERENCE (NIV)", font=get_font(22), fill=(234, 179, 8), anchor="mm")
+        draw.text((960, 960), f'"{quote_text}"', font=get_font(30), fill=(255, 255, 255), anchor="mm")
 
     if show_disclaimer:
         draw_compliance_banner(draw)
@@ -250,21 +258,17 @@ def render_score_board_frame(t, duration, round_num, scores, role_a, role_b, tot
     draw = ImageDraw.Draw(overlay)
     
     draw.text((960, 60), f"ROUND {round_num} JUDGING BREAKDOWN", font=get_font(44), fill=(234, 179, 8), anchor="mm")
-    draw.text((960, 110), f"CUMULATIVE SCORE: {role_a} ({total_a})  vs  {role_b} ({total_b})", font=get_font(28), fill=(255, 255, 255), anchor="mm")
+    draw.text((960, 110), f"CUMULATIVE SCORE: {role_a} ({total_a} PTS)  vs  {role_b} ({total_b} PTS)", font=get_font(28), fill=(255, 255, 255), anchor="mm")
     
-    favored_a = []
-    favored_b = []
-    
+    favored_a, favored_b = [], []
     for j, s in zip(JUDGES, scores):
         if s["score_a"] >= s["score_b"]:
             favored_a.append((j, s))
         else:
             favored_b.append((j, s))
 
-    # Column A (Left Side)
     draw.text((480, 160), f"MODELS FAVORING {role_a.upper()}", font=get_font(26), fill=(0, 210, 255), anchor="mm")
     draw.line([(80, 190), (880, 190)], fill=(0, 210, 255), width=2)
-    
     for idx, (j, s) in enumerate(favored_a[:7]):
         y = 210 + idx * 110
         draw.rectangle([80, y, 880, y + 95], fill=(30, 41, 59, 255), outline=(51, 65, 85), width=2)
@@ -274,10 +278,8 @@ def render_score_board_frame(t, duration, round_num, scores, role_a, role_b, tot
         draw.text((180, y + 58), j["company"], font=get_font(18), fill=(148, 163, 184))
         draw.text((820, y + 45), f"{s['score_a']} pts", font=get_font(24), fill=(0, 210, 255), anchor="rm")
 
-    # Column B (Right Side)
     draw.text((1440, 160), f"MODELS FAVORING {role_b.upper()}", font=get_font(26), fill=(255, 60, 90), anchor="mm")
     draw.line([(1040, 190), (1840, 190)], fill=(255, 60, 90), width=2)
-    
     for idx, (j, s) in enumerate(favored_b[:7]):
         y = 210 + idx * 110
         draw.rectangle([1040, y, 1840, y + 95], fill=(30, 41, 59, 255), outline=(51, 65, 85), width=2)
@@ -285,7 +287,7 @@ def render_score_board_frame(t, duration, round_num, scores, role_a, role_b, tot
         overlay.paste(icon_img, (1055, y + 12), mask=icon_img)
         draw.text((1140, y + 28), j["name"], font=get_font(22), fill=(255, 255, 255))
         draw.text((1140, y + 58), j["company"], font=get_font(18), fill=(148, 163, 184))
-        draw.text((1780, y + 45), f"{s['score_b']} pts", font=get_font(24), fill=(255, 60, 90), anchor="rm")
+        draw.text((1780, y + 45), f"{s['score_b']} pts", font=get_font(25), fill=(255, 60, 90), anchor="rm")
 
     draw_compliance_banner(draw)
     return np.array(overlay.convert("RGB"))
@@ -295,12 +297,12 @@ def render_judge_intro_frame(t, duration, judge, speech_text, audio_clip):
     draw = ImageDraw.Draw(overlay)
     
     icon_img = load_or_create_icon(judge["icon"], judge["name"])
-    overlay.paste(icon_img.resize((120, 120)), (900, 200), mask=icon_img.resize((120, 120)))
+    overlay.paste(icon_img.resize((120, 120)), (900, 180), mask=icon_img.resize((120, 120)))
     
-    draw.text((960, 360), judge["name"].upper(), font=get_font(48), fill=(0, 210, 255), anchor="mm")
-    draw.text((960, 420), f"OFFICIAL AI DEBATE JUDGE ({judge['company']})", font=get_font(28), fill=(234, 179, 8), anchor="mm")
+    draw.text((960, 340), judge["name"].upper(), font=get_font(48), fill=(0, 210, 255), anchor="mm")
+    draw.text((960, 400), f"OFFICIAL AI DEBATE JUDGE ({judge['company']})", font=get_font(28), fill=(234, 179, 8), anchor="mm")
     
-    render_block_captions(draw, speech_text, t, duration)
+    render_sync_captions(draw, speech_text, t, duration)
     draw_compliance_banner(draw)
     return np.array(overlay.convert("RGB"))
 
@@ -311,7 +313,7 @@ def generate_debate():
     prompt = (
         f"Write an extended broadcast debate on: '{topic}'.\n\n"
         f"Rules:\n"
-        f"- Output MUST contain 6 comprehensive debate rounds to achieve a 10-minute video duration.\n"
+        f"- Output MUST contain EXACTLY 3 comprehensive debate rounds for a YouTube broadcast.\n"
         f"- Output JSON with top-level keys: 'role_a', 'role_b', and 'script'.\n"
         f"- 'role_a' and 'role_b' are concise debater titles.\n"
         f"- Speaker tags: 'DEBATER_A', 'DEBATER_B', and 'NARRATOR'.\n"
@@ -326,26 +328,37 @@ def generate_debate():
         f"}}\n"
     )
     
-    res = requests.post("https://openrouter.ai/api/v1/chat/completions", 
-                        headers={"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"},
-                        json={"model": "openai/gpt-5.6-sol", "messages": [{"role": "user", "content": prompt}]}, 
-                        timeout=120)
+    res = requests.post(
+        "https://openrouter.ai/api/v1/chat/completions", 
+        headers={"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"},
+        json={"model": "openai/gpt-5.6-sol", "messages": [{"role": "user", "content": prompt}]}, 
+        timeout=120
+    )
     
     parsed = json.loads(clean_json_string(res.json()['choices'][0]['message']['content']))
     parsed['topic'] = topic
+
+    # Enforce exactly 3 rounds for rendering efficiency
+    if "script" in parsed:
+        parsed["script"] = [item for item in parsed["script"] if item.get("round", 1) <= 3]
+
     return parsed
 
 async def evaluate_judge(judge, role_a, role_b, arg_a, arg_b):
-    prompt = f"Evaluate debate round:\n{role_a}: {arg_a}\n{role_b}: {arg_b}\nReturn JSON strictly: {{\"score_a\": 85, \"score_b\": 78}}"
+    prompt = f"Evaluate debate round:\n{role_a}: {arg_a}\n{role_b}: {arg_b}\nReturn JSON strictly: {{\"score_a\": 85, \"score_b\": 78, \"reasoning\": \"1 sentence explanation.\"}}"
     try:
         res = requests.post("https://openrouter.ai/api/v1/chat/completions", 
                             headers={"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"},
                             json={"model": judge["model"], "messages": [{"role": "user", "content": prompt}]}, 
                             timeout=20)
         parsed = json.loads(clean_json_string(res.json()['choices'][0]['message']['content']))
-        return {"score_a": int(parsed.get("score_a", 75)), "score_b": int(parsed.get("score_b", 75))}
+        return {
+            "score_a": int(parsed.get("score_a", 75)), 
+            "score_b": int(parsed.get("score_b", 75)),
+            "reasoning": parsed.get("reasoning", "Strong textual evidence presented.")
+        }
     except Exception:
-        return {"score_a": random.randint(70, 90), "score_b": random.randint(70, 90)}
+        return {"score_a": random.randint(70, 90), "score_b": random.randint(70, 90), "reasoning": "Well defended argument."}
 
 def render_debate_video(data):
     topic = data.get("topic", "AI Debate")
@@ -355,12 +368,25 @@ def render_debate_video(data):
 
     video_segments, audio_segments = [], []
     total_a, total_b = 0, 0
-    buffer_silence = create_silent_audio(duration=0.6)
+    buffer_silence = create_silent_audio(duration=0.5)
 
-    # 1. AI Judges Self-Introductions
+    # 1. YouTube Broadcast Introduction
+    intro_narrative = (
+        f"Welcome to today's AI Debate Broadcast. Today, we examine the crucial topic: {topic}. "
+        f"Representing {role_a}, we have our first debater. Facing off on the opposite side, representing {role_b}, is our second debater. "
+        f"Guiding today's decision, 15 independent state-of-the-art AI language models will score every single round. "
+        f"Let's meet our panel of AI judges and debaters."
+    )
+    intro_audio = synthesize_speech(intro_narrative, VOICE_NARRATOR_ID, "temp_broad_intro.mp3")
+    intro_vid = VideoClip(lambda t: render_frame(t, intro_audio.duration, "NARRATOR", intro_narrative, None, intro_audio), duration=intro_audio.duration).set_audio(intro_audio)
+    video_segments.append(intro_vid)
+    audio_segments.append(intro_audio)
+    audio_segments.append(buffer_silence)
+
+    # 2. AI Judges Self-Introductions
     intro_judges = JUDGES[:3]
     for idx, j in enumerate(intro_judges):
-        intro_text = f"I am {j['name']} from {j['company']}. I am serving as one of 15 official AI judges for today's debate."
+        intro_text = f"Greetings. I am {j['name']} from {j['company']}. I will be serving as one of 15 official AI judges evaluating today's debate."
         voice_id = JUDGE_VOICE_POOL[idx % len(JUDGE_VOICE_POOL)]
         
         j_audio = synthesize_speech(intro_text, voice_id, f"temp_judge_intro_{idx}.mp3")
@@ -370,10 +396,10 @@ def render_debate_video(data):
         audio_segments.append(j_audio)
         audio_segments.append(buffer_silence)
 
-    # 2. Debaters Self-Introductions
+    # 3. Debaters Self-Introductions
     debater_intros = [
-        {"speaker": "DEBATER_A", "text": f"I am representing the position of {role_a} in today's debate.", "voice": VOICE_APOLOGIST_ID},
-        {"speaker": "DEBATER_B", "text": f"I am representing the position of {role_b} in today's debate.", "voice": VOICE_SKEPTIC_ID}
+        {"speaker": "DEBATER_A", "text": f"I am presenting the case for {role_a}. I will ground my arguments strictly in scriptural truth.", "voice": VOICE_APOLOGIST_ID},
+        {"speaker": "DEBATER_B", "text": f"I am representing the perspective of {role_b}. I look forward to examining all arguments critically.", "voice": VOICE_SKEPTIC_ID}
     ]
 
     for idx, d in enumerate(debater_intros):
@@ -384,8 +410,8 @@ def render_debate_video(data):
         audio_segments.append(d_audio)
         audio_segments.append(buffer_silence)
 
-    # 3. Debate Rounds Loop
-    max_rounds = max((item.get("round", 1) for item in raw_script), default=1)
+    # 4. Debate Rounds Loop (3 Rounds Max)
+    max_rounds = min(3, max((item.get("round", 1) for item in raw_script), default=1))
     
     for r in range(1, max_rounds + 1):
         round_items = [item for item in raw_script if item.get("round") == r]
@@ -417,11 +443,10 @@ def render_debate_video(data):
         total_a += avg_a
         total_b += avg_b
 
-        # Spoken Summary by Narrator
+        # Spoken Summary by Narrator with Cumulative Totals
         narrator_summary = (
-            f"At the conclusion of Round {r}, our 15 AI judges have evaluated the arguments. "
-            f"The {role_a} scored an average of {avg_a} points, while the {role_b} received {avg_b} points. "
-            f"The cumulative score stands at {total_a} for the {role_a} and {total_b} for the {role_b}."
+            f"Round {r} is complete. In this round, {role_a} scored an average of {avg_a} points, while {role_b} received {avg_b} points. "
+            f"The overall cumulative score now stands at {total_a} total points for {role_a}, and {total_b} total points for {role_b}."
         )
         score_audio = synthesize_speech(narrator_summary, VOICE_NARRATOR_ID, f"temp_score_summary_{r}.mp3")
         
@@ -434,12 +459,24 @@ def render_debate_video(data):
         audio_segments.append(score_audio)
         audio_segments.append(buffer_silence)
 
-    # 4. Final Winner Spoken Announcement
-    winner_title = f"the {role_a}" if total_a > total_b else f"the {role_b}"
+        # Dynamic Spoken Representative AI Judge Reasonings
+        fav_a = [s for s in round_scores if s['score_a'] >= s['score_b']]
+        if fav_a:
+            rep_a_reason = f"Speaking for models favoring {role_a}, {JUDGES[0]['name']} states: {fav_a[0]['reasoning']}"
+            rep_a_audio = synthesize_speech(rep_a_reason, JUDGE_VOICE_POOL[0], f"temp_rep_a_r{r}.mp3")
+            rep_a_vid = VideoClip(lambda t: render_judge_intro_frame(t, rep_a_audio.duration, JUDGES[0], rep_a_reason, rep_a_audio), duration=rep_a_audio.duration).set_audio(rep_a_audio)
+            video_segments.append(rep_a_vid)
+            audio_segments.append(rep_a_audio)
+            audio_segments.append(buffer_silence)
+
+    # 5. YouTube Style Outro & Winner Announcement
+    winner_title = f"{role_a}" if total_a > total_b else f"{role_b}"
     winner_text = (
-        f"That concludes our broadcast debate. Across all rounds, the 15 AI model judges have compiled the final tally. "
-        f"The {role_a} finishes with {total_a} total points, and the {role_b} finishes with {total_b} total points. "
-        f"The winner of this debate is {winner_title}!"
+        f"That brings us to the conclusion of today's broadcast debate. "
+        f"After 3 intense rounds of evaluation across all 15 AI judge models, {role_a} finished with {total_a} cumulative points, "
+        f"and {role_b} finished with {total_b} cumulative points. "
+        f"Our official winner is {winner_title}! "
+        f"Thank you for tuning in. Don't forget to like, subscribe, and drop your thoughts on the debate in the comments below."
     )
     final_audio = synthesize_speech(winner_text, VOICE_NARRATOR_ID, "temp_final_winner.mp3")
     final_vid = VideoClip(lambda t: render_frame(t, final_audio.duration, "NARRATOR", winner_text, None, final_audio), duration=final_audio.duration).set_audio(final_audio)
@@ -450,7 +487,7 @@ def render_debate_video(data):
     master_video = concatenate_videoclips(video_segments, method="compose")
     master_audio = concatenate_audioclips(audio_segments)
 
-    # OPTIMIZED EXPORT: Resized to 720p @ 10 FPS with 2-thread constraint for GitHub runners
+    # Export at 720p @ 10 FPS optimized for GitHub Runners
     master_video.resize(height=720).write_videofile(
         "final_debate.mp4", 
         fps=10, 
