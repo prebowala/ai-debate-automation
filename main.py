@@ -112,7 +112,7 @@ def create_silent_audio(duration=0.5, fps=44100):
     return AudioArrayClip(np.zeros((samples, 2), dtype=np.float32), fps=fps)
 
 def synthesize_speech(text, voice_id, output_path):
-    """Synthesizes voice audio with anti-pop crossfading to prevent speaker glitch sound."""
+    """Synthesizes voice audio with network timeouts and anti-pop fading."""
     audio_clip = None
     if ELEVENLABS_API_KEY:
         try:
@@ -120,14 +120,14 @@ def synthesize_speech(text, voice_id, output_path):
                 f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}",
                 headers={"xi-api-key": ELEVENLABS_API_KEY, "Content-Type": "application/json"},
                 json={"text": text},
-                timeout=45
+                timeout=(5, 20)  # 5s connect timeout, 20s read timeout
             )
             if res.status_code == 200:
                 with open(output_path, "wb") as f:
                     f.write(res.content)
                 audio_clip = AudioFileClip(output_path)
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"ElevenLabs synthesis failed: {e}. Falling back to gTTS/Silence.")
 
     if audio_clip is None:
         try:
@@ -140,11 +140,9 @@ def synthesize_speech(text, voice_id, output_path):
             est_duration = max(2.0, word_count * 0.45)
             audio_clip = create_silent_audio(duration=est_duration)
 
-    # Fade audio in/out slightly to kill popping between transitions
     return audio_clip.fx(afx.audio_fadein, 0.05).fx(afx.audio_fadeout, 0.05)
 
 def render_sync_captions(draw, text, t, total_duration, y_pos=780):
-    """Accurately calculates speaking progression per word to eliminate caption drift."""
     words = text.split()
     if not words:
         return
@@ -186,7 +184,6 @@ def draw_compliance_banner(draw):
 def render_frame(t, duration, speaker, text, quote_text, audio_clip, show_disclaimer=True):
     full_bg = get_cached_bg()
 
-    # Dynamic Framing / Zoom Logic
     if speaker == "DEBATER_A":
         cropped = full_bg.crop((0, 0, 1280, 1080)).resize((1920, 1080))
         bg = ImageEnhance.Brightness(cropped).enhance(1.25)
@@ -208,7 +205,6 @@ def render_frame(t, duration, speaker, text, quote_text, audio_clip, show_discla
     amp_factor = min(max(amplitude * 350, 15), 180)
     pulse = math.sin(t * 8) * 12
 
-    # Speaker Lighting & Equalizer Position
     if speaker == "DEBATER_A":
         center_x, center_y = 500, 480
         draw.ellipse([center_x - 180 - pulse, center_y - 180 - pulse, 
@@ -332,13 +328,12 @@ def generate_debate():
         "https://openrouter.ai/api/v1/chat/completions", 
         headers={"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"},
         json={"model": "openai/gpt-5.6-sol", "messages": [{"role": "user", "content": prompt}]}, 
-        timeout=120
+        timeout=(5, 30)  # 5s connect timeout, 30s read timeout
     )
     
     parsed = json.loads(clean_json_string(res.json()['choices'][0]['message']['content']))
     parsed['topic'] = topic
 
-    # Enforce exactly 3 rounds for rendering efficiency
     if "script" in parsed:
         parsed["script"] = [item for item in parsed["script"] if item.get("round", 1) <= 3]
 
@@ -350,7 +345,7 @@ async def evaluate_judge(judge, role_a, role_b, arg_a, arg_b):
         res = requests.post("https://openrouter.ai/api/v1/chat/completions", 
                             headers={"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"},
                             json={"model": judge["model"], "messages": [{"role": "user", "content": prompt}]}, 
-                            timeout=20)
+                            timeout=(5, 15))
         parsed = json.loads(clean_json_string(res.json()['choices'][0]['message']['content']))
         return {
             "score_a": int(parsed.get("score_a", 75)), 
@@ -443,7 +438,6 @@ def render_debate_video(data):
         total_a += avg_a
         total_b += avg_b
 
-        # Spoken Summary by Narrator with Cumulative Totals
         narrator_summary = (
             f"Round {r} is complete. In this round, {role_a} scored an average of {avg_a} points, while {role_b} received {avg_b} points. "
             f"The overall cumulative score now stands at {total_a} total points for {role_a}, and {total_b} total points for {role_b}."
@@ -459,7 +453,6 @@ def render_debate_video(data):
         audio_segments.append(score_audio)
         audio_segments.append(buffer_silence)
 
-        # Dynamic Spoken Representative AI Judge Reasonings
         fav_a = [s for s in round_scores if s['score_a'] >= s['score_b']]
         if fav_a:
             rep_a_reason = f"Speaking for models favoring {role_a}, {JUDGES[0]['name']} states: {fav_a[0]['reasoning']}"
@@ -487,14 +480,14 @@ def render_debate_video(data):
     master_video = concatenate_videoclips(video_segments, method="compose")
     master_audio = concatenate_audioclips(audio_segments)
 
-    # Export at 720p @ 10 FPS optimized for GitHub Runners
+    # Single-thread write strictly forced to prevent GitHub Actions FFmpeg deadlocks
     master_video.resize(height=720).write_videofile(
         "final_debate.mp4", 
         fps=10, 
         codec="libx264", 
         audio_codec="aac", 
         preset="ultrafast",
-        threads=2
+        threads=1
     )
     master_audio.write_audiofile("output_audio.mp3")
 
