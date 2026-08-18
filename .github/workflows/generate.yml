@@ -1,17 +1,15 @@
 name: Generate AI Debate Video
 
 on:
-  workflow_dispatch:
   schedule:
-    - cron: '0 0 * * *'
-
-permissions:
-  contents: write
+    # Runs automatically every day at 12:00 PM UTC
+    - cron: '0 12 * * *'
+  workflow_dispatch:
 
 jobs:
-  generate:
+  build-and-render:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
 
     steps:
       - name: Checkout Code
@@ -21,23 +19,19 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
+          cache: 'pip'
 
-      - name: Set up FFmpeg
-        uses: FedericoCarboni/setup-ffmpeg@v3
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Install Fonts
+      - name: Install System Dependencies (FFmpeg & Fonts)
         run: |
-          sudo apt-get update && sudo apt-get install -y fonts-dejavu-core
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg fonts-dejavu-core
 
       - name: Install Python Dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install requests pillow gTTS numpy
+          pip install requests pillow numpy gTTS edge-tts
 
       - name: Run Debate Generator
-        timeout-minutes: 8
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
@@ -46,8 +40,8 @@ jobs:
       - name: Commit and Push Generated Video
         if: success()
         run: |
-          git config --local user.email "github-actions[bot]@users.noreply.github.com"
-          git config --local user.name "github-actions[bot]"
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git add final_debate.mp4
-          git commit -m "Automated render: New AI Debate Video" || exit 0
+          git commit -m "Auto-generated AI Debate Video [skip ci]" || echo "No changes to commit"
           git push
