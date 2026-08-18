@@ -178,9 +178,11 @@ def render_frame(t, duration, speaker, text, bible_quote, audio_clip):
                       center_x + 140 + amp_factor/2, center_y + 140 + amp_factor/2], 
                      outline=(0, 210, 255, 180), width=4)
         for i in range(12):
-            h = int(amp_factor * (0.5 + 0.5 * math.sin(i + t * 10)))
+            h = int(abs(amp_factor * (0.5 + 0.5 * math.sin(i + t * 10))))
             x = 360 + (i * 20)
-            draw.rectangle([x, 820 - h, x + 14, 820], fill=(0, 210, 255, 230))
+            y0 = 820 - h
+            y1 = 820
+            draw.rectangle([x, min(y0, y1), x + 14, max(y0, y1)], fill=(0, 210, 255, 230))
 
     elif speaker == "SKEPTIC":
         center_x, center_y = 1440, 650
@@ -188,15 +190,19 @@ def render_frame(t, duration, speaker, text, bible_quote, audio_clip):
                       center_x + 140 + amp_factor/2, center_y + 140 + amp_factor/2], 
                      outline=(255, 60, 90, 180), width=4)
         for i in range(12):
-            h = int(amp_factor * (0.5 + 0.5 * math.sin(i + t * 10)))
+            h = int(abs(amp_factor * (0.5 + 0.5 * math.sin(i + t * 10))))
             x = 1320 + (i * 20)
-            draw.rectangle([x, 820 - h, x + 14, 820], fill=(255, 60, 90, 230))
+            y0 = 820 - h
+            y1 = 820
+            draw.rectangle([x, min(y0, y1), x + 14, max(y0, y1)], fill=(255, 60, 90, 230))
 
     elif speaker == "NARRATOR":
         for i in range(20):
-            h = int(amp_factor * (0.4 + 0.6 * math.cos(i + t * 8)))
+            h = int(abs(amp_factor * (0.4 + 0.6 * math.cos(i + t * 8))))
+            y0 = int(120 - h / 2)
+            y1 = int(120 + h / 2)
             x = 760 + (i * 20)
-            draw.rectangle([x, 120 - h/2, x + 14, 120 + h/2], fill=(234, 179, 8, 230))
+            draw.rectangle([x, min(y0, y1), x + 14, max(y0, y1)], fill=(234, 179, 8, 230))
 
     if text:
         render_karaoke_captions(draw, text, t, duration)
@@ -226,9 +232,11 @@ def render_judge_intro_frame(t, duration, judge, speech_text, audio_clip):
         
     amp_factor = min(max(amplitude * 300, 15), 180)
     for i in range(16):
-        h = int(amp_factor * (0.5 + 0.5 * math.sin(i + t * 10)))
+        h = int(abs(amp_factor * (0.5 + 0.5 * math.sin(i + t * 10))))
+        y0 = int(480 - h / 2)
+        y1 = int(480 + h / 2)
         x = 800 + (i * 20)
-        draw.rectangle([x, 480 - h/2, x + 14, 480 + h/2], fill=(0, 210, 255, 230))
+        draw.rectangle([x, min(y0, y1), x + 14, max(y0, y1)], fill=(0, 210, 255, 230))
 
     render_karaoke_captions(draw, speech_text, t, duration, y_pos=600)
     return np.array(overlay.convert("RGB"))
@@ -270,7 +278,7 @@ def render_debate_video(raw_script, apologist_name, skeptic_name):
     total_a, total_b = 0, 0
     buffer_silence = create_silent_audio(duration=0.6)
 
-    # 1. AI Judges Self-Introductions Sequence (4 representative judges introduced verbally)
+    # 1. AI Judges Self-Introductions Sequence (5 representative judges introduced verbally)
     intro_judges = JUDGES[:5]
     for idx, j in enumerate(intro_judges):
         intro_text = f"I am {j['name']} from {j['company']}. I am serving as one of 15 official AI judges for this debate."
