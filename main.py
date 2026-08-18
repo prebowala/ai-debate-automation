@@ -146,18 +146,26 @@ def generate_debate():
 
 async def evaluate_judge(judge, role_a, role_b, arg_a, arg_b):
     prompt = f"Evaluate debate round:\n{role_a}: {arg_a}\n{role_b}: {arg_b}\nReturn JSON strictly: {{\"score_a\": 85, \"score_b\": 78, \"reasoning\": \"1 sentence.\"}}"
+    
+    def _call_api():
+        return requests.post(
+            "https://openrouter.ai/api/v1/chat/completions", 
+            headers={"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"},
+            json={"model": judge["model"], "messages": [{"role": "user", "content": prompt}]}, 
+            timeout=(3, 5)
+        )
+
     try:
-        res = requests.post("https://openrouter.ai/api/v1/chat/completions", 
-                            headers={"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"},
-                            json={"model": judge["model"], "messages": [{"role": "user", "content": prompt}]}, 
-                            timeout=(3, 6))
+        # Enforces a hard 6-second timeout per judge thread
+        res = await asyncio.wait_for(asyncio.to_thread(_call_api), timeout=6.0)
         parsed = json.loads(clean_json_string(res.json()['choices'][0]['message']['content']))
         return {
             "score_a": int(parsed.get("score_a", 75)), 
             "score_b": int(parsed.get("score_b", 75)),
             "reasoning": parsed.get("reasoning", "Strong textual evidence presented.")
         }
-    except Exception:
+    except Exception as e:
+        log(f"Judge model {judge['name']} timed out or failed ({e}). Using fallback scores.")
         return {"score_a": random.randint(70, 90), "score_b": random.randint(70, 90), "reasoning": "Well defended argument."}
 
 def draw_compliance_banner(draw):
