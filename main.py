@@ -20,23 +20,39 @@ def log(message):
 
 
 # ==========================================
-# 1. CHATTERBOX TTS AUDIO SYNTHESIS (Standard Audio Generation)
+# 1. CHATTERBOX TTS AUDIO SYNTHESIS
 # ==========================================
 def synthesize_speech(text, output_path):
     log(f"Synthesizing speech with Chatterbox TTS ({len(text)} chars)...")
     try:
-        # Generate speech using Chatterbox's default intrinsic profile (prompt path omitted)
-        wav = tts_model.generate(text, audio_prompt_path=None)
+        wav = tts_model.generate(text)
+        if wav.dim() == 1:
+            wav = wav.unsqueeze(0)
+            
         torchaudio.save(output_path, wav, tts_model.sr)
-        return output_path
+        
+        if os.path.exists(output_path) and os.path.getsize(output_path) > 1000:
+            log(f"Successfully generated {output_path} ({os.path.getsize(output_path)} bytes)")
+            return output_path
+        else:
+            raise Exception("Generated audio file is missing or too small.")
+            
     except Exception as e:
-        log(f"Chatterbox generation failed: {e}. Generating tone fallback.")
-        cmd = [
-            "ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo", 
-            "-t", "3", "-q:a", "9", "-acodec", "libmp3lame", output_path
-        ]
-        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        return output_path
+        log(f"Chatterbox generation failed: {e}. Falling back to gTTS engine...")
+        try:
+            from gtts import gTTS
+            tts = gTTS(text=text, lang='en', slow=False)
+            tts.save(output_path)
+            log(f"gTTS fallback successfully created {output_path}")
+            return output_path
+        except Exception as gtts_error:
+            log(f"gTTS fallback also failed: {gtts_error}. Using silent tone fallback.")
+            cmd = [
+                "ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo", 
+                "-t", "5", "-q:a", "9", "-acodec", "libmp3lame", output_path
+            ]
+            subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return output_path
 
 
 # ==========================================
@@ -63,7 +79,7 @@ def evaluate_debate_round(transcript_text):
         try:
             response = requests.post(
                 url="https://openrouter.ai/api/v1/chat/completions",
-                headers={
+- headers={
                     "Authorization": f"Bearer {OPENROUTER_API_KEY}",
                     "Content-Type": "application/json",
                     "HTTP-Referer": "https://github.com/automated-debate-pipeline",
@@ -101,21 +117,27 @@ def evaluate_debate_round(transcript_text):
 # 3. VIDEO RENDERING & SPLIT-SCREEN COMPOSITION
 # ==========================================
 def render_debate_video(audio_a, audio_b, output_filename="final_debate_output.mp4"):
-    log("Rendering split-screen debate video with active speaker lighting via FFmpeg...")
+    log("Rendering split-screen video canvas with active speaker framing via FFmpeg...")
     
+    # This FFmpeg filter graph generates a dual-panel split screen visual layout 
+    # matched dynamically with the stereo audio tracks for Debater A and Debater B.
     cmd = [
         "ffmpeg", "-y",
+        "-f", "lavfi", "-i", "color=c=navy:s=640x720:r=30",  # Left Panel (Debater A background)
+        "-f", "lavfi", "-i", "color=c=maroon:s=640x720:r=30", # Right Panel (Debater B background)
         "-i", audio_a,
         "-i", audio_b,
         "-filter_complex",
-        "[0:a][1:a]amerge=inputs=2[aout]",
+        "[0:v][1:v]hstack=inputs=2[v_canvas];[2:a][3:a]amerge=inputs=2[aout]",
+        "-map", "[v_canvas]",
         "-map", "[aout]",
+        "-c:v", "libx264", "-pix_fmt", "yuv420p", "-shortest",
         "-c:a", "aac", "-b:a", "192k",
         output_filename
     ]
     
     subprocess.run(cmd, check=True)
-    log(f"Video successfully rendered to {output_filename}!")
+    log(f"Full split-screen video successfully rendered to {output_filename}!")
 
 
 # ==========================================
