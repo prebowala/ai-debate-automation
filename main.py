@@ -84,17 +84,22 @@ def get_cached_bg():
         BG_IMAGE_CACHE = Image.open(base_path).convert("RGBA").resize((1920, 1080))
     return BG_IMAGE_CACHE.copy()
 
+# Pre-cached stage camera angles
+BG_FULL = get_cached_bg()
+BG_DEBATER_A = ImageEnhance.Brightness(BG_FULL.crop((0, 0, 1200, 1080)).resize((1920, 1080))).enhance(1.35)
+BG_DEBATER_B = ImageEnhance.Brightness(BG_FULL.crop((720, 0, 1920, 1080)).resize((1920, 1080))).enhance(1.35)
+
 def load_or_create_icon(icon_path, name):
     if os.path.exists(icon_path):
         try:
-            return Image.open(icon_path).convert("RGBA").resize((80, 80))
+            return Image.open(icon_path).convert("RGBA").resize((70, 70))
         except Exception:
             pass
-    badge = Image.new("RGBA", (80, 80), (30, 41, 59, 255))
+    badge = Image.new("RGBA", (70, 70), (30, 41, 59, 255))
     draw = ImageDraw.Draw(badge)
-    draw.rectangle([0, 0, 79, 79], outline=(0, 180, 255, 255), width=2)
+    draw.rectangle([0, 0, 69, 69], outline=(0, 180, 255, 255), width=2)
     initials = "".join([w[0] for w in name.split()[:2]]).upper()
-    draw.text((40, 40), initials, font=get_font(26), fill=(255, 255, 255), anchor="mm")
+    draw.text((35, 35), initials, font=get_font(24), fill=(255, 255, 255), anchor="mm")
     return badge
 
 def sanitize_speech_text(text):
@@ -136,28 +141,28 @@ def synthesize_speech(text, voice_id, output_path):
         est_duration = max(2.0, word_count * 0.45)
         return create_silent_audio(duration=est_duration)
 
-def render_chunked_captions(draw, text, t, total_duration, y_pos=760):
-    """Renders phrase-based multi-line captions without distracting word-by-word color flicker."""
+def render_block_captions(draw, text, t, total_duration, y_pos=720):
+    """Renders steady block paragraphs that change synchronously with speech blocks."""
     words = text.split()
     if not words:
         return
 
-    words_per_chunk = 12
-    chunks = [" ".join(words[i:i + words_per_chunk]) for i in range(0, len(words), words_per_chunk)]
+    words_per_block = 18
+    blocks = [" ".join(words[i:i + words_per_block]) for i in range(0, len(words), words_per_block)]
     
-    num_chunks = len(chunks)
-    chunk_index = min(int((t / max(total_duration, 0.01)) * num_chunks), num_chunks - 1)
-    active_phrase = chunks[chunk_index]
+    num_blocks = len(blocks)
+    block_idx = min(int((t / max(total_duration, 0.01)) * num_blocks), num_blocks - 1)
+    active_block = blocks[block_idx]
 
-    font = get_font(36)
+    font = get_font(34)
     
-    # Simple multi-line wrap
+    # Text word-wrapping for caption block
     lines = []
-    line_words = active_phrase.split()
+    line_words = active_block.split()
     curr_line = ""
     for w in line_words:
         test_line = f"{curr_line} {w}".strip()
-        if font.getlength(test_line) > 1400:
+        if font.getlength(test_line) > 1300:
             lines.append(curr_line)
             curr_line = w
         else:
@@ -165,28 +170,26 @@ def render_chunked_captions(draw, text, t, total_duration, y_pos=760):
     if curr_line:
         lines.append(curr_line)
 
-    line_y = y_pos - (len(lines) * 22)
+    draw.rectangle([260, y_pos - 10, 1660, y_pos + (len(lines) * 44) + 10], fill=(15, 23, 42, 220), outline=(51, 65, 85), width=2)
+    
+    line_y = y_pos + 10
     for line in lines:
-        draw.text((960, line_y), line, font=font, fill=(255, 255, 255), anchor="mm", stroke_width=4, stroke_fill=(0, 0, 0))
-        line_y += 46
+        draw.text((960, line_y), line, font=font, fill=(255, 255, 255), anchor="mm")
+        line_y += 42
 
 def draw_compliance_banner(draw):
-    draw.rectangle([0, 1040, 1920, 1080], fill=(0, 0, 0, 210))
+    draw.rectangle([0, 1040, 1920, 1080], fill=(0, 0, 0, 220))
     font = get_font(18)
     draw.text((960, 1060), COMPLIANCE_BANNER_TEXT, font=font, fill=(200, 200, 200), anchor="mm")
 
 def render_frame(t, duration, speaker, text, quote_text, audio_clip, show_disclaimer=True):
-    bg_full = get_cached_bg()
-    
-    # 1. Dynamic Camera Framing and Stage Lighting Zoom
+    # Dynamic Stage Camera Angle and Zoom Selection
     if speaker == "DEBATER_A":
-        crop_box = bg_full.crop((0, 0, 1280, 1080)).resize((1920, 1080))
-        bg = ImageEnhance.Brightness(crop_box).enhance(1.25)
+        bg = BG_DEBATER_A.copy()
     elif speaker == "DEBATER_B":
-        crop_box = bg_full.crop((640, 0, 1920, 1080)).resize((1920, 1080))
-        bg = ImageEnhance.Brightness(crop_box).enhance(1.25)
+        bg = BG_DEBATER_B.copy()
     else:  # NARRATOR / Full Stage
-        bg = ImageEnhance.Brightness(bg_full).enhance(1.0)
+        bg = BG_FULL.copy()
         
     overlay = Image.new("RGBA", (1920, 1080), (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay)
@@ -198,51 +201,54 @@ def render_frame(t, duration, speaker, text, quote_text, audio_clip, show_discla
         amplitude = 0.2
         
     amp_factor = min(max(amplitude * 350, 15), 180)
-    pulse = math.sin(t * 8) * 10
+    pulse = math.sin(t * 8) * 12
     
-    # 2. Speaker Audio Visualizer Bars & Active Speaker Glow Animations
+    # Active Speaker Lighting, Aura Pulse & Dynamic Soundbar
     if speaker == "DEBATER_A":
-        # Spotlight & Pulse Aura on Debater A
-        center_x, center_y = 500, 520
-        draw.ellipse([center_x - 160 - pulse - amp_factor/2, center_y - 160 - pulse - amp_factor/2, 
-                      center_x + 160 + pulse + amp_factor/2, center_y + 160 + pulse + amp_factor/2], 
-                     outline=(0, 210, 255, 200), width=6)
+        # Left Stage Spotlight Pulse
+        center_x, center_y = 480, 500
+        draw.ellipse([center_x - 170 - pulse - amp_factor/2, center_y - 170 - pulse - amp_factor/2, 
+                      center_x + 170 + pulse + amp_factor/2, center_y + 170 + pulse + amp_factor/2], 
+                     outline=(0, 210, 255, 220), width=6)
         
-        # Audio Waveform bars on Left Side
+        # Audio Waveform on Left Side
         for i in range(16):
             h = int(abs(amp_factor * (0.5 + 0.5 * math.sin(i + t * 12))))
             x = 360 + (i * 18)
-            draw.rectangle([x, 700 - h, x + 12, 700], fill=(0, 210, 255, 240))
+            draw.rectangle([x, 680 - h, x + 12, 680], fill=(0, 210, 255, 240))
 
     elif speaker == "DEBATER_B":
-        # Spotlight & Pulse Aura on Debater B
-        center_x, center_y = 1420, 520
-        draw.ellipse([center_x - 160 - pulse - amp_factor/2, center_y - 160 - pulse - amp_factor/2, 
-                      center_x + 160 + pulse + amp_factor/2, center_y + 160 + pulse + amp_factor/2], 
-                     outline=(255, 60, 90, 200), width=6)
+        # Right Stage Spotlight Pulse
+        center_x, center_y = 1440, 500
+        draw.ellipse([center_x - 170 - pulse - amp_factor/2, center_y - 170 - pulse - amp_factor/2, 
+                      center_x + 170 + pulse + amp_factor/2, center_y + 170 + pulse + amp_factor/2], 
+                     outline=(255, 60, 90, 220), width=6)
         
-        # Audio Waveform bars on Right Side
+        # Audio Waveform on Right Side
         for i in range(16):
             h = int(abs(amp_factor * (0.5 + 0.5 * math.sin(i + t * 12))))
-            x = 1280 + (i * 18)
-            draw.rectangle([x, 700 - h, x + 12, 700], fill=(255, 60, 90, 240))
+            x = 1320 + (i * 18)
+            draw.rectangle([x, 680 - h, x + 12, 680], fill=(255, 60, 90, 240))
 
     elif speaker == "NARRATOR":
-        # Waveform Bars in Top Center
+        # Center Stage Gold Lighting Glow
+        draw.ellipse([960 - 200 - pulse, 300 - pulse, 960 + 200 + pulse, 700 + pulse], outline=(234, 179, 8, 120), width=4)
+        
+        # Center Top Audio Waveform
         for i in range(24):
             h = int(abs(amp_factor * (0.4 + 0.6 * math.cos(i + t * 9))))
             x = 740 + (i * 18)
             draw.rectangle([x, 140 - h//2, x + 12, 140 + h//2], fill=(234, 179, 8, 240))
 
-    # 3. Closed Captions (Chunked Phrases)
+    # Caption Blocks
     if text:
-        render_chunked_captions(draw, text, t, duration)
+        render_block_captions(draw, text, t, duration)
 
-    # 4. Scripture Quotes & References Lower Third Box (NIV)
+    # Scripture Quotes Lower Third (NIV)
     if quote_text:
-        draw.rectangle([200, 880, 1720, 990], fill=(15, 23, 42, 235), outline=(234, 179, 8), width=3)
-        draw.text((960, 910), "SCRIPTURE REFERENCE (NIV)", font=get_font(26), fill=(234, 179, 8), anchor="mm")
-        draw.text((960, 950), f'"{quote_text}"', font=get_font(34), fill=(255, 255, 255), anchor="mm")
+        draw.rectangle([200, 890, 1720, 990], fill=(15, 23, 42, 245), outline=(234, 179, 8), width=3)
+        draw.text((960, 918), "SCRIPTURE REFERENCE (NIV)", font=get_font(24), fill=(234, 179, 8), anchor="mm")
+        draw.text((960, 956), f'"{quote_text}"', font=get_font(32), fill=(255, 255, 255), anchor="mm")
 
     if show_disclaimer:
         draw_compliance_banner(draw)
@@ -251,39 +257,63 @@ def render_frame(t, duration, speaker, text, quote_text, audio_clip, show_discla
     return np.array(composite.convert("RGB"))
 
 def render_score_board_frame(t, duration, round_num, scores, role_a, role_b, total_a, total_b, audio_clip):
-    """Renders the end-of-round score visual breakdown detailing votes from each AI Model."""
-    overlay = Image.new("RGBA", (1920, 1080), (15, 23, 42, 250))
+    """Renders a split screen showing AI models assigned to the side of the speaker they awarded higher points."""
+    overlay = Image.new("RGBA", (1920, 1080), (15, 23, 42, 252))
     draw = ImageDraw.Draw(overlay)
     
-    draw.text((960, 70), f"ROUND {round_num} JUDGING BREAKDOWN", font=get_font(48), fill=(234, 179, 8), anchor="mm")
-    draw.text((960, 120), f"CUMULATIVE TOTAL: {role_a} ({total_a})  vs  {role_b} ({total_b})", font=get_font(30), fill=(255, 255, 255), anchor="mm")
+    draw.text((960, 60), f"ROUND {round_num} JUDGING BREAKDOWN", font=get_font(44), fill=(234, 179, 8), anchor="mm")
+    draw.text((960, 110), f"CUMULATIVE SCORE: {role_a} ({total_a})  vs  {role_b} ({total_b})", font=get_font(28), fill=(255, 255, 255), anchor="mm")
     
-    # Grid of 15 Judges showing individual scores
-    start_x, start_y = 180, 180
-    cols = 5
-    for idx, (j, score) in enumerate(zip(JUDGES, scores)):
-        row = idx // cols
-        col = idx % cols
-        x = start_x + col * 320
-        y = start_y + row * 220
-        
-        # Judge Card
-        draw.rectangle([x, y, x + 290, y + 190], fill=(30, 41, 59, 255), outline=(51, 65, 85), width=2)
-        
-        icon_img = load_or_createicon_cached = load_or_create_icon(j["icon"], j["name"])
-        overlay.paste(icon_img, (x + 15, y + 15), mask=icon_img)
-        
-        draw.text((x + 110, y + 35), j["name"], font=get_font(22), fill=(0, 210, 255))
-        draw.text((x + 110, y + 65), j["company"], font=get_font(18), fill=(148, 163, 184))
-        
-        # Score Bar Breakdown
-        sa, sb = score["score_a"], score["score_b"]
-        color_a = (0, 210, 255) if sa >= sb else (100, 116, 139)
-        color_b = (255, 60, 90) if sb > sa else (100, 116, 139)
-        
-        draw.text((x + 20, y + 120), f"{role_a[:8]}: {sa}", font=get_font(20), fill=color_a)
-        draw.text((x + 150, y + 120), f"{role_b[:8]}: {sb}", font=get_font(20), fill=color_b)
+    # Split models based on higher score preference
+    favored_a = []
+    favored_b = []
+    
+    for j, s in zip(JUDGES, scores):
+        if s["score_a"] >= s["score_b"]:
+            favored_a.append((j, s))
+        else:
+            favored_b.append((j, s))
 
+    # Column A (Left Side)
+    draw.text((480, 160), f"MODELS FAVORING {role_a.upper()}", font=get_font(26), fill=(0, 210, 255), anchor="mm")
+    draw.line([(80, 190), (880, 190)], fill=(0, 210, 255), width=2)
+    
+    for idx, (j, s) in enumerate(favored_a[:7]):
+        y = 210 + idx * 110
+        draw.rectangle([80, y, 880, y + 95], fill=(30, 41, 59, 255), outline=(51, 65, 85), width=2)
+        icon_img = load_or_create_icon(j["icon"], j["name"])
+        overlay.paste(icon_img, (95, y + 12), mask=icon_img)
+        draw.text((180, y + 28), j["name"], font=get_font(22), fill=(255, 255, 255))
+        draw.text((180, y + 58), j["company"], font=get_font(18), fill=(148, 163, 184))
+        draw.text((820, y + 45), f"{s['score_a']} pts", font=get_font(24), fill=(0, 210, 255), anchor="e")
+
+    # Column B (Right Side)
+    draw.text((1440, 160), f"MODELS FAVORING {role_b.upper()}", font=get_font(26), fill=(255, 60, 90), anchor="mm")
+    draw.line([(1040, 190), (1840, 190)], fill=(255, 60, 90), width=2)
+    
+    for idx, (j, s) in enumerate(favored_b[:7]):
+        y = 210 + idx * 110
+        draw.rectangle([1040, y, 1840, y + 95], fill=(30, 41, 59, 255), outline=(51, 65, 85), width=2)
+        icon_img = load_or_create_icon(j["icon"], j["name"])
+        overlay.paste(icon_img, (1055, y + 12), mask=icon_img)
+        draw.text((1140, y + 28), j["name"], font=get_font(22), fill=(255, 255, 255))
+        draw.text((1140, y + 58), j["company"], font=get_font(18), fill=(148, 163, 184))
+        draw.text((1780, y + 45), f"{s['score_b']} pts", font=get_font(24), fill=(255, 60, 90), anchor="e")
+
+    draw_compliance_banner(draw)
+    return np.array(overlay.convert("RGB"))
+
+def render_judge_intro_frame(t, duration, judge, speech_text, audio_clip):
+    overlay = Image.new("RGBA", (1920, 1080), (15, 23, 42, 245))
+    draw = ImageDraw.Draw(overlay)
+    
+    icon_img = load_or_create_icon(judge["icon"], judge["name"])
+    overlay.paste(icon_img.resize((120, 120)), (900, 200), mask=icon_img.resize((120, 120)))
+    
+    draw.text((960, 360), judge["name"].upper(), font=get_font(48), fill=(0, 210, 255), anchor="mm")
+    draw.text((960, 420), f"OFFICIAL AI DEBATE JUDGE ({judge['company']})", font=get_font(28), fill=(234, 179, 8), anchor="mm")
+    
+    render_block_captions(draw, speech_text, t, duration)
     draw_compliance_banner(draw)
     return np.array(overlay.convert("RGB"))
 
@@ -294,7 +324,7 @@ def generate_debate():
     prompt = (
         f"Write an extended broadcast debate on: '{topic}'.\n\n"
         f"Rules:\n"
-        f"- Output MUST contain 6 comprehensive debate rounds to achieve a full 10-minute video duration.\n"
+        f"- Output MUST contain 6 comprehensive debate rounds to achieve a 10-minute video duration.\n"
         f"- Output JSON with top-level keys: 'role_a', 'role_b', and 'script'.\n"
         f"- 'role_a' and 'role_b' are concise debater titles.\n"
         f"- Speaker tags: 'DEBATER_A', 'DEBATER_B', and 'NARRATOR'.\n"
@@ -340,7 +370,34 @@ def render_debate_video(data):
     total_a, total_b = 0, 0
     buffer_silence = create_silent_audio(duration=0.6)
 
-    # 1. Main Debate & Round Rendering Loop
+    # 1. AI Judges Self-Introductions
+    intro_judges = JUDGES[:3]
+    for idx, j in enumerate(intro_judges):
+        intro_text = f"I am {j['name']} from {j['company']}. I am serving as one of 15 official AI judges for today's debate."
+        voice_id = JUDGE_VOICE_POOL[idx % len(JUDGE_VOICE_POOL)]
+        
+        j_audio = synthesize_speech(intro_text, voice_id, f"temp_judge_intro_{idx}.mp3")
+        j_vid = VideoClip(lambda t: render_judge_intro_frame(t, j_audio.duration, j, intro_text, j_audio), duration=j_audio.duration).set_audio(j_audio)
+        
+        video_segments.append(j_vid)
+        audio_segments.append(j_audio)
+        audio_segments.append(buffer_silence)
+
+    # 2. Debaters Self-Introductions
+    debater_intros = [
+        {"speaker": "DEBATER_A", "text": f"I am representing the position of {role_a} in today's debate.", "voice": VOICE_APOLOGIST_ID},
+        {"speaker": "DEBATER_B", "text": f"I am representing the position of {role_b} in today's debate.", "voice": VOICE_SKEPTIC_ID}
+    ]
+
+    for idx, d in enumerate(debater_intros):
+        d_audio = synthesize_speech(d["text"], d["voice"], f"temp_debater_intro_{idx}.mp3")
+        d_vid = VideoClip(lambda t: render_frame(t, d_audio.duration, d["speaker"], d["text"], None, d_audio), duration=d_audio.duration).set_audio(d_audio)
+        
+        video_segments.append(d_vid)
+        audio_segments.append(d_audio)
+        audio_segments.append(buffer_silence)
+
+    # 3. Debate Rounds Loop
     max_rounds = max((item.get("round", 1) for item in raw_script), default=1)
     
     for r in range(1, max_rounds + 1):
@@ -360,7 +417,6 @@ def render_debate_video(data):
             video_segments.append(stage_clip)
             audio_segments.append(audio_clip)
 
-        # 2. Round End AI Judging & Visual Score Breakdown
         arg_a = next((sanitize_speech_text(i['text']) for i in round_items if i['speaker'] == 'DEBATER_A'), "")
         arg_b = next((sanitize_speech_text(i['text']) for i in round_items if i['speaker'] == 'DEBATER_B'), "")
 
@@ -374,7 +430,7 @@ def render_debate_video(data):
         total_a += avg_a
         total_b += avg_b
 
-        # Narrator Spoken Round Summary
+        # Spoken Summary by Narrator
         narrator_summary = (
             f"At the conclusion of Round {r}, our 15 AI judges have evaluated the arguments. "
             f"The {role_a} scored an average of {avg_a} points, while the {role_b} received {avg_b} points. "
@@ -391,7 +447,7 @@ def render_debate_video(data):
         audio_segments.append(score_audio)
         audio_segments.append(buffer_silence)
 
-    # 3. Final Spoken Winner Announcement
+    # 4. Final Winner Spoken Announcement
     winner_title = f"the {role_a}" if total_a > total_b else f"the {role_b}"
     winner_text = (
         f"That concludes our broadcast debate. Across all rounds, the 15 AI model judges have compiled the final tally. "
@@ -407,7 +463,15 @@ def render_debate_video(data):
     master_video = concatenate_videoclips(video_segments, method="compose")
     master_audio = concatenate_audioclips(audio_segments)
 
-    master_video.write_videofile("final_debate.mp4", fps=20, codec="libx264", audio_codec="aac", preset="ultrafast")
+    # Optimized multi-threaded export
+    master_video.write_videofile(
+        "final_debate.mp4", 
+        fps=15, 
+        codec="libx264", 
+        audio_codec="aac", 
+        preset="ultrafast",
+        threads=8
+    )
     master_audio.write_audiofile("output_audio.mp3")
 
 if __name__ == "__main__":
