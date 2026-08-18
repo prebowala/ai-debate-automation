@@ -1,18 +1,16 @@
 name: Generate AI Debate Video
 
 on:
-  schedule:
-    # Runs automatically every day at 12:00 PM UTC
-    - cron: '0 12 * * *'
   workflow_dispatch:
+  schedule:
+    - cron: '0 0 * * *' # Runs daily at midnight UTC
 
 jobs:
   build-and-render:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
 
     steps:
-      - name: Checkout Code
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
       - name: Set up Python
@@ -28,19 +26,17 @@ jobs:
       - name: Install Python Dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install requests pillow numpy gTTS edge-tts
+          pip install requests pillow edge-tts
 
-      - name: Run Debate Generator
+      - name: Execute Debate Video Build
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
-        run: python main.py
-
-      - name: Commit and Push Generated Video
-        if: success()
         run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add final_debate.mp4
-          git commit -m "Auto-generated AI Debate Video [skip ci]" || echo "No changes to commit"
-          git push
+          python main.py
+
+      - name: Upload Rendered Video Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: final-debate-video
+          path: final_debate.mp4
+          retention-days: 7
