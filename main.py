@@ -132,7 +132,7 @@ def synthesize_speech(text, voice_id, output_path):
             pass
 
     try:
-        from gtts import gTTS
+        from gTTS import gTTS
         tts = gTTS(text=text, lang='en')
         tts.save(output_path)
         return AudioFileClip(output_path)
@@ -285,7 +285,7 @@ def render_score_board_frame(t, duration, round_num, scores, role_a, role_b, tot
         overlay.paste(icon_img, (95, y + 12), mask=icon_img)
         draw.text((180, y + 28), j["name"], font=get_font(22), fill=(255, 255, 255))
         draw.text((180, y + 58), j["company"], font=get_font(18), fill=(148, 163, 184))
-        draw.text((820, y + 45), f"{s['score_a']} pts", font=get_font(24), fill=(0, 210, 255), anchor="e")
+        draw.text((820, y + 45), f"{s['score_a']} pts", font=get_font(24), fill=(0, 210, 255), anchor="rm")
 
     # Column B (Right Side)
     draw.text((1440, 160), f"MODELS FAVORING {role_b.upper()}", font=get_font(26), fill=(255, 60, 90), anchor="mm")
@@ -298,7 +298,7 @@ def render_score_board_frame(t, duration, round_num, scores, role_a, role_b, tot
         overlay.paste(icon_img, (1055, y + 12), mask=icon_img)
         draw.text((1140, y + 28), j["name"], font=get_font(22), fill=(255, 255, 255))
         draw.text((1140, y + 58), j["company"], font=get_font(18), fill=(148, 163, 184))
-        draw.text((1780, y + 45), f"{s['score_b']} pts", font=get_font(24), fill=(255, 60, 90), anchor="e")
+        draw.text((1780, y + 45), f"{s['score_b']} pts", font=get_font(24), fill=(255, 60, 90), anchor="rm")
 
     draw_compliance_banner(draw)
     return np.array(overlay.convert("RGB"))
