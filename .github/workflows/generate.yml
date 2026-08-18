@@ -27,7 +27,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install chatterbox-tts --no-deps
-          pip install torch torchaudio requests transformers accelerate tqdm scipy numpy soundfile psutil librosa
+          pip install torch torchaudio requests transformers accelerate tqdm scipy numpy soundfile psutil librosa perth
 
       - name: Run Debate Generation Script
         env:
