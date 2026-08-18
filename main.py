@@ -5,19 +5,21 @@ import requests
 import re
 import random
 import subprocess
-import numpy as np
+import edge_tts
 from PIL import Image, ImageDraw, ImageFont
 
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
 
-VOICE_NARRATOR_ID = "QIhD5ivPGEoYZQDocuHI"
+# ElevenLabs Voices (Reserved exclusively for main debaters to save credits)
 VOICE_APOLOGIST_ID = "GZ4PpFJV8ikEGUtBrjK7"
 VOICE_SKEPTIC_ID   = "gPPH6SLdL8XSX6GNJ40G"
 
-JUDGE_VOICE_POOL = [
-    "21m00Tcm4TlvDq8ikWAM", "AZnzlk1XvdvUeBnXmlld", "EXAVITQu4vr4xnSDxMaL",
-    "ErXwobaYiN019PkySvjV", "MF3mGyEYCl7XYWbV9V6O", "TxGEqnHWrfWFTfGW9XjX"
+# Free Edge TTS Neural Voices (0 ElevenLabs credits)
+EDGE_VOICE_NARRATOR = "en-US-ChristopherNeural"
+EDGE_JUDGE_VOICE_POOL = [
+    "en-US-EricNeural", "en-US-GuyNeural", "en-GB-RyanNeural",
+    "en-AU-WilliamNeural", "en-CA-LiamNeural", "en-US-RogerNeural"
 ]
 
 COMPLIANCE_BANNER_TEXT = "INDEPENDENT AI EVALUATION • NOT AFFILIATED WITH OR ENDORSED BY ANY FEATURED PROVIDERS"
@@ -88,9 +90,15 @@ def clean_json_string(text):
     text = re.sub(r"^```(json)?", "", text, flags=re.MULTILINE)
     return re.sub(r"^```", "", text, flags=re.MULTILINE).strip()
 
-def synthesize_speech(text, voice_id, output_path):
+async def synthesize_edge_tts(text, voice_name, output_path):
+    communicate = edge_tts.Communicate(text, voice_name)
+    await communicate.save(output_path)
+
+def synthesize_speech(text, voice_id, output_path, is_elevenlabs=False):
     log(f"Synthesizing audio ({len(text)} chars)...")
-    if ELEVENLABS_API_KEY:
+    
+    # 1. ElevenLabs (Only for Debaters)
+    if is_elevenlabs and ELEVENLABS_API_KEY:
         try:
             res = requests.post(
                 f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}",
@@ -103,14 +111,15 @@ def synthesize_speech(text, voice_id, output_path):
                     f.write(res.content)
                 return output_path
         except Exception as e:
-            log(f"ElevenLabs TTS timeout/error: {e}. Switching to gTTS fallback.")
+            log(f"ElevenLabs TTS failed: {e}. Falling back to Edge TTS.")
 
+    # 2. Free Edge TTS (For Narrator, Judges, and Fallback)
     try:
-        from gTTS import gTTS
-        tts = gTTS(text=text, lang='en')
-        tts.save(output_path)
+        edge_voice = voice_id if voice_id.startswith("en-") else EDGE_VOICE_NARRATOR
+        asyncio.run(synthesize_edge_tts(text, edge_voice, output_path))
+        return output_path
     except Exception as e:
-        log(f"gTTS failed: {e}. Generating silent placeholder audio.")
+        log(f"Edge TTS failed: {e}. Generating silent placeholder audio.")
         cmd = ["ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo", "-t", "3", "-q:a", "9", "-acodec", "libmp3lame", output_path]
         subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
@@ -124,9 +133,11 @@ def generate_debate():
     prompt = (
         f"Write an extended broadcast debate on: '{topic}'.\n\n"
         f"Rules:\n"
-        f"- Output MUST contain EXACTLY 3 comprehensive debate rounds for a YouTube broadcast.\n"
+        f"- Output MUST contain EXACTLY 3 debate rounds for a YouTube broadcast.\n"
         f"- Output JSON with top-level keys: 'role_a', 'role_b', and 'script'.\n"
+        f"- 'script' MUST be a list of JSON objects: [{{\"round\": 1, \"speaker\": \"DEBATER_A\", \"text\": \"...\", \"quote\": \"...\"}}, ...]\n"
         f"- Speaker tags: 'DEBATER_A', 'DEBATER_B', and 'NARRATOR'.\n"
+        f"- Keep each speech concise (under 300 characters / 50 words) to ensure fast delivery.\n"
         f"- Provide explicit NIV Bible reference quotes for DEBATER_A and DEBATER_B in 'quote' key.\n"
     )
     
@@ -139,8 +150,18 @@ def generate_debate():
     
     parsed = json.loads(clean_json_string(res.json()['choices'][0]['message']['content']))
     parsed['topic'] = topic
-    if "script" in parsed:
-        parsed["script"] = [item for item in parsed["script"] if item.get("round", 1) <= 3]
+    
+    # Robust script list normalization to prevent AttributeError
+    raw_script = parsed.get("script", [])
+    clean_script = []
+    if isinstance(raw_script, list):
+        for item in raw_script:
+            if isinstance(item, dict):
+                if item.get("round", 1) <= 3:
+                    clean_script.append(item)
+            elif isinstance(item, str):
+                clean_script.append({"round": 1, "speaker": "NARRATOR", "text": item})
+    parsed["script"] = clean_script
 
     log("Debate script successfully generated.")
     return parsed
@@ -287,44 +308,45 @@ def render_debate_video(data):
         subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         segments.append(clip_path)
 
-    # 1. Broadcast Intro
+    # 1. Broadcast Intro (Free Edge TTS)
     log("Building intro scene...")
     intro_txt = f"Welcome to today's AI Debate Broadcast. Topic: {topic}. Representing {role_a} versus {role_b}."
-    a_path = synthesize_speech(intro_txt, VOICE_NARRATOR_ID, "build_temp/intro.mp3")
+    a_path = synthesize_speech(intro_txt, EDGE_VOICE_NARRATOR, "build_temp/intro.mp3", is_elevenlabs=False)
     f_path = "build_temp/intro.png"
     render_frame_image("NARRATOR", intro_txt, None, f_path)
     add_clip(f_path, a_path)
 
-    # 2. Judges Self-Intros
+    # 2. Judges Self-Intros (Free Edge TTS)
     log("Building judge intros...")
     for idx, j in enumerate(JUDGES[:2]):
         j_txt = f"Greetings. I am {j['name']} from {j['company']}. I will serve as an official AI judge."
-        a_path = synthesize_speech(j_txt, JUDGE_VOICE_POOL[idx % len(JUDGE_VOICE_POOL)], f"build_temp/j_intro_{idx}.mp3")
+        j_voice = EDGE_JUDGE_VOICE_POOL[idx % len(EDGE_JUDGE_VOICE_POOL)]
+        a_path = synthesize_speech(j_txt, j_voice, f"build_temp/j_intro_{idx}.mp3", is_elevenlabs=False)
         f_path = f"build_temp/j_intro_{idx}.png"
         render_judge_intro_frame(j, j_txt, f_path)
         add_clip(f_path, a_path)
 
-    # 3. Debater Self-Intros
+    # 3. Debater Self-Intros (ElevenLabs)
     log("Building debater intros...")
     d1_txt = f"I am presenting the case for {role_a}."
-    a_path = synthesize_speech(d1_txt, VOICE_APOLOGIST_ID, "build_temp/d1_intro.mp3")
+    a_path = synthesize_speech(d1_txt, VOICE_APOLOGIST_ID, "build_temp/d1_intro.mp3", is_elevenlabs=True)
     f_path = "build_temp/d1_intro.png"
     render_frame_image("DEBATER_A", d1_txt, None, f_path)
     add_clip(f_path, a_path)
 
     d2_txt = f"I am representing the perspective of {role_b}."
-    a_path = synthesize_speech(d2_txt, VOICE_SKEPTIC_ID, "build_temp/d2_intro.mp3")
+    a_path = synthesize_speech(d2_txt, VOICE_SKEPTIC_ID, "build_temp/d2_intro.mp3", is_elevenlabs=True)
     f_path = "build_temp/d2_intro.png"
     render_frame_image("DEBATER_B", d2_txt, None, f_path)
     add_clip(f_path, a_path)
 
     # 4. Debate Rounds Loop
     total_a, total_b = 0, 0
-    max_rounds = min(3, max((item.get("round", 1) for item in raw_script), default=1))
+    max_rounds = min(3, max((item.get("round", 1) for item in raw_script if isinstance(item, dict)), default=1))
 
     for r in range(1, max_rounds + 1):
         log(f"Processing Round {r} clips...")
-        round_items = [item for item in raw_script if item.get("round") == r]
+        round_items = [item for item in raw_script if isinstance(item, dict) and item.get("round") == r]
 
         for idx, item in enumerate(round_items):
             speaker = safe_str(item.get("speaker") or item.get("role") or item.get("character") or item.get("name"), "NARRATOR").upper()
@@ -334,9 +356,15 @@ def render_debate_video(data):
                 continue
 
             quote_text = item.get("quote", None)
-            vid = VOICE_NARRATOR_ID if speaker in ["NARRATOR", "HOST"] else (VOICE_APOLOGIST_ID if speaker in ["DEBATER_A", "ROLE_A", "PRO", "APOLOGIST"] else VOICE_SKEPTIC_ID)
 
-            a_path = synthesize_speech(text, vid, f"build_temp/r{r}_{idx}.mp3")
+            # Only Debaters use ElevenLabs
+            if speaker in ["DEBATER_A", "ROLE_A", "PRO", "APOLOGIST"]:
+                a_path = synthesize_speech(text, VOICE_APOLOGIST_ID, f"build_temp/r{r}_{idx}.mp3", is_elevenlabs=True)
+            elif speaker in ["DEBATER_B", "ROLE_B", "CON", "SKEPTIC"]:
+                a_path = synthesize_speech(text, VOICE_SKEPTIC_ID, f"build_temp/r{r}_{idx}.mp3", is_elevenlabs=True)
+            else:
+                a_path = synthesize_speech(text, EDGE_VOICE_NARRATOR, f"build_temp/r{r}_{idx}.mp3", is_elevenlabs=False)
+
             f_path = f"build_temp/r{r}_{idx}.png"
             render_frame_image(speaker, text, quote_text, f_path)
             add_clip(f_path, a_path)
@@ -356,21 +384,21 @@ def render_debate_video(data):
         total_b += avg_b
 
         summary_txt = f"Round {r} complete. {role_a} scored {avg_a} pts, {role_b} scored {avg_b} pts."
-        a_path = synthesize_speech(summary_txt, VOICE_NARRATOR_ID, f"build_temp/score_{r}.mp3")
+        a_path = synthesize_speech(summary_txt, EDGE_VOICE_NARRATOR, f"build_temp/score_{r}.mp3", is_elevenlabs=False)
         f_path = f"build_temp/score_{r}.png"
         render_score_board_frame(r, round_scores, role_a, role_b, total_a, total_b, summary_txt, f_path)
         add_clip(f_path, a_path)
 
-    # 5. Outro
+    # 5. Outro (Free Edge TTS)
     log("Building outro scene...")
     winner_title = role_a if total_a > total_b else role_b
     outro_txt = f"That concludes today's debate! Final winner is {winner_title}!"
-    a_path = synthesize_speech(outro_txt, VOICE_NARRATOR_ID, "build_temp/outro.mp3")
+    a_path = synthesize_speech(outro_txt, EDGE_VOICE_NARRATOR, "build_temp/outro.mp3", is_elevenlabs=False)
     f_path = "build_temp/outro.png"
     render_frame_image("NARRATOR", outro_txt, None, f_path)
     add_clip(f_path, a_path)
 
-    # Stitch all clip segments via FFmpeg with re-encoding for safety
+    # Stitch all clip segments via FFmpeg
     log("Stitching all video clips into final_debate.mp4...")
     concat_list = "concat.txt"
     with open(os.path.join("build_temp", concat_list), "w") as f:
