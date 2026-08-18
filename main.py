@@ -156,7 +156,6 @@ def render_block_captions(draw, text, t, total_duration, y_pos=720):
 
     font = get_font(34)
     
-    # Text word-wrapping for caption block
     lines = []
     line_words = active_block.split()
     curr_line = ""
@@ -183,12 +182,11 @@ def draw_compliance_banner(draw):
     draw.text((960, 1060), COMPLIANCE_BANNER_TEXT, font=font, fill=(200, 200, 200), anchor="mm")
 
 def render_frame(t, duration, speaker, text, quote_text, audio_clip, show_disclaimer=True):
-    # Dynamic Stage Camera Angle and Zoom Selection
     if speaker == "DEBATER_A":
         bg = BG_DEBATER_A.copy()
     elif speaker == "DEBATER_B":
         bg = BG_DEBATER_B.copy()
-    else:  # NARRATOR / Full Stage
+    else:
         bg = BG_FULL.copy()
         
     overlay = Image.new("RGBA", (1920, 1080), (0, 0, 0, 0))
@@ -203,48 +201,39 @@ def render_frame(t, duration, speaker, text, quote_text, audio_clip, show_discla
     amp_factor = min(max(amplitude * 350, 15), 180)
     pulse = math.sin(t * 8) * 12
     
-    # Active Speaker Lighting, Aura Pulse & Dynamic Soundbar
     if speaker == "DEBATER_A":
-        # Left Stage Spotlight Pulse
         center_x, center_y = 480, 500
         draw.ellipse([center_x - 170 - pulse - amp_factor/2, center_y - 170 - pulse - amp_factor/2, 
                       center_x + 170 + pulse + amp_factor/2, center_y + 170 + pulse + amp_factor/2], 
                      outline=(0, 210, 255, 220), width=6)
         
-        # Audio Waveform on Left Side
         for i in range(16):
             h = int(abs(amp_factor * (0.5 + 0.5 * math.sin(i + t * 12))))
             x = 360 + (i * 18)
             draw.rectangle([x, 680 - h, x + 12, 680], fill=(0, 210, 255, 240))
 
     elif speaker == "DEBATER_B":
-        # Right Stage Spotlight Pulse
         center_x, center_y = 1440, 500
         draw.ellipse([center_x - 170 - pulse - amp_factor/2, center_y - 170 - pulse - amp_factor/2, 
                       center_x + 170 + pulse + amp_factor/2, center_y + 170 + pulse + amp_factor/2], 
                      outline=(255, 60, 90, 220), width=6)
         
-        # Audio Waveform on Right Side
         for i in range(16):
             h = int(abs(amp_factor * (0.5 + 0.5 * math.sin(i + t * 12))))
             x = 1320 + (i * 18)
             draw.rectangle([x, 680 - h, x + 12, 680], fill=(255, 60, 90, 240))
 
     elif speaker == "NARRATOR":
-        # Center Stage Gold Lighting Glow
         draw.ellipse([960 - 200 - pulse, 300 - pulse, 960 + 200 + pulse, 700 + pulse], outline=(234, 179, 8, 120), width=4)
         
-        # Center Top Audio Waveform
         for i in range(24):
             h = int(abs(amp_factor * (0.4 + 0.6 * math.cos(i + t * 9))))
             x = 740 + (i * 18)
             draw.rectangle([x, 140 - h//2, x + 12, 140 + h//2], fill=(234, 179, 8, 240))
 
-    # Caption Blocks
     if text:
         render_block_captions(draw, text, t, duration)
 
-    # Scripture Quotes Lower Third (NIV)
     if quote_text:
         draw.rectangle([200, 890, 1720, 990], fill=(15, 23, 42, 245), outline=(234, 179, 8), width=3)
         draw.text((960, 918), "SCRIPTURE REFERENCE (NIV)", font=get_font(24), fill=(234, 179, 8), anchor="mm")
@@ -257,14 +246,12 @@ def render_frame(t, duration, speaker, text, quote_text, audio_clip, show_discla
     return np.array(composite.convert("RGB"))
 
 def render_score_board_frame(t, duration, round_num, scores, role_a, role_b, total_a, total_b, audio_clip):
-    """Renders a split screen showing AI models assigned to the side of the speaker they awarded higher points."""
     overlay = Image.new("RGBA", (1920, 1080), (15, 23, 42, 252))
     draw = ImageDraw.Draw(overlay)
     
     draw.text((960, 60), f"ROUND {round_num} JUDGING BREAKDOWN", font=get_font(44), fill=(234, 179, 8), anchor="mm")
     draw.text((960, 110), f"CUMULATIVE SCORE: {role_a} ({total_a})  vs  {role_b} ({total_b})", font=get_font(28), fill=(255, 255, 255), anchor="mm")
     
-    # Split models based on higher score preference
     favored_a = []
     favored_b = []
     
@@ -463,14 +450,14 @@ def render_debate_video(data):
     master_video = concatenate_videoclips(video_segments, method="compose")
     master_audio = concatenate_audioclips(audio_segments)
 
-    # Optimized multi-threaded export
-    master_video.write_videofile(
+    # OPTIMIZED EXPORT: Resized to 720p @ 10 FPS with 2-thread constraint for GitHub runners
+    master_video.resize(height=720).write_videofile(
         "final_debate.mp4", 
-        fps=15, 
+        fps=10, 
         codec="libx264", 
         audio_codec="aac", 
         preset="ultrafast",
-        threads=8
+        threads=2
     )
     master_audio.write_audiofile("output_audio.mp3")
 
