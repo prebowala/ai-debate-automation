@@ -23,21 +23,18 @@ JUDGE_VOICE_POOL = [
 COMPLIANCE_BANNER_TEXT = "INDEPENDENT AI EVALUATION • NOT AFFILIATED WITH OR ENDORSED BY ANY FEATURED PROVIDERS"
 
 JUDGES = [
-    {"name": "GPT-5.6 Sol", "company": "OpenAI", "model": "openai/gpt-5.6-sol", "icon": "icons/openai.png"},
-    {"name": "Claude Opus 5", "company": "Anthropic", "model": "anthropic/claude-opus-5", "icon": "icons/claude.png"},
-    {"name": "Gemini 3.7 Flash", "company": "Google", "model": "google/gemini-3.7-flash", "icon": "icons/gemini.png"},
-    {"name": "Grok 4.6", "company": "xAI", "model": "xai/grok-4.6", "icon": "icons/grok.png"},
-    {"name": "DeepSeek V4 Pro", "company": "DeepSeek", "model": "deepseek/deepseek-v4-pro", "icon": "icons/deepseek.png"},
-    {"name": "GLM 5.2", "company": "Zhipu AI", "model": "zhipu/glm-5.2", "icon": "icons/glm.png"},
-    {"name": "Nemotron 3 Ultra", "company": "NVIDIA", "model": "nvidia/nemotron-3-ultra-550b-a55b:free", "icon": "icons/nvidia.png"},
-    {"name": "North Mini", "company": "Cohere", "model": "cohere/north-mini-code:free", "icon": "icons/cohere.png"},
-    {"name": "Laguna S 2.1", "company": "Poolside", "model": "poolside/laguna-s-2.1:free", "icon": "icons/poolside.png"},
+    {"name": "GPT-4o", "company": "OpenAI", "model": "openai/gpt-4o", "icon": "icons/openai.png"},
+    {"name": "Claude 3.5 Sonnet", "company": "Anthropic", "model": "anthropic/claude-3.5-sonnet", "icon": "icons/claude.png"},
+    {"name": "Gemini Flash 1.5", "company": "Google", "model": "google/gemini-flash-1.5", "icon": "icons/gemini.png"},
+    {"name": "Grok 2", "company": "xAI", "model": "xai/grok-2-vision-1212", "icon": "icons/grok.png"},
+    {"name": "DeepSeek R1", "company": "DeepSeek", "model": "deepseek/deepseek-r1", "icon": "icons/deepseek.png"},
+    {"name": "GLM 4 9B", "company": "Zhipu AI", "model": "thm/glm-4-9b-chat:free", "icon": "icons/glm.png"},
+    {"name": "Nemotron 70B", "company": "NVIDIA", "model": "nvidia/llama-3.1-nemotron-70b-instruct", "icon": "icons/nvidia.png"},
+    {"name": "Command R+", "company": "Cohere", "model": "cohere/command-r-plus", "icon": "icons/cohere.png"},
     {"name": "Llama 3.3 70B", "company": "Meta", "model": "meta-llama/llama-3.3-70b-instruct", "icon": "icons/llama.png"},
-    {"name": "Mistral Large 3", "company": "Mistral AI", "model": "mistralai/mistral-large-2411", "icon": "icons/mistral.png"},
-    {"name": "Jamba 1.5 Large", "company": "AI21 Labs", "model": "ai21/jamba-1-5-large", "icon": "icons/ai21.png"},
+    {"name": "Mistral Large 2", "company": "Mistral AI", "model": "mistralai/mistral-large-2407", "icon": "icons/mistral.png"},
     {"name": "Qwen 2.5 72B", "company": "Alibaba Cloud", "model": "qwen/qwen-2.5-72b-instruct", "icon": "icons/qwen.png"},
-    {"name": "Titan Express", "company": "Amazon Bedrock", "model": "amazon/titan-text-express", "icon": "icons/amazon.png"},
-    {"name": "Phi 3.5 Vision", "company": "Microsoft", "model": "microsoft/phi-3.5-vision-instruct", "icon": "icons/microsoft.png"}
+    {"name": "Phi 3 Medium", "company": "Microsoft", "model": "microsoft/phi-3-medium-128k-instruct", "icon": "icons/microsoft.png"}
 ]
 
 BG_IMAGE_CACHE = None
@@ -138,7 +135,7 @@ def generate_debate():
     res = requests.post(
         "https://openrouter.ai/api/v1/chat/completions", 
         headers={"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"},
-        json={"model": "openai/gpt-5.6-sol", "messages": [{"role": "user", "content": prompt}]}, 
+        json={"model": "openai/gpt-4o", "messages": [{"role": "user", "content": prompt}]}, 
         timeout=(5, 15)
     )
     
@@ -346,7 +343,7 @@ def render_debate_video(data):
             render_frame_image(speaker, text, quote_text, f_path)
             add_clip(f_path, a_path)
 
-        log(f"Evaluating Round {r} with 15 AI judge models...")
+        log(f"Evaluating Round {r} with 12 AI judge models...")
         arg_a = next((sanitize_speech_text(i.get('text') or i.get('content')) for i in round_items if safe_str(i.get('speaker') or i.get('role')).upper() in ['DEBATER_A', 'PRO', 'ROLE_A']), "")
         arg_b = next((sanitize_speech_text(i.get('text') or i.get('content')) for i in round_items if safe_str(i.get('speaker') or i.get('role')).upper() in ['DEBATER_B', 'CON', 'ROLE_B']), "")
 
@@ -375,19 +372,28 @@ def render_debate_video(data):
     render_frame_image("NARRATOR", outro_txt, None, f_path)
     add_clip(f_path, a_path)
 
-    # Stitch all clip segments via FFmpeg
+    # Stitch all clip segments via FFmpeg with re-encoding for safety
     log("Stitching all video clips into final_debate.mp4...")
-    concat_list = "build_temp/concat.txt"
-    with open(concat_list, "w") as f:
+    concat_list = "concat.txt"
+    with open(os.path.join("build_temp", concat_list), "w") as f:
         for seg in segments:
             f.write(f"file '{os.path.basename(seg)}'\n")
 
     final_cmd = [
         "ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", concat_list,
-        "-c", "copy", "final_debate.mp4"
+        "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", "-b:a", "192k",
+        "final_debate.mp4"
     ]
-    subprocess.run(final_cmd, cwd="build_temp", stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    os.rename("build_temp/final_debate.mp4", "final_debate.mp4")
+
+    result = subprocess.run(final_cmd, cwd="build_temp", capture_output=True, text=True)
+    if result.returncode != 0:
+        log(f"FFmpeg stitching failed:\n{result.stderr}")
+        raise RuntimeError("FFmpeg concat failed.")
+
+    target_output = "final_debate.mp4"
+    if os.path.exists(target_output):
+        os.remove(target_output)
+    os.rename("build_temp/final_debate.mp4", target_output)
     log("Video render complete!")
 
 if __name__ == "__main__":
