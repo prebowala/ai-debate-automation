@@ -29,8 +29,8 @@ ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
 
 # Primary ElevenLabs Voices
 VOICE_NARRATOR_ID = "QIhD5ivPGEoYZQDocuHI"   # Narrator
-VOICE_APOLOGIST_ID = "GZ4PpFJV8ikEGUtBrjK7"  # Debater A (Proponent)
-VOICE_SKEPTIC_ID   = "gPPH6SLdL8XSX6GNJ40G"  # Debater B (Opponent)
+VOICE_APOLOGIST_ID = "GZ4PpFJV8ikEGUtBrjK7"  # Debater A
+VOICE_SKEPTIC_ID   = "gPPH6SLdL8XSX6GNJ40G"  # Debater B
 
 # Pool of distinct voices for AI Judge intros
 JUDGE_VOICE_POOL = [
@@ -260,7 +260,7 @@ def generate_debate():
         f"Write a broadcast debate on: '{topic}'.\n\n"
         f"Rules:\n"
         f"- Output JSON with top-level keys: 'role_a', 'role_b', and 'script'.\n"
-        f"- 'role_a' and 'role_b' must be concise debater titles dynamic to this topic (e.g. 'Christian Apologist', 'Islamic Scholar', 'Capitalist', etc.).\n"
+        f"- 'role_a' and 'role_b' must be concise debater titles dynamic to this topic.\n"
         f"- In 'script', use speakers 'DEBATER_A', 'DEBATER_B', and 'NARRATOR'.\n"
         f"- Include exact quotes or references in 'quote' for DEBATER_A or DEBATER_B when applicable.\n"
         f"JSON Schema Format:\n"
@@ -349,7 +349,10 @@ def render_debate_video(data):
             arg_a = next((sanitize_speech_text(i['text']) for i in raw_script if i['round'] == round_num and i['speaker'] == 'DEBATER_A'), "")
             arg_b = next((sanitize_speech_text(i['text']) for i in raw_script if i['round'] == round_num and i['speaker'] == 'DEBATER_B'), "")
 
-            scores = asyncio.run(asyncio.gather(*[evaluate_judge(j, role_a, role_b, arg_a, arg_b) for j in JUDGES]))
+            async def run_evaluations():
+                return await asyncio.gather(*[evaluate_judge(j, role_a, role_b, arg_a, arg_b) for j in JUDGES])
+
+            scores = asyncio.run(run_evaluations())
             avg_a = sum(s["score_a"] for s in scores) // len(scores)
             avg_b = sum(s["score_b"] for s in scores) // len(scores)
             total_a += avg_a
