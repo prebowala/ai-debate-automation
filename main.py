@@ -79,6 +79,8 @@ def load_or_create_icon(icon_path, name):
     return badge
 
 def sanitize_speech_text(text):
+    if not text:
+        return ""
     return re.sub(r'^(laura|brian|narrator|apologist|skeptic|debater_a|debater_b)(\s*\([^)]*\))?:\s*', '', text, flags=re.IGNORECASE).strip()
 
 def clean_json_string(text):
@@ -93,7 +95,7 @@ def synthesize_speech(text, voice_id, output_path):
                 f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}",
                 headers={"xi-api-key": ELEVENLABS_API_KEY, "Content-Type": "application/json"},
                 json={"text": text},
-                timeout=(3, 8)  # Connect timeout: 3s, Read timeout: 8s
+                timeout=(3, 8)
             )
             if res.status_code == 200:
                 with open(output_path, "wb") as f:
@@ -148,7 +150,7 @@ async def evaluate_judge(judge, role_a, role_b, arg_a, arg_b):
         res = requests.post("https://openrouter.ai/api/v1/chat/completions", 
                             headers={"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"},
                             json={"model": judge["model"], "messages": [{"role": "user", "content": prompt}]}, 
-                            timeout=(3, 6)) # Fast 6-second timeout per judge
+                            timeout=(3, 6))
         parsed = json.loads(clean_json_string(res.json()['choices'][0]['message']['content']))
         return {
             "score_a": int(parsed.get("score_a", 75)), 
@@ -172,13 +174,13 @@ def render_frame_image(speaker, text, quote_text, output_path):
     bg = get_cached_bg()
     draw = ImageDraw.Draw(bg)
 
-    if speaker == "DEBATER_A":
+    if speaker in ["DEBATER_A", "ROLE_A", "PRO", "APOLOGIST"]:
         draw.ellipse([250, 150, 450, 350], outline=(0, 210, 255), width=6)
         draw.text((350, 250), "A", font=get_font(48), fill=(0, 210, 255), anchor="mm")
-    elif speaker == "DEBATER_B":
+    elif speaker in ["DEBATER_B", "ROLE_B", "CON", "SKEPTIC"]:
         draw.ellipse([830, 150, 1030, 350], outline=(255, 60, 90), width=6)
         draw.text((930, 250), "B", font=get_font(48), fill=(255, 60, 90), anchor="mm")
-    elif speaker == "NARRATOR":
+    else:
         draw.ellipse([540, 100, 740, 300], outline=(234, 179, 8), width=4)
         draw.text((640, 200), "AI", font=get_font(40), fill=(234, 179, 8), anchor="mm")
 
@@ -304,10 +306,25 @@ def render_debate_video(data):
         round_items = [item for item in raw_script if item.get("round") == r]
 
         for idx, item in enumerate(round_items):
-            speaker = item["speaker"]
-            text = sanitize_speech_text(item["text"])
+            # Defensive speaker key extraction
+            raw_speaker = (
+                item.get("speaker") or 
+                item.get("role") or 
+                item.get("character") or 
+                item.get("name") or 
+                "NARRATOR"
+            )
+            speaker = str(raw_speaker).upper()
+
+            # Defensive text key extraction
+            raw_text = item.get("text") or item.get("content") or item.get("speech") or ""
+            text = sanitize_speech_text(raw_text)
+
+            if not text:
+                continue
+
             quote_text = item.get("quote", None)
-            vid = VOICE_NARRATOR_ID if speaker == "NARRATOR" else (VOICE_APOLOGIST_ID if speaker == "DEBATER_A" else VOICE_SKEPTIC_ID)
+            vid = VOICE_NARRATOR_ID if speaker in ["NARRATOR", "HOST"] else (VOICE_APOLOGIST_ID if speaker in ["DEBATER_A", "ROLE_A", "PRO", "APOLOGIST"] else VOICE_SKEPTIC_ID)
 
             a_path = synthesize_speech(text, vid, f"build_temp/r{r}_{idx}.mp3")
             f_path = f"build_temp/r{r}_{idx}.png"
@@ -315,8 +332,8 @@ def render_debate_video(data):
             add_clip(f_path, a_path)
 
         log(f"Evaluating Round {r} with 15 AI judge models...")
-        arg_a = next((sanitize_speech_text(i['text']) for i in round_items if i['speaker'] == 'DEBATER_A'), "")
-        arg_b = next((sanitize_speech_text(i['text']) for i in round_items if i['speaker'] == 'DEBATER_B'), "")
+        arg_a = next((sanitize_speech_text(i.get('text') or i.get('content') or '') for i in round_items if str(i.get('speaker') or i.get('role')).upper() in ['DEBATER_A', 'PRO', 'ROLE_A']), "")
+        arg_b = next((sanitize_speech_text(i.get('text') or i.get('content') or '') for i in round_items if str(i.get('speaker') or i.get('role')).upper() in ['DEBATER_B', 'CON', 'ROLE_B']), "")
 
         async def run_evals():
             return await asyncio.gather(*[evaluate_judge(j, role_a, role_b, arg_a, arg_b) for j in JUDGES])
