@@ -7,6 +7,7 @@ import random
 import math
 import PIL.Image
 import numpy as np
+from gtts import gTTS
 
 # Patch Pillow for MoviePy 1.x compatibility
 if not hasattr(PIL.Image, 'ANTIALIAS'):
@@ -28,9 +29,9 @@ OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
 
 # Primary ElevenLabs Voices
-VOICE_NARRATOR_ID = "QIhD5ivPGEoYZQDocuHI"   # Adam (Narrator)
-VOICE_APOLOGIST_ID = "GZ4PpFJV8ikEGUtBrjK7"  # Laura (Apologist)
-VOICE_SKEPTIC_ID   = "gPPH6SLdL8XSX6GNJ40G"  # Brian (Skeptic)
+VOICE_NARRATOR_ID = "QIhD5ivPGEoYZQDocuHI"   # Narrator
+VOICE_APOLOGIST_ID = "GZ4PpFJV8ikEGUtBrjK7"  # Apologist
+VOICE_SKEPTIC_ID   = "gPPH6SLdL8XSX6GNJ40G"  # Skeptic
 
 # Pool of distinct voices for AI Judge intros
 JUDGE_VOICE_POOL = [
@@ -38,7 +39,7 @@ JUDGE_VOICE_POOL = [
     "ErXwobaYiN019PkySvjV", "MF3mGyEYCl7XYWbV9V6O", "TxGEqnHWrfWFTfGW9XjX"
 ]
 
-# Expanded 15 Flagship AI Judge Models (1 per company)
+# Expanded 15 Flagship AI Judge Models
 JUDGES = [
     {"name": "GPT-5.6 Sol", "company": "OpenAI", "model": "openai/gpt-5.6-sol", "icon": "icons/openai.png"},
     {"name": "Claude Opus 5", "company": "Anthropic", "model": "anthropic/claude-opus-5", "icon": "icons/claude.png"},
@@ -56,9 +57,6 @@ JUDGES = [
     {"name": "Titan Express", "company": "Amazon Bedrock", "model": "amazon/titan-text-express", "icon": "icons/amazon.png"},
     {"name": "Phi 3.5 Vision", "company": "Microsoft", "model": "microsoft/phi-3.5-vision-instruct", "icon": "icons/microsoft.png"}
 ]
-
-NAMES_APOLOGIST = ["Laura"]
-NAMES_SKEPTIC = ["Brian"]
 
 BG_IMAGE_CACHE = None
 
@@ -114,15 +112,24 @@ def create_silent_audio(duration=0.6, fps=44100):
     return AudioArrayClip(np.zeros((samples, 2), dtype=np.float32), fps=fps)
 
 def synthesize_speech(text, voice_id, output_path):
-    res = requests.post(
-        f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}",
-        headers={"xi-api-key": ELEVENLABS_API_KEY, "Content-Type": "application/json"},
-        json={"text": text}
-    )
-    if res.status_code != 200:
-        raise RuntimeError(f"ElevenLabs API Error: {res.text}")
-    with open(output_path, "wb") as f:
-        f.write(res.content)
+    # Try ElevenLabs first; fallback to gTTS if quota is exceeded
+    try:
+        res = requests.post(
+            f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}",
+            headers={"xi-api-key": ELEVENLABS_API_KEY, "Content-Type": "application/json"},
+            json={"text": text},
+            timeout=30
+        )
+        if res.status_code == 200:
+            with open(output_path, "wb") as f:
+                f.write(res.content)
+            return AudioFileClip(output_path)
+    except Exception:
+        pass
+
+    # Fallback speech synthesis
+    tts = gTTS(text=text, lang='en')
+    tts.save(output_path)
     return AudioFileClip(output_path)
 
 def render_karaoke_captions(draw, text, t, duration, y_pos=520):
@@ -242,15 +249,15 @@ def render_judge_intro_frame(t, duration, judge, speech_text, audio_clip):
     return np.array(overlay.convert("RGB"))
 
 def generate_debate():
-    apologist_name, skeptic_name = NAMES_APOLOGIST[0], NAMES_SKEPTIC[0]
     with open("topic.txt", "r") as f:
         topic = f.read().strip()
 
     prompt = (
         f"Write a 10-minute broadcast debate on: '{topic}'.\n\n"
         f"Rules:\n"
-        f"- Do NOT include speaker name prefixes in speech text.\n"
-        f"- Include exact NIV scripture quotes in 'bible_quote' for Laura when applicable.\n\n"
+        f"- Do NOT include speaker names in speech text or titles.\n"
+        f"- Speakers are strictly 'APOLOGIST', 'SKEPTIC', and 'NARRATOR'.\n"
+        f"- Include exact NIV scripture quotes in 'bible_quote' for APOLOGIST when applicable.\n\n"
         f"JSON Schema Array strictly with keys: 'speaker', 'round', 'text', 'bible_quote'\n"
     )
     
@@ -259,7 +266,7 @@ def generate_debate():
                         json={"model": "openai/gpt-5.6-sol", "messages": [{"role": "user", "content": prompt}]}, 
                         timeout=90)
     
-    return json.loads(clean_json_string(res.json()['choices'][0]['message']['content'])), apologist_name, skeptic_name
+    return json.loads(clean_json_string(res.json()['choices'][0]['message']['content']))
 
 async def evaluate_judge(judge, arg_a, arg_b):
     prompt = f"Evaluate debate round:\nApologist: {arg_a}\nSkeptic: {arg_b}\nReturn JSON strictly: {{\"score_a\": 85, \"score_b\": 78}}"
@@ -273,12 +280,12 @@ async def evaluate_judge(judge, arg_a, arg_b):
     except Exception:
         return {"score_a": random.randint(70, 90), "score_b": random.randint(70, 90)}
 
-def render_debate_video(raw_script, apologist_name, skeptic_name):
+def render_debate_video(raw_script):
     video_segments, audio_segments = [], []
     total_a, total_b = 0, 0
     buffer_silence = create_silent_audio(duration=0.6)
 
-    # 1. AI Judges Self-Introductions Sequence (5 representative judges introduced verbally)
+    # 1. AI Judges Self-Introductions Sequence
     intro_judges = JUDGES[:5]
     for idx, j in enumerate(intro_judges):
         intro_text = f"I am {j['name']} from {j['company']}. I am serving as one of 15 official AI judges for this debate."
@@ -291,7 +298,21 @@ def render_debate_video(raw_script, apologist_name, skeptic_name):
         audio_segments.append(j_audio)
         audio_segments.append(buffer_silence)
 
-    # 2. Render Main Debate Loop
+    # 2. Debaters Self-Introductions Sequence (After AI Judges)
+    debater_intros = [
+        {"speaker": "APOLOGIST", "text": "I am the Christian Apologist, arguing in favor of today's topic.", "voice": VOICE_APOLOGIST_ID},
+        {"speaker": "SKEPTIC", "text": "I am the Skeptic, presenting counter arguments for today's debate.", "voice": VOICE_SKEPTIC_ID}
+    ]
+
+    for idx, d in enumerate(debater_intros):
+        d_audio = synthesize_speech(d["text"], d["voice"], f"temp_debater_intro_{idx}.mp3")
+        d_vid = VideoClip(lambda t: render_frame(t, d_audio.duration, d["speaker"], d["text"], None, d_audio), duration=d_audio.duration).set_audio(d_audio)
+        
+        video_segments.append(d_vid)
+        audio_segments.append(d_audio)
+        audio_segments.append(buffer_silence)
+
+    # 3. Render Main Debate Loop
     for idx, item in enumerate(raw_script):
         speaker = item["speaker"]
         text = sanitize_speech_text(item["text"])
@@ -318,15 +339,16 @@ def render_debate_video(raw_script, apologist_name, skeptic_name):
             total_a += avg_a
             total_b += avg_b
 
-            narrator_summary = f"At the end of Round {round_num}, across our panel of 15 AI judges, {apologist_name} scores an average of {avg_a} points, and {skeptic_name} scores {avg_b} points. The cumulative total is {total_a} to {total_b}."
+            narrator_summary = f"At the end of Round {round_num}, across our panel of 15 AI judges, the Christian Apologist scores an average of {avg_a} points, and the Skeptic scores {avg_b} points. The cumulative total is {total_a} to {total_b}."
             score_audio = synthesize_speech(narrator_summary, VOICE_NARRATOR_ID, f"temp_score_{round_num}.mp3")
             score_vid = VideoClip(lambda t: render_frame(t, score_audio.duration, "NARRATOR", narrator_summary, None, score_audio), duration=score_audio.duration).set_audio(score_audio)
             
             video_segments.append(score_vid)
             audio_segments.append(score_audio)
 
-    # 3. Spoken Final Winner Announcement
-    winner_text = f"That concludes our debate evaluated by 15 AI company models. The final total score is {apologist_name} with {total_a} points, and {skeptic_name} with {total_b} points. The winner is {apologist_name if total_a > total_b else skeptic_name}!"
+    # 4. Spoken Final Winner Announcement
+    winner_title = "the Christian Apologist" if total_a > total_b else "the Skeptic"
+    winner_text = f"That concludes our debate evaluated by 15 AI company models. The final total score is the Christian Apologist with {total_a} points, and the Skeptic with {total_b} points. The winner is {winner_title}!"
     final_audio = synthesize_speech(winner_text, VOICE_NARRATOR_ID, "temp_final_winner.mp3")
     final_vid = VideoClip(lambda t: render_frame(t, final_audio.duration, "NARRATOR", winner_text, None, final_audio), duration=final_audio.duration).set_audio(final_audio)
     
@@ -340,5 +362,5 @@ def render_debate_video(raw_script, apologist_name, skeptic_name):
     master_audio.write_audiofile("output_audio.mp3")
 
 if __name__ == "__main__":
-    script, apologist_name, skeptic_name = generate_debate()
-    render_debate_video(script, apologist_name, skeptic_name)
+    script = generate_debate()
+    render_debate_video(script)
