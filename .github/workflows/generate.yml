@@ -3,14 +3,14 @@ name: Generate AI Debate Video
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 0 * * *' # Runs daily at midnight UTC
+    - cron: '0 0 * * *' # Runs daily automatically
 
 jobs:
-  build-and-render:
+  build-video:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Repository
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Set up Python
@@ -18,25 +18,24 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Install System Dependencies (FFmpeg & Fonts)
+      - name: Install System Dependencies (espeak-ng & ffmpeg)
         run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg fonts-dejavu-core
+          sudo apt-get install -y espeak-ng ffmpeg
 
       - name: Install Python Dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install requests pillow edge-tts
+          pip install kokoro soundfile torch requests
 
-      - name: Execute Debate Video Build
+      - name: Run Debate Generation Script
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         run: |
           python main.py
 
-      - name: Upload Rendered Video Artifact
+      - name: Upload Generated Video Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: final-debate-video
-          path: final_debate.mp4
-          retention-days: 7
+          name: debate-video-output
+          path: final_debate_output.mp4
