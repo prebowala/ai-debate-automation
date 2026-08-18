@@ -106,33 +106,81 @@ def synthesize_speech(text, voice_id, output_path):
 
 def generate_debate():
     log("Requesting debate script from OpenRouter (Free Tier)...")
-    with open("topic.txt", "r") as f:
-        topic = f.read().strip()
+    topic = "AI Ethics"
+    if os.path.exists("topic.txt"):
+        with open("topic.txt", "r") as f:
+            topic = f.read().strip()
 
     prompt = (
         f"Write an extended broadcast debate on: '{topic}'.\n\n"
         f"Rules:\n"
         f"- Output MUST contain EXACTLY 3 debate rounds for a YouTube broadcast.\n"
-        f"- Output JSON with top-level keys: 'role_a', 'role_b', and 'script'.\n"
+        f"- Output JSON ONLY, no markdown wrapping, with top-level keys: 'role_a', 'role_b', and 'script'.\n"
         f"- 'script' MUST be a list of JSON objects: [{{\"round\": 1, \"speaker\": \"DEBATER_A\", \"text\": \"...\", \"quote\": \"...\"}}, ...]\n"
         f"- Speaker tags: 'DEBATER_A', 'DEBATER_B', and 'NARRATOR'.\n"
         f"- Keep each speech concise (under 300 characters / 50 words) to ensure fast delivery.\n"
         f"- Provide explicit NIV Bible reference quotes for DEBATER_A and DEBATER_B in 'quote' key.\n"
     )
     
-    # Using openrouter/free to ensure zero credit usage for script generation
-    res = requests.post(
-        "https://openrouter.ai/api/v1/chat/completions", 
-        headers={"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"},
-        json={"model": "openrouter/free", "messages": [{"role": "user", "content": prompt}]}, 
-        timeout=(5, 15)
-    )
-    
-    parsed = json.loads(clean_json_string(res.json()['choices'][0]['message']['content']))
+    free_models = [
+        "openrouter/free",
+        "google/gemma-4-31b-it:free",
+        "meta-llama/llama-3.3-70b-instruct:free",
+        "openai/gpt-oss-120b:free"
+    ]
+
+    parsed = None
+
+    for model in free_models:
+        log(f"Attempting script generation with model: {model}...")
+        try:
+            res = requests.post(
+                "https://openrouter.ai/api/v1/chat/completions", 
+                headers={
+                    "Authorization": f"Bearer {OPENROUTER_API_KEY}", 
+                    "Content-Type": "application/json"
+                },
+                json={"model": model, "messages": [{"role": "user", "content": prompt}]}, 
+                timeout=(5, 30)
+            )
+
+            if res.status_code != 200:
+                log(f"API Error ({res.status_code}): {res.text[:150]}")
+                continue
+
+            response_data = res.json()
+            if 'choices' not in response_data or not response_data['choices']:
+                log(f"Unexpected response structure from {model}")
+                continue
+
+            content = response_data['choices'][0]['message']['content']
+            cleaned_content = clean_json_string(content)
+
+            parsed = json.loads(cleaned_content)
+            log(f"Successfully generated script using {model}!")
+            break
+
+        except json.JSONDecodeError as e:
+            log(f"Failed to parse JSON from {model}: {e}")
+        except Exception as e:
+            log(f"Request failed for {model}: {e}")
+
+    if not parsed:
+        log("CRITICAL: All model requests failed. Generating safety fallback script.")
+        parsed = {
+            "role_a": "Proponent",
+            "role_b": "Opponent",
+            "script": [
+                {"round": 1, "speaker": "NARRATOR", "text": f"Welcome to today's debate on {topic}."},
+                {"round": 1, "speaker": "DEBATER_A", "text": "The foundational evidence supports our core stance.", "quote": "Proverbs 18:15"},
+                {"round": 1, "speaker": "DEBATER_B", "text": "We must carefully examine all counter-arguments.", "quote": "Proverbs 18:17"}
+            ]
+        }
+
     parsed['topic'] = topic
-    
     raw_script = parsed.get("script", [])
     clean_script = []
+    
     if isinstance(raw_script, list):
         for item in raw_script:
             if isinstance(item, dict):
@@ -142,7 +190,7 @@ def generate_debate():
                 clean_script.append({"round": 1, "speaker": "NARRATOR", "text": item})
     parsed["script"] = clean_script
 
-    log("Debate script successfully generated.")
+    log("Debate script successfully finalized.")
     return parsed
 
 async def evaluate_judge(judge, role_a, role_b, arg_a, arg_b):
