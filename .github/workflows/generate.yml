@@ -22,6 +22,11 @@ jobs:
         with:
           python-version: '3.10'
 
+      - name: Set up FFmpeg
+        uses: FedericoCarboni/setup-ffmpeg@v3
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Install Fonts
         run: |
           sudo apt-get update && sudo apt-get install -y fonts-dejavu-core
