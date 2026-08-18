@@ -38,6 +38,7 @@ JUDGE_VOICE_POOL = [
     "ErXwobaYiN019PkySvjV", "MF3mGyEYCl7XYWbV9V6O", "TxGEqnHWrfWFTfGW9XjX"
 ]
 
+# Expanded 15 Flagship AI Judge Models (1 per company)
 JUDGES = [
     {"name": "GPT-5.6 Sol", "company": "OpenAI", "model": "openai/gpt-5.6-sol", "icon": "icons/openai.png"},
     {"name": "Claude Opus 5", "company": "Anthropic", "model": "anthropic/claude-opus-5", "icon": "icons/claude.png"},
@@ -48,7 +49,12 @@ JUDGES = [
     {"name": "Nemotron 3 Ultra", "company": "NVIDIA", "model": "nvidia/nemotron-3-ultra-550b-a55b:free", "icon": "icons/nvidia.png"},
     {"name": "North Mini", "company": "Cohere", "model": "cohere/north-mini-code:free", "icon": "icons/cohere.png"},
     {"name": "Laguna S 2.1", "company": "Poolside", "model": "poolside/laguna-s-2.1:free", "icon": "icons/poolside.png"},
-    {"name": "Llama 3.3 70B", "company": "Meta", "model": "meta-llama/llama-3.3-70b-instruct", "icon": "icons/llama.png"}
+    {"name": "Llama 3.3 70B", "company": "Meta", "model": "meta-llama/llama-3.3-70b-instruct", "icon": "icons/llama.png"},
+    {"name": "Mistral Large 3", "company": "Mistral AI", "model": "mistralai/mistral-large-2411", "icon": "icons/mistral.png"},
+    {"name": "Jamba 1.5 Large", "company": "AI21 Labs", "model": "ai21/jamba-1-5-large", "icon": "icons/ai21.png"},
+    {"name": "Qwen 2.5 72B", "company": "Alibaba Cloud", "model": "qwen/qwen-2.5-72b-instruct", "icon": "icons/qwen.png"},
+    {"name": "Titan Express", "company": "Amazon Bedrock", "model": "amazon/titan-text-express", "icon": "icons/amazon.png"},
+    {"name": "Phi 3.5 Vision", "company": "Microsoft", "model": "microsoft/phi-3.5-vision-instruct", "icon": "icons/microsoft.png"}
 ]
 
 NAMES_APOLOGIST = ["Laura"]
@@ -203,7 +209,6 @@ def render_frame(t, duration, speaker, text, bible_quote, audio_clip):
     return np.array(composite.convert("RGB"))
 
 def render_judge_intro_frame(t, duration, judge, speech_text, audio_clip):
-    """Renders visual intro card for individual AI Judges with icon & company branding."""
     overlay = Image.new("RGBA", (1920, 1080), (15, 23, 42, 245))
     draw = ImageDraw.Draw(overlay)
     
@@ -265,10 +270,10 @@ def render_debate_video(raw_script, apologist_name, skeptic_name):
     total_a, total_b = 0, 0
     buffer_silence = create_silent_audio(duration=0.6)
 
-    # 1. AI Judges Self-Introductions Sequence (Beginning of Video)
-    intro_judges = JUDGES[:4]
+    # 1. AI Judges Self-Introductions Sequence (4 representative judges introduced verbally)
+    intro_judges = JUDGES[:5]
     for idx, j in enumerate(intro_judges):
-        intro_text = f"I am {j['name']} from {j['company']}. I am serving as an official AI judge for this debate."
+        intro_text = f"I am {j['name']} from {j['company']}. I am serving as one of 15 official AI judges for this debate."
         voice_id = JUDGE_VOICE_POOL[idx % len(JUDGE_VOICE_POOL)]
         
         j_audio = synthesize_speech(intro_text, voice_id, f"temp_judge_intro_{idx}.mp3")
@@ -294,7 +299,7 @@ def render_debate_video(raw_script, apologist_name, skeptic_name):
         video_segments.append(stage_clip)
         audio_segments.append(audio_clip)
 
-        # Spoken Score Summary by Narrator
+        # Spoken Score Summary by Narrator across 15 AI Judges
         if speaker == "NARRATOR" and 1 <= round_num <= 4:
             arg_a = next((sanitize_speech_text(i['text']) for i in raw_script if i['round'] == round_num and i['speaker'] == 'APOLOGIST'), "")
             arg_b = next((sanitize_speech_text(i['text']) for i in raw_script if i['round'] == round_num and i['speaker'] == 'SKEPTIC'), "")
@@ -305,7 +310,7 @@ def render_debate_video(raw_script, apologist_name, skeptic_name):
             total_a += avg_a
             total_b += avg_b
 
-            narrator_summary = f"At the end of Round {round_num}, {apologist_name} scores {avg_a} points, and {skeptic_name} scores {avg_b} points. The cumulative total is {total_a} to {total_b}."
+            narrator_summary = f"At the end of Round {round_num}, across our panel of 15 AI judges, {apologist_name} scores an average of {avg_a} points, and {skeptic_name} scores {avg_b} points. The cumulative total is {total_a} to {total_b}."
             score_audio = synthesize_speech(narrator_summary, VOICE_NARRATOR_ID, f"temp_score_{round_num}.mp3")
             score_vid = VideoClip(lambda t: render_frame(t, score_audio.duration, "NARRATOR", narrator_summary, None, score_audio), duration=score_audio.duration).set_audio(score_audio)
             
@@ -313,7 +318,7 @@ def render_debate_video(raw_script, apologist_name, skeptic_name):
             audio_segments.append(score_audio)
 
     # 3. Spoken Final Winner Announcement
-    winner_text = f"That concludes our debate. The final total score is {apologist_name} with {total_a} points, and {skeptic_name} with {total_b} points. The winner is {apologist_name if total_a > total_b else skeptic_name}!"
+    winner_text = f"That concludes our debate evaluated by 15 AI company models. The final total score is {apologist_name} with {total_a} points, and {skeptic_name} with {total_b} points. The winner is {apologist_name if total_a > total_b else skeptic_name}!"
     final_audio = synthesize_speech(winner_text, VOICE_NARRATOR_ID, "temp_final_winner.mp3")
     final_vid = VideoClip(lambda t: render_frame(t, final_audio.duration, "NARRATOR", winner_text, None, final_audio), duration=final_audio.duration).set_audio(final_audio)
     
