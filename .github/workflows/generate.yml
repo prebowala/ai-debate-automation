@@ -3,7 +3,6 @@ name: Generate AI Debate Video
 on:
   workflow_dispatch:
   schedule:
-    # Optional: Automatically run daily at midnight UTC
     - cron: '0 0 * * *'
 
 permissions:
@@ -12,7 +11,7 @@ permissions:
 jobs:
   generate:
     runs-on: ubuntu-latest
-    timeout-minutes: 15 # Hard job kill switch to save GitHub Actions minutes
+    timeout-minutes: 10
 
     steps:
       - name: Checkout Code
@@ -23,10 +22,9 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Install System Dependencies
+      - name: Install Fonts
         run: |
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg fonts-dejavu-core
+          sudo apt-get update && sudo apt-get install -y fonts-dejavu-core
 
       - name: Install Python Dependencies
         run: |
@@ -34,7 +32,7 @@ jobs:
           pip install requests pillow gTTS numpy
 
       - name: Run Debate Generator
-        timeout-minutes: 12 # Kills script early if an API hangs
+        timeout-minutes: 8
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
