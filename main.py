@@ -79,7 +79,7 @@ def evaluate_debate_round(transcript_text):
         try:
             response = requests.post(
                 url="https://openrouter.ai/api/v1/chat/completions",
-- headers={
+                headers={
                     "Authorization": f"Bearer {OPENROUTER_API_KEY}",
                     "Content-Type": "application/json",
                     "HTTP-Referer": "https://github.com/automated-debate-pipeline",
