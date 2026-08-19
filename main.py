@@ -2,6 +2,7 @@ import os
 import subprocess
 import requests
 import json
+import time
 from google import genai
 from google.genai import types
 
@@ -18,49 +19,67 @@ def log(message):
 
 
 # ==========================================
-# 1. GEMINI TTS AUDIO SYNTHESIS
+# 1. GEMINI TTS (WITH RATE-LIMIT & RETRIES)
 # ==========================================
-def synthesize_speech_gemini(text, output_path, voice_name="Puck"):
+def synthesize_speech_gemini(text, output_path, voice_name="Puck", retries=3, base_delay=60):
     log(f"Synthesizing speech with Gemini TTS (Voice: {voice_name}, {len(text)} chars)...")
-    try:
-        response = client.models.generate_content(
-            model='gemini-2.5-flash-preview-tts',
-            contents=text,
-            config=types.GenerateContentConfig(
-                response_modalities=["AUDIO"],
-                speech_config=types.SpeechConfig(
-                    voice_config=types.VoiceConfig(
-                        prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                            voice_name=voice_name
+    
+    for attempt in range(retries):
+        try:
+            response = client.models.generate_content(
+                model='gemini-2.5-flash-preview-tts',
+                contents=text,
+                config=types.GenerateContentConfig(
+                    response_modalities=["AUDIO"],
+                    speech_config=types.SpeechConfig(
+                        voice_config=types.VoiceConfig(
+                            prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                                voice_name=voice_name
+                            )
                         )
                     )
                 )
             )
-        )
-        
-        for candidate in response.candidates:
-            for part in candidate.content.parts:
-                if part.inline_data and part.inline_data.mime_type.startswith("audio/"):
-                    pcm_bytes = part.inline_data.data
-                    import wave
-                    with wave.open(output_path, 'wb') as wf:
-                        wf.setnchannels(1)
-                        wf.setsampwidth(2) # 16-bit PCM
-                        wf.setframerate(24000)
-                        wf.writeframes(pcm_bytes)
-                    log(f"Successfully generated {output_path} via Gemini TTS")
-                    return output_path
+            
+            for candidate in response.candidates:
+                for part in candidate.content.parts:
+                    if part.inline_data and part.inline_data.mime_type.startswith("audio/"):
+                        pcm_bytes = part.inline_data.data
+                        import wave
+                        with wave.open(output_path, 'wb') as wf:
+                            wf.setnchannels(1)
+                            wf.setsampwidth(2) # 16-bit PCM
+                            wf.setframerate(24000)
+                            wf.writeframes(pcm_bytes)
+                        log(f"Successfully generated {output_path} via Gemini TTS")
+                        
+                        # Pace out requests to stay comfortably under free-tier rate limits
+                        time.sleep(6)
+                        return output_path
+                        
+            raise Exception("No audio data returned in Gemini response payload.")
+            
+        except Exception as e:
+            error_str = str(e)
+            log(f"Gemini TTS attempt {attempt + 1}/{retries} failed: {e}")
+            
+            if "429" in error_str or "RESOURCE_EXHAUSTED" in error_str:
+                wait_time = base_delay * (attempt + 1)
+                log(f"Rate limit reached (Free tier quota). Sleeping for {wait_time} seconds before retry...")
+                time.sleep(wait_time)
+            else:
+                if attempt < retries - 1:
+                    time.sleep(5)
+                else:
+                    break
                     
-        raise Exception("No audio data returned in Gemini response payload.")
-        
-    except Exception as e:
-        log(f"Gemini TTS failed: {e}. Using silent tone fallback.")
-        cmd = [
-            "ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=24000:cl=mono", 
-            "-t", "4", "-q:a", "9", "-acodec", "libmp3lame", output_path
-        ]
-        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        return output_path
+    log("Quota exhausted or retries failed. Using silent tone fallback for this segment.")
+    cmd = [
+        "ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=24000:cl=mono", 
+        "-t", "4", "-q:a", "9", "-acodec", "libmp3lame", output_path
+    ]
+    subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return output_path
 
 
 # ==========================================
