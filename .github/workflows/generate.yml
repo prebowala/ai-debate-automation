@@ -1,14 +1,18 @@
-name: Build AI Debate Video
+name: Generate AI Debate Video
 
 on:
+  schedule:
+    # Runs automatically every day at 12:00 PM UTC
+    - cron: '0 12 * * *'
   workflow_dispatch:
 
 jobs:
-  build-video:
+  build-and-render:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
 
     steps:
-      - name: Checkout repository
+      - name: Checkout Code
         uses: actions/checkout@v4
 
       - name: Set up Python
@@ -16,24 +20,27 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Install System Dependencies & Fonts
+      - name: Install System Dependencies (FFmpeg & Fonts)
         run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg libsndfile1 fonts-dejavu-core
+          sudo apt-get install -y ffmpeg fonts-dejavu-core
 
       - name: Install Python Dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install torch torchaudio requests chatterbox-tts
+          pip install requests pillow numpy gTTS edge-tts
 
-      - name: Run Pipeline Script
+      - name: Run Debate Generator
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-        run: |
-          python main.py
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+        run: python main.py
 
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: final-debate-video
-          path: final_debate_output.mp4
+      - name: Commit and Push Generated Video
+        if: success()
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add final_debate.mp4
+          git commit -m "Auto-generated AI Debate Video [skip ci]" || echo "No changes to commit"
+          git push
