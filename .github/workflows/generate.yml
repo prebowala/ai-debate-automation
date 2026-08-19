@@ -35,7 +35,7 @@ jobs:
       - name: Run Debate Generation Script
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         run: |
           python main.py
 
