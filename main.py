@@ -14,8 +14,7 @@ OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
 def log(message):
     print(f"[DEBATE-PIPELINE] {message}", flush=True)
 
-log("Loading Chatterbox-Turbo model for CPU execution...")
-# Initialize with just the device argument
+log("Loading Chatterbox model for CPU execution...")
 tts_model = ChatterboxTurboTTS.from_pretrained(device="cpu")
 
 
@@ -42,30 +41,28 @@ def synthesize_speech_chatterbox(text, output_path):
 
 
 # ==========================================
-# 2. 10 FRONTIER JUDGES + 5 FALLBACKS PANEL
+# 2. 10 FRONTIER JUDGES + 5 FALLBACKS PANEL (OPTIMIZED TIMEOUTS)
 # ==========================================
 def evaluate_debate_round(transcript_text):
     log("Evaluating debate round with 10 primary frontier judges and 5 backups...")
     
     primary_judges = [
-        "openai/gpt-5.6-terra", 
-        "anthropic/claude-sonnet-5", 
-        "google/gemini-pro-1.5", 
-        "moonshotai/kimi-k3", 
-        "deepseek/deepseek-r1",
-        "x-ai/grok-4.5",
+        "openai/gpt-4o", 
+        "anthropic/claude-3-5-sonnet", 
+        "google/gemini-flash-1.5", 
+        "deepseek/deepseek-chat", 
+        "meta-llama/llama-3-70b-instruct",
         "mistralai/mistral-large",
-        "meta-llama/llama-3.1-405b-instruct",
         "cohere/command-r-plus",
-        "z-ai/glm-5.2"
+        "deepseek/deepseek-r1",
+        "x-ai/grok-2",
+        "google/gemini-pro-1.5"
     ]
     
     fallback_judges = [
-        "openai/gpt-4o",
-        "anthropic/claude-3-5-sonnet",
-        "google/gemini-flash-1.5",
-        "deepseek/deepseek-chat",
-        "meta-llama/llama-3-70b-instruct"
+        "openai/gpt-4o-mini",
+        "anthropic/claude-3-haiku",
+        "meta-llama/llama-3-8b-instruct"
     ]
     
     candidate_pool = primary_judges + fallback_judges
@@ -95,7 +92,7 @@ def evaluate_debate_round(transcript_text):
                     ],
                     "temperature": 0.2
                 },
-                timeout=(4, 8)
+                timeout=(2, 4)  # Strict timeout prevents hanging on slow/heavy models
             )
             if response.status_code == 200:
                 data = response.json()
@@ -103,7 +100,7 @@ def evaluate_debate_round(transcript_text):
                 judges_results[model] = json.loads(content)
                 log(f"Judge [{model}] evaluated successfully ({len(judges_results)}/10).")
         except Exception:
-            log(f"Judge [{model}] timed out or failed. Moving to next candidate.")
+            log(f"Judge [{model}] timed out or failed. Skipping instantly.")
             pass
             
     if len(judges_results) == 0:
@@ -113,10 +110,41 @@ def evaluate_debate_round(transcript_text):
 
 
 # ==========================================
-# 3. YOUTUBE-STYLE CINEMATIC COMPOSITOR
+# 3. DYNAMIC TOPIC LOADER FROM topic.txt
+# ==========================================
+def load_topics_from_file(filename="topic.txt"):
+    if os.path.exists(filename):
+        with open(filename, "r", encoding="utf-8") as f:
+            lines = [line.strip() for line in f if line.strip()]
+        
+        dynamic_rounds = []
+        for i, line in enumerate(lines[:5], 1):
+            dynamic_rounds.append({
+                "round": i,
+                "topic": line,
+                "a": f"Regarding the topic of {line}, proactive implementation and aggressive scaling offer the most promising path forward.",
+                "b": f"On the contrary, {line} presents hidden systemic risks that require far more caution and restriction before moving ahead."
+            })
+        if dynamic_rounds:
+            log(f"Successfully loaded {len(dynamic_rounds)} topics from {filename}.")
+            return dynamic_rounds
+            
+    log("Warning: topic.txt not found or empty. Falling back to default hardcoded topics.")
+    return [
+        {
+            "round": 1,
+            "topic": "AGI Timeline & Acceleration",
+            "a": "Artificial intelligence will drastically accelerate scientific discovery, curing major global diseases and expanding human capability exponentially.",
+            "b": "While promising, unchecked acceleration introduces severe structural alignment risks and unmitigated societal instability before we are ready."
+        }
+    ]
+
+
+# ==========================================
+# 4. YOUTUBE-STYLE CINEMATIC COMPOSITOR
 # ==========================================
 def render_youtube_debate_video(audio_files, captions, output_filename="final_debate_output.mp4"):
-    log(f"Rendering 5-round cinematic video combining {len(audio_files)} audio segments via FFmpeg...")
+    log(f"Rendering cinematic video combining {len(audio_files)} audio segments via FFmpeg...")
     
     cmd = [
         "ffmpeg", "-y",
@@ -162,46 +190,15 @@ def render_youtube_debate_video(audio_files, captions, output_filename="final_de
 
 
 # ==========================================
-# MAIN EXECUTION PIPELINE (5 ROUNDS + SUMMARY)
+# MAIN EXECUTION PIPELINE
 # ==========================================
 if __name__ == "__main__":
-    log("Starting automated 5-round grand debate pipeline with Chatterbox-Turbo & 10 frontier judges...")
+    log("Starting automated grand debate pipeline with Chatterbox & 10 frontier judges...")
     
-    intro_text = "Welcome to the ultimate five-round AI grand debate, evaluated by a panel of ten frontier models. Let us dive straight into Round One."
+    rounds = load_topics_from_file("topic.txt")
+    
+    intro_text = f"Welcome to today's AI grand debate featuring {len(rounds)} rounds based on our custom topic list, evaluated by a panel of ten frontier models."
     intro_audio = synthesize_speech_chatterbox(intro_text, "intro.wav")
-    
-    rounds = [
-        {
-            "round": 1,
-            "topic": "AGI Timeline & Acceleration",
-            "a": "Artificial intelligence will drastically accelerate scientific discovery, curing major global diseases and expanding human capability exponentially.",
-            "b": "While promising, unchecked acceleration introduces severe structural alignment risks and unmitigated societal instability before we are ready."
-        },
-        {
-            "round": 2,
-            "topic": "Open Source vs Closed Ecosystems",
-            "a": "Democratizing powerful frontier models ensures benefits are distributed equitably globally rather than locked behind corporate monopolies.",
-            "b": "Open-source proliferation without robust foundational verification tools is an invitation to widespread cyber-attacks and dual-use harms."
-        },
-        {
-            "round": 3,
-            "topic": "Economic Impact & Labor Markets",
-            "a": "AI automation will eliminate burdensome cognitive and physical toil, liberating humanity to focus on creative and philosophical pursuits.",
-            "b": "Without pre-emptive economic restructuring, rapid displacement will trigger unprecedented structural unemployment and wealth concentration."
-        },
-        {
-            "round": 4,
-            "topic": "Regulation & Governance",
-            "a": "Heavy government regulation will only stifle nimble innovation and push cutting-edge research into underground or hostile jurisdictions.",
-            "b": "Global coordination and strict guardrails are mandatory to prevent an unconstrained race to the bottom in autonomous capabilities."
-        },
-        {
-            "round": 5,
-            "topic": "Long-Term Human Autonomy",
-            "a": "Deep integration with advanced AI systems represents the natural next step in human evolution and cognitive expansion.",
-            "b": "Subcontracting critical decision-making to black-box systems risks eroding core human agency and independent critical thought."
-        }
-    ]
     
     audio_list = [intro_audio]
     captions_list = ["AI Grand Debate Arena - Introduction"]
@@ -243,7 +240,7 @@ if __name__ == "__main__":
 
     log("Compiling final summary and tallying cumulative scores...")
     winner = "Debater A" if total_score_a >= total_score_b else "Debater B"
-    summary_text = f"After five intense rounds judged by ten frontier AI models, the votes are in. Debater A finished with a cumulative score of {int(total_score_a)}, while Debater B finished with {int(total_score_b)}. Your overall winner for this grand debate is {winner}!"
+    summary_text = f"After all rounds judged by ten frontier AI models, the votes are in. Debater A finished with a cumulative score of {int(total_score_a)}, while Debater B finished with {int(total_score_b)}. Your overall winner is {winner}!"
     
     summary_audio_path = "final_summary.wav"
     synthesize_speech_chatterbox(summary_text, summary_audio_path)
@@ -252,4 +249,4 @@ if __name__ == "__main__":
     captions_list.append(f"Grand Summary: Winner Crowned ({winner})")
 
     render_youtube_debate_video(audio_list, captions_list, "final_debate_output.mp4")
-    log("Full 10-judge 5-round debate pipeline execution finished successfully.")
+    log("Full debate pipeline execution finished successfully.")
