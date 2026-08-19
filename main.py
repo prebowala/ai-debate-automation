@@ -155,9 +155,9 @@ def run_debate_pipeline():
     dialogue_events.append((current_time, current_time + dur_out, "Narrator", outro_text))
     current_time += dur_out
 
-    # 4. Build Animated ASS Subtitle File with active speaker colors
+    # 4. Build Animated ASS Subtitle File with active speaker colors and topic/verse info
     print("\n[SUBTITLES] Building subtitles.ass...")
-    ass_content = """[Script Info]
+    ass_content = f"""[Script Info]
 Title: AI Debate Animated Captions
 ScriptType: v4.00+
 PlayResX: 1920
@@ -166,12 +166,14 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: TitleStyle,DejaVuSans-Bold,36,&H00FFFFFF,&H000000FF,&HFF000000,&H80000000,1,0,0,0,100,100,0,0,1,2,1,8,20,20,30,1
 Style: NarratorStyle,DejaVuSans-Bold,24,&H0000FFFF,&H000000FF,&HFF000000,&H80000000,1,0,0,0,100,100,0,0,1,2,1,2,20,20,120,1
 Style: DebaterAStyle,DejaVuSans-Bold,26,&H00FFFF00,&H000000FF,&HFF000000,&H80000000,1,0,0,0,100,100,0,0,1,3,1,2,20,20,120,1
 Style: DebaterBStyle,DejaVuSans-Bold,26,&H00FF00FF,&H000000FF,&HFF000000,&H80000000,1,0,0,0,100,100,0,0,1,3,1,2,20,20,120,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:00.00,{format_ass_time(current_time)},TitleStyle,,0,0,0,,AI FRONTIER SHOWCASE \\N Topic - {topic} \\N {verse_text}
 """
 
     for start, end, speaker, text in dialogue_events:
@@ -191,13 +193,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     with open("subtitles.ass", "w", encoding="utf-8") as f:
         f.write(ass_content)
 
-    # 5. Write clean text files for FFmpeg drawtext to read safely (bypassing all character escaping bugs)
-    with open("topic_text.txt", "w", encoding="utf-8") as tf:
-        tf.write(f"Topic - {topic}")
-    with open("verse_text.txt", "w", encoding="utf-8") as vf:
-        vf.write(verse_text)
-
-    # 6. FFmpeg Video Rendering Suite using textfile parameters
+    # 5. Clean FFmpeg Video Rendering Suite (Zero text parsing vulnerabilities)
     print("\n[FFmpeg] Rendering final video package...")
     total_duration = int(current_time) + 2
 
@@ -209,10 +205,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             "[0:v]scale=2880:1620,zoompan=z='min(zoom+0.0008,1.25)':d=3000:s=1920x1080[bg];"
             "[1:a]aformat=channel_layouts=mono,showwaves=s=600x50:mode=cline:rate=25:colors=0x00FFCC[waveform];"
             "[bg][waveform]overlay=(W-w)/2:H-130[with_wave];"
-            "[with_wave]drawtext=text='AI FRONTIER SHOWCASE':fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf:fontsize=40:fontcolor=white:x=(w-text_w)/2:y=30,"
-            "drawtext=textfile=topic_text.txt:fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf:fontsize=20:fontcolor=0x00FFCC:x=(w-text_w)/2:y=80,"
-            "drawtext=textfile=verse_text.txt:fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Oblique.ttf:fontsize=18:fontcolor=yellow:x=(w-text_w)/2:y=h-45,"
-            "subtitles=subtitles.ass[v]"
+            "[with_wave]subtitles=subtitles.ass[v]"
         ),
         "-map", "[v]",
         "-c:v", "libx264",
