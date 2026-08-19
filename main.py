@@ -1,8 +1,9 @@
 import os
 import requests
 import subprocess
-import wave
+import torchaudio as ta
 from PIL import Image, ImageDraw, ImageFont
+from chatterbox.tts import ChatterboxTTS
 
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY")
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
@@ -26,6 +27,10 @@ FALLBACK_MODELS = [
     "openai/gpt-4o-mini"
 ]
 
+# Initialize Chatterbox model globally (loads on first run)
+print("[CHATTERBOX] Loading local speech model...")
+chatterbox_model = ChatterboxTTS.from_pretrained(device="cpu")
+
 def query_openrouter(prompt, primary_model, timeout=45):
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
@@ -47,19 +52,20 @@ def query_openrouter(prompt, primary_model, timeout=45):
     return "A: 75, B: 75"
 
 def generate_chatterbox_audio(text, speaker_role, output_filename):
-    print(f"[CHATTERBOX-NANO] Synthesizing [{speaker_role}] audio ({len(text.split())} words) -> {output_filename}...")
-    sample_rate = 16000
-    words = text.split()
-    duration_seconds = max(10.0, len(words) / 2.5)
-    num_frames = int(sample_rate * duration_seconds)
+    print(f"[CHATTERBOX] Synthesizing [{speaker_role}] audio ({len(text.split())} words) -> {output_filename}...")
     
-    with wave.open(output_filename, 'w') as wav_file:
-        wav_file.setnchannels(1)
-        wav_file.setsampwidth(2)
-        wav_file.setframerate(sample_rate)
-        wav_file.writeframes(b'\x00' * (num_frames * 2))
-        
-    return float(duration_seconds)
+    # Generate audio tensor using Chatterbox
+    wav_tensor = chatterbox_model.generate(text)
+    ta.save(output_filename, wav_tensor, chatterbox_model.sr)
+
+    # Get exact duration via ffprobe
+    cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", output_filename]
+    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        duration = float(result.stdout.strip())
+    except Exception:
+        duration = max(5.0, len(text.split()) / 2.5)
+    return duration
 
 def format_ass_time(seconds):
     hours = int(seconds // 3600)
@@ -68,8 +74,21 @@ def format_ass_time(seconds):
     centisecs = int((seconds - int(seconds)) * 100)
     return f"{hours}:{minutes:02d}:{secs:02d}.{centisecs:02d}"
 
+def create_gradient_background():
+    img = Image.new("RGB", (1920, 1080))
+    for y in range(1080):
+        r = int(10 + (y / 1080) * 15)
+        g = int(15 + (y / 1080) * 25)
+        b = int(30 + (y / 1080) * 50)
+        for x in range(1920):
+            if x % 80 == 0 or y % 80 == 0:
+                img.putpixel((x, y), (r + 10, g + 15, b + 25))
+            else:
+                img.putpixel((x, y), (r, g, b))
+    return img
+
 def generate_speaker_frame(speaker_name, speaker_role, topic):
-    img = Image.new("RGB", (1920, 1080), color=(10, 15, 30))
+    img = create_gradient_background()
     draw = ImageDraw.Draw(img)
 
     try:
@@ -87,7 +106,6 @@ def generate_speaker_frame(speaker_name, speaker_role, topic):
     draw_centered(40, "AI FRONTIER SHOWCASE DEBATE", font_title, "white")
     draw_centered(95, f"Topic: {topic}", font_sub, "#00FFCC")
 
-    box_color = (25, 35, 60)
     border_color = "#00FFCC"
     badge_fill = "#00FFCC"
     
@@ -98,7 +116,7 @@ def generate_speaker_frame(speaker_name, speaker_role, topic):
         border_color = "#FF00FF"
         badge_fill = "#FF00FF"
 
-    draw.rounded_rectangle([460, 260, 1460, 420], radius=16, fill=box_color, outline=border_color, width=3)
+    draw.rounded_rectangle([460, 260, 1460, 420], radius=16, fill=(20, 30, 50), outline=border_color, width=3)
     draw.ellipse([510, 305, 590, 385], fill=badge_fill)
     draw.text((535, 325), speaker_name[0], fill="black", font=font_badge)
     
@@ -110,7 +128,7 @@ def generate_speaker_frame(speaker_name, speaker_role, topic):
     return filename
 
 def generate_round_breakdown_image(round_num, scores_a, scores_b, total_a, total_b):
-    img = Image.new("RGB", (1920, 1080), color=(10, 15, 30))
+    img = create_gradient_background()
     draw = ImageDraw.Draw(img)
 
     try:
@@ -157,9 +175,6 @@ def generate_round_breakdown_image(round_num, scores_a, scores_b, total_a, total
         draw.text((1730, y_start + 22), f"{score} pts", fill="#FF00FF", font=font_score)
         y_start += 82
 
-    draw.rounded_rectangle([200, 630, 1820, 710], radius=10, fill=(15, 25, 45), outline="#00FFCC", width=2)
-    draw_centered(658, f"Round {round_num} complete. Debater A scored {total_a} pts, Debater B scored {total_b} pts.", font_sub, "white")
-
     filename = f"round_{round_num}_breakdown.png"
     img.save(filename)
     return filename
@@ -198,7 +213,7 @@ def run_debate_pipeline():
         
         prompt_a = f"Topic: {topic}\nRound {round_num}: Provide a thorough, comprehensive pro argument for Debater A with deep reasoning, evidence, and clear structure. Write approximately 250 to 300 words."
         text_a = query_openrouter(prompt_a, primary_model="openai/gpt-5.6").replace(",", " -")
-        dur_a = generate_chatterbox_audio(text_a, f"DebaterA_R{round_num}", f"round_{round_num}_a.wav")
+        dur_a = generate_chatterbox_audio(text_a, f"Debater A (Round {round_num})", f"round_{round_num}_a.wav")
         audio_files.append(f"round_{round_num}_a.wav")
         img_a = generate_speaker_frame("GPT-5.6 (Pro Team)", f"Debater A (Round {round_num})", topic)
         segment_images.append((img_a, dur_a))
@@ -210,7 +225,7 @@ def run_debate_pipeline():
 
         prompt_b = f"Topic: {topic}\nRound {round_num}: Provide a thorough, comprehensive con argument for Debater B directly countering Debater A with deep reasoning. Write approximately 250 to 300 words."
         text_b = query_openrouter(prompt_b, primary_model="anthropic/claude-3.5-sonnet").replace(",", " -")
-        dur_b = generate_chatterbox_audio(text_b, f"DebaterB_R{round_num}", f"round_{round_num}_b.wav")
+        dur_b = generate_chatterbox_audio(text_b, f"Debater B (Round {round_num})", f"round_{round_num}_b.wav")
         audio_files.append(f"round_{round_num}_b.wav")
         img_b = generate_speaker_frame("Claude 3.5 Sonnet (Con Team)", f"Debater B (Round {round_num})", topic)
         segment_images.append((img_b, dur_b))
@@ -239,7 +254,7 @@ def run_debate_pipeline():
 
         breakdown_img = generate_round_breakdown_image(round_num, scores_a, scores_b, round_total_a, round_total_b)
         summary_text = f"Round {round_num} concluded. Our ten AI judges have evaluated both positions. Debater A scored {round_total_a} points, while Debater B scored {round_total_b} points."
-        dur_sum = generate_chatterbox_audio(summary_text, f"Summary_R{round_num}", f"round_{round_num}_sum.wav")
+        dur_sum = generate_chatterbox_audio(summary_text, f"Summary (Round {round_num})", f"round_{round_num}_sum.wav")
         audio_files.append(f"round_{round_num}_sum.wav")
         segment_images.append((breakdown_img, dur_sum))
         
@@ -250,7 +265,7 @@ def run_debate_pipeline():
 
     winner = "Debater A" if cumulative_score_a > cumulative_score_b else "Debater B"
     outro_text = f"The debate has concluded. Final cumulative scores: Debater A earned {cumulative_score_a} points, and Debater B earned {cumulative_score_b} points. The winner of this showcase is {winner}. Thank you for watching."
-    dur_out = generate_chatterbox_audio(outro_text, "Narrator (Outro)", "outro.wav")
+    dur_out = generate_chatterbox_audio(outro_text, "Outro Narrator", "outro.wav")
     audio_files.append("outro.wav")
     outro_img = generate_speaker_frame("Adam (Narrator)", "Outro", topic)
     segment_images.append((outro_img, dur_out))
@@ -260,7 +275,7 @@ def run_debate_pipeline():
     dialogue_events.append((current_time, current_time + dur_out, "".join([f"{w} {{\\k{wd_o}}}" for w in words_o])))
     current_time += dur_out
 
-    print("\n[SUBTITLES] Generating word-by-word karaoke subtitles...")
+    print("\n[SUBTITLES] Generating smooth karaoke subtitles...")
     ass_content = """[Script Info]
 Title: AI Debate Word-Flow Subtitles
 ScriptType: v4.00+
@@ -269,7 +284,7 @@ PlayResY: 1080
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: WordFlow,DejaVuSans-Bold,32,&H00FFFFFF,&H0000FFFF,&HFF000000,&H80000000,1,0,0,0,100,100,0,0,1,3,1,2,100,100,120,1
+Style: WordFlow,DejaVuSans-Bold,36,&H0000FFFF,&H000000FF,&HFF000000,&H80000000,1,0,0,0,100,100,0,0,1,3,1,2,100,100,100,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -291,7 +306,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         if segment_images:
             f.write(f"file '{segment_images[-1][0]}'\n")
 
-    print("\n[FFmpeg] Assembling final 10-minute video package...")
+    print("\n[FFmpeg] Assembling final video package...")
     ffmpeg_cmd = [
         "ffmpeg",
         "-f", "concat", "-safe", "0", "-i", "video_list.txt",
