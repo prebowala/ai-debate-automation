@@ -149,8 +149,8 @@ def run_debate_pipeline():
         cumulative_score_a += round_total_a
         cumulative_score_b += round_total_b
 
-        # Generate specific judge feedback comment favoring one side
-        comment_prompt = f"As judge {favored_judge_name}, give a short 1-sentence critique on Round {num_for_prompt := round_num} favoring either Debater A or Debater B based on strength."
+        # Fixed: use round_num directly
+        comment_prompt = f"As judge {favored_judge_name}, give a short 1-sentence critique on Round {round_num} favoring either Debater A or Debater B based on strength."
         judge_comment = query_openrouter(comment_prompt, primary_model=favored_judge_id, timeout=15).replace(",", " -")
         round_judge_comments[round_num] = f"{favored_judge_name}: {judge_comment}"
 
@@ -221,7 +221,6 @@ def run_debate_pipeline():
     draw.rounded_rectangle([560, 160, 1360, 260], radius=12, fill=(20, 20, 35), outline="#00FFCC", width=2)
     draw.text((580, 172), "AI JUDGE PANEL FEEDBACK & SCORES", fill="#00FFCC", font=font_badge)
     
-    # Render sample round comment inside feedback card
     sample_comment = list(round_judge_comments.values())[0] if round_judge_comments else "Panel evaluating arguments..."
     draw.text((580, 205), sample_comment[:85] + ("..." if len(sample_comment) > 85 else ""), fill="white", font=font_small)
 
