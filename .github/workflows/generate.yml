@@ -18,11 +18,15 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Install System Dependencies & Fonts
+      - name: Setup FFmpeg
+        uses: FedericoCarboni/setup-ffmpeg@v3
+        with:
+          ffmpeg-version: release
+
+      - name: Install System Fonts
         run: |
-          export DEBIAN_FRONTEND=noninteractive
-          sudo apt-get update -y
-          sudo apt-get install -y --no-install-recommends ffmpeg fonts-dejavu-core
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends fonts-dejavu-core
 
       - name: Install Python Requirements
         run: |
