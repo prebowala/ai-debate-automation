@@ -6,7 +6,7 @@ on:
 jobs:
   build-video:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 35
 
     steps:
       - name: Checkout repository
@@ -19,8 +19,9 @@ jobs:
 
       - name: Install System Dependencies (FFmpeg)
         run: |
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg
+          echo "Acquire::Retries "3";" | sudo tee -a /etc/apt/apt.conf.d/80-retries
+          sudo apt-get update -o Acquire::Check-Valid-Until=false -o Acquire::http::Timeout=20
+          sudo apt-get install -y --no-install-recommends ffmpeg
 
       - name: Install Python Dependencies & Chatterbox
         run: |
