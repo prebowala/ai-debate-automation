@@ -9,7 +9,6 @@ from google.genai import types
 # CONFIGURATION & API CLIENTS
 # ==========================================
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
-# Uses GEMINI_API_KEY if present, falls back to OPENROUTER_API_KEY if shared
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", OPENROUTER_API_KEY)
 
 client = genai.Client(api_key=GEMINI_API_KEY)
@@ -24,7 +23,6 @@ def log(message):
 def synthesize_speech_gemini(text, output_path, voice_name="Puck"):
     log(f"Synthesizing speech with Gemini TTS (Voice: {voice_name}, {len(text)} chars)...")
     try:
-        # Requesting audio output modality using a Gemini model supporting TTS
         response = client.models.generate_content(
             model='gemini-2.5-flash',
             contents=text,
@@ -40,7 +38,6 @@ def synthesize_speech_gemini(text, output_path, voice_name="Puck"):
             )
         )
         
-        # Extract raw PCM audio data from candidate parts and write to a wave file
         for candidate in response.candidates:
             for part in candidate.content.parts:
                 if part.inline_data and part.inline_data.mime_type.startswith("audio/"):
@@ -67,27 +64,39 @@ def synthesize_speech_gemini(text, output_path, voice_name="Puck"):
 
 
 # ==========================================
-# 2. OPENROUTER FRONTIER PANEL
+# 2. DYNAMIC 5-JUDGE PANEL WITH FALLBACKS (10s TIMEOUT)
 # ==========================================
 def evaluate_debate_round(transcript_text):
-    log("Evaluating debate round with top frontier flagship models via OpenRouter...")
+    log("Evaluating debate round, targeting 5 active judges with automatic backups...")
     
-    judge_models = [
+    # Primary target list of 5 flagship judges
+    primary_judges = [
         "openai/gpt-5.6-terra",          
         "anthropic/claude-sonnet-5",     
         "google/gemini-pro-1.5",         
         "moonshotai/kimi-k3",            
+        "deepseek/deepseek-r1"           
+    ]
+    
+    # Backup pool of remaining models to fill in if any primary judge times out
+    backup_judges = [
         "x-ai/grok-4.5",                 
-        "deepseek/deepseek-r1",          
         "mistralai/mistral-large",       
         "meta-llama/llama-3.1-405b-instruct", 
         "cohere/command-r-plus",         
         "z-ai/glm-5.2"                   
     ]
     
+    candidate_pool = primary_judges + backup_judges
     scores = {}
-    for model in judge_models:
+    target_score_count = 5
+    
+    for model in candidate_pool:
+        if len(scores) >= target_score_count:
+            break  # We secured our 5 active judges!
+            
         try:
+            log(f"Querying judge [{model}]...")
             response = requests.post(
                 url="https://openrouter.ai/api/v1/chat/completions",
                 headers={
@@ -107,7 +116,7 @@ def evaluate_debate_round(transcript_text):
                     ],
                     "temperature": 0.2
                 },
-                timeout=30
+                timeout=10  # Strict 10-second hard limit per model
             )
             
             if response.status_code == 200:
@@ -115,11 +124,13 @@ def evaluate_debate_round(transcript_text):
                 content = data['choices'][0]['message']['content']
                 clean_content = content.replace("```json", "").replace("```", "").strip()
                 scores[model] = json.loads(clean_content)
-                log(f"Judge [{model}] scored successfully.")
+                log(f"Judge [{model}] scored successfully. ({len(scores)}/{target_score_count})")
             else:
-                log(f"Judge [{model}] failed with status code {response.status_code}")
+                log(f"Judge [{model}] failed with status code {response.status_code}. Trying backup...")
+        except requests.exceptions.Timeout:
+            log(f"Judge [{model}] timed out after 10 seconds. Pulling a backup model...")
         except Exception as e:
-            log(f"Error executing judge [{model}]: {e}")
+            log(f"Error executing judge [{model}]: {e}. Trying backup...")
             
     return scores
 
@@ -166,7 +177,6 @@ def render_debate_video(audio_a, audio_b, output_filename="final_debate_output.m
 if __name__ == "__main__":
     log("Starting automated long-form debate generation pipeline with Gemini TTS...")
     
-    # Generate audio tracks using different Gemini TTS voices
     debater_a_audio = synthesize_speech_gemini("My position is clear and backed by core principles.", "debater_a.wav", voice_name="Puck")
     debater_b_audio = synthesize_speech_gemini("I completely disagree; the counter-evidence reveals a different reality.", "debater_b.wav", voice_name="Fenrir")
     
