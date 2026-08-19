@@ -121,8 +121,8 @@ def render_debate_video(audio_a, audio_b, output_filename="final_debate_output.m
     
     cmd = [
         "ffmpeg", "-y",
-        "-loop", "1", "-f", "lavfi", "-i", "color=c=navy:s=640x720:r=30",  
-        "-loop", "1", "-f", "lavfi", "-i", "color=c=maroon:s=640x720:r=30", 
+        "-f", "lavfi", "-i", "color=c=navy:s=640x720:r=30",  
+        "-f", "lavfi", "-i", "color=c=maroon:s=640x720:r=30", 
         "-i", audio_a,
         "-i", audio_b,
         "-filter_complex",
@@ -166,6 +166,5 @@ if __name__ == "__main__":
     log(f"Collected valid scores from {len(debate_scores)} flagship company judges.")
     print(json.dumps(debate_scores, indent=2))
     
-    # Passing the debater tracks to be merged sequentially
     render_debate_video(debater_a_audio, debater_b_audio, "final_debate_output.mp4")
     log("Pipeline complete.")
