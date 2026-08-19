@@ -62,16 +62,16 @@ def evaluate_debate_round(transcript_text):
     log("Evaluating debate round with top frontier flagship models via OpenRouter...")
     
     judge_models = [
-        "openai/gpt-5.6-terra",          # OpenAI
-        "anthropic/claude-sonnet-5",     # Anthropic
-        "google/gemini-pro-1.5",         # Google
-        "moonshotai/kimi-k3",            # Moonshot AI
-        "x-ai/grok-4.5",                 # xAI
-        "deepseek/deepseek-r1",          # DeepSeek
-        "mistralai/mistral-large",       # Mistral AI
-        "meta-llama/llama-3.1-405b-instruct", # Meta
-        "cohere/command-r-plus",         # Cohere
-        "z-ai/glm-5.2"                   # Z.ai
+        "openai/gpt-5.6-terra",          
+        "anthropic/claude-sonnet-5",     
+        "google/gemini-pro-1.5",         
+        "moonshotai/kimi-k3",            
+        "x-ai/grok-4.5",                 
+        "deepseek/deepseek-r1",          
+        "mistralai/mistral-large",       
+        "meta-llama/llama-3.1-405b-instruct", 
+        "cohere/command-r-plus",         
+        "z-ai/glm-5.2"                   
     ]
     
     scores = {}
@@ -117,7 +117,7 @@ def evaluate_debate_round(transcript_text):
 # 3. VIDEO RENDERING & SPLIT-SCREEN COMPOSITION
 # ==========================================
 def render_debate_video(audio_a, audio_b, output_filename="final_debate_output.mp4"):
-    log("Rendering split-screen video canvas with resilient audio merging via FFmpeg...")
+    log("Rendering split-screen video canvas with sequential audio via FFmpeg...")
     
     cmd = [
         "ffmpeg", "-y",
@@ -126,7 +126,12 @@ def render_debate_video(audio_a, audio_b, output_filename="final_debate_output.m
         "-i", audio_a,
         "-i", audio_b,
         "-filter_complex",
-        "[0:v][1:v]hstack=inputs=2[v_canvas];[2:a][3:a]amerge=inputs=2[aout]",
+        (
+            "[0:v][1:v]hstack=inputs=2[v_canvas];"
+            "[2:a]aformat=sample_rates=24000:channel_layouts=mono[a1];"
+            "[3:a]aformat=sample_rates=24000:channel_layouts=mono[a2];"
+            "[a1][a2]concat=n=2:v=0:a=1[aout]"
+        ),
         "-map", "[v_canvas]",
         "-map", "[aout]",
         "-c:v", "libx264", "-pix_fmt", "yuv420p", 
@@ -135,8 +140,14 @@ def render_debate_video(audio_a, audio_b, output_filename="final_debate_output.m
         output_filename
     ]
     
-    subprocess.run(cmd, check=True)
-    log(f"Split-screen video successfully rendered to {output_filename}!")
+    try:
+        subprocess.run(cmd, check=True, capture_output=True, text=True)
+        log(f"Split-screen video successfully rendered to {output_filename}!")
+    except subprocess.CalledProcessError as e:
+        log(f"FFmpeg failed with exit code {e.returncode}")
+        log(f"FFmpeg stdout: {e.stdout}")
+        log(f"FFmpeg stderr: {e.stderr}")
+        raise
 
 
 # ==========================================
@@ -155,5 +166,6 @@ if __name__ == "__main__":
     log(f"Collected valid scores from {len(debate_scores)} flagship company judges.")
     print(json.dumps(debate_scores, indent=2))
     
+    # Passing the debater tracks to be merged sequentially
     render_debate_video(debater_a_audio, debater_b_audio, "final_debate_output.mp4")
     log("Pipeline complete.")
