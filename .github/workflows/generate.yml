@@ -1,4 +1,4 @@
-name: Generate AI Debate Video (Chatterbox Turbo)
+name: Generate AI Debate Video (Chatterbox Nano)
 
 on:
   workflow_dispatch:
@@ -6,7 +6,7 @@ on:
 jobs:
   build-video:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 15
 
     steps:
       - name: Checkout repository
@@ -25,9 +25,7 @@ jobs:
       - name: Install Python Dependencies & Chatterbox
         run: |
           python -m pip install --upgrade pip
-          # Installs PyTorch (CPU wheel fallback for standard runner environments)
           pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
-          # Installs Chatterbox TTS package
           pip install chatterbox-tts requests
 
       - name: Run Pipeline Script
