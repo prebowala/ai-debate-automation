@@ -2,6 +2,7 @@ import os
 import requests
 import subprocess
 import wave
+from PIL import Image, ImageDraw, ImageFont
 
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY")
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
@@ -155,9 +156,38 @@ def run_debate_pipeline():
     dialogue_events.append((current_time, current_time + dur_out, "Narrator", outro_text))
     current_time += dur_out
 
-    # 4. Build Sanitized ASS Subtitle File
+    # 4. Generate Dynamic Background Image with Pillow (Bypassing FFmpeg text filters completely)
+    print("\n[IMAGE] Generating dynamic background with Pillow...")
+    try:
+        img = Image.open("background.jpg").convert("RGB")
+    except Exception:
+        img = Image.new("RGB", (1920, 1080), color=(15, 15, 25))
+    
+    img = img.resize((1920, 1080))
+    draw = ImageDraw.Draw(img)
+
+    try:
+        font_title = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 38)
+        font_topic = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 22)
+        font_verse = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Oblique.ttf", 18)
+    except IOError:
+        font_title = font_topic = font_verse = ImageFont.load_default()
+
+    def draw_centered(y, text, font, fill):
+        bbox = draw.textbbox((0, 0), text, font=font)
+        w = bbox[2] - bbox[0]
+        x = (1920 - w) // 2
+        draw.text((x, y), text, fill=fill, font=font)
+
+    draw_centered(30, "AI FRONTIER SHOWCASE", font_title, "white")
+    draw_centered(85, f"Topic - {topic}", font_topic, "#00FFCC")
+    draw_centered(1080 - 50, verse_text, font_verse, "yellow")
+    
+    img.save("dynamic_background.jpg")
+
+    # 5. Build Clean Subtitle File for Dialogue Only
     print("\n[SUBTITLES] Building subtitles.ass...")
-    ass_content = f"""[Script Info]
+    ass_content = """[Script Info]
 Title: AI Debate Animated Captions
 ScriptType: v4.00+
 PlayResX: 1920
@@ -166,14 +196,12 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: TitleStyle,DejaVuSans-Bold,36,&H00FFFFFF,&H000000FF,&HFF000000,&H80000000,1,0,0,0,100,100,0,0,1,2,1,8,20,20,30,1
 Style: NarratorStyle,DejaVuSans-Bold,24,&H0000FFFF,&H000000FF,&HFF000000,&H80000000,1,0,0,0,100,100,0,0,1,2,1,2,20,20,120,1
 Style: DebaterAStyle,DejaVuSans-Bold,26,&H00FFFF00,&H000000FF,&HFF000000,&H80000000,1,0,0,0,100,100,0,0,1,3,1,2,20,20,120,1
 Style: DebaterBStyle,DejaVuSans-Bold,26,&H00FF00FF,&H000000FF,&HFF000000,&H80000000,1,0,0,0,100,100,0,0,1,3,1,2,20,20,120,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
-Dialogue: 0,0:00:00.00,{format_ass_time(current_time)},TitleStyle,,0,0,0,,AI FRONTIER SHOWCASE \\N Topic - {topic} \\N {verse_text}
 """
 
     for start, end, speaker, text in dialogue_events:
@@ -193,13 +221,13 @@ Dialogue: 0,0:00:00.00,{format_ass_time(current_time)},TitleStyle,,0,0,0,,AI FRO
     with open("subtitles.ass", "w", encoding="utf-8") as f:
         f.write(ass_content)
 
-    # 5. FFmpeg Video Rendering Suite
+    # 6. Clean FFmpeg Video Rendering Suite
     print("\n[FFmpeg] Rendering final video package...")
     total_duration = int(current_time) + 2
 
     ffmpeg_cmd = [
         "ffmpeg",
-        "-loop", "1", "-i", "background.jpg",
+        "-loop", "1", "-i", "dynamic_background.jpg",
         "-f", "lavfi", "-i", "anullsrc=r=44100:cl=mono",
         "-filter_complex", (
             "[0:v]scale=2880:1620,zoompan=z='min(zoom+0.0008,1.25)':d=3000:s=1920x1080[bg];"
