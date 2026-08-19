@@ -52,7 +52,6 @@ def generate_chatterbox_audio(text, speaker_role, output_filename):
     duration_seconds = max(4, len(text.split()) // 3) 
     num_frames = sample_rate * duration_seconds
     
-    # Write a clean WAV file using Python's built-in wave library
     with wave.open(output_filename, 'w') as wav_file:
         wav_file.setnchannels(1)  # Mono
         wav_file.setsampwidth(2)  # 16-bit
@@ -74,7 +73,7 @@ def run_debate_pipeline():
         return
 
     with open("topic.txt", "r") as f:
-        topic = f.read().strip()
+        topic = f.read().strip().replace(",", " -")
 
     print(f"\n[DEBATE-PIPELINE] Loaded Topic: '{topic}'")
     print("==================================================")
@@ -82,11 +81,11 @@ def run_debate_pipeline():
     # Dynamically generate or load verse reference per run
     if os.path.exists("verse.txt"):
         with open("verse.txt", "r") as vf:
-            verse_text = vf.read().strip()
+            verse_text = vf.read().strip().replace(",", " -")
     else:
         print("[AI] Dynamically generating matching Bible verse/reference for this topic...")
         verse_prompt = f"Provide a single concise Bible verse reference and short quote that addresses the topic: '{topic}'. Format as 'Reference — Quote'."
-        verse_text = query_openrouter(verse_prompt, primary_model="openai/gpt-5.6")
+        verse_text = query_openrouter(verse_prompt, primary_model="openai/gpt-5.6").replace(",", " -")
         with open("verse.txt", "w") as vf:
             vf.write(verse_text)
 
@@ -98,7 +97,8 @@ def run_debate_pipeline():
         f"Welcome to the AI Frontier Showcase. Today's central question: "
         f"{topic}. Two opposing stances will clash across three rounds, "
         f"scored out of 100 by our ten-model multi-company panel. Let the debate begin."
-    )
+    ).replace(",", " -")
+    
     intro_dur = generate_chatterbox_audio(intro_text, "Narrator (Intro)", "intro.wav")
     dialogue_events.append((current_time, current_time + intro_dur, "Narrator", intro_text))
     current_time += intro_dur
@@ -110,12 +110,12 @@ def run_debate_pipeline():
     for round_num in range(1, 4):
         print(f"\n--- Round {round_num} of 3 ---")
 
-        text_a = query_openrouter(f"Topic: {topic}\nRound {round_num}: Pro argument for Debater A in 3 sentences.", primary_model="openai/gpt-5.6")
+        text_a = query_openrouter(f"Topic: {topic}\nRound {round_num}: Pro argument for Debater A in 3 sentences.", primary_model="openai/gpt-5.6").replace(",", " -")
         dur_a = generate_chatterbox_audio(text_a, f"Debater A (Round {round_num})", f"round_{round_num}_a.wav")
         dialogue_events.append((current_time, current_time + dur_a, "DebaterA", text_a))
         current_time += dur_a
 
-        text_b = query_openrouter(f"Topic: {topic}\nRound {round_num}: Con argument for Debater B in 3 sentences.", primary_model="anthropic/claude-3.5-sonnet")
+        text_b = query_openrouter(f"Topic: {topic}\nRound {round_num}: Con argument for Debater B in 3 sentences.", primary_model="anthropic/claude-3.5-sonnet").replace(",", " -")
         dur_b = generate_chatterbox_audio(text_b, f"Debater B (Round {round_num})", f"round_{round_num}_b.wav")
         dialogue_events.append((current_time, current_time + dur_b, "DebaterB", text_b))
         current_time += dur_b
@@ -143,19 +143,19 @@ def run_debate_pipeline():
         cumulative_score_a += round_total_a
         cumulative_score_b += round_total_b
 
-        round_summary = f"Round {round_num} concluded. Debater A total: {round_total_a}/1000, Debater B total: {round_total_b}/1000."
+        round_summary = f"Round {round_num} concluded. Debater A total: {round_total_a}/1000, Debater B total: {round_total_b}/1000.".replace(",", " -")
         dur_sum = generate_chatterbox_audio(round_summary, f"Narrator (Round {round_num} Summary)", f"round_{round_num}_summary.wav")
         dialogue_events.append((current_time, current_time + dur_sum, "Narrator", round_summary))
         current_time += dur_sum
 
     # 3. Cinematic Outro
     winner = "Debater A" if cumulative_score_a > cumulative_score_b else "Debater B"
-    outro_text = f"Debate complete. Debater A scored {cumulative_score_a}, Debater B scored {cumulative_score_b}. Winner: {winner}."
+    outro_text = f"Debate complete. Debater A scored {cumulative_score_a}, Debater B scored {cumulative_score_b}. Winner: {winner}.".replace(",", " -")
     dur_out = generate_chatterbox_audio(outro_text, "Narrator (Outro)", "outro.wav")
     dialogue_events.append((current_time, current_time + dur_out, "Narrator", outro_text))
     current_time += dur_out
 
-    # 4. Build Animated ASS Subtitle File with active speaker colors and topic/verse info
+    # 4. Build Sanitized ASS Subtitle File
     print("\n[SUBTITLES] Building subtitles.ass...")
     ass_content = f"""[Script Info]
 Title: AI Debate Animated Captions
@@ -193,7 +193,7 @@ Dialogue: 0,0:00:00.00,{format_ass_time(current_time)},TitleStyle,,0,0,0,,AI FRO
     with open("subtitles.ass", "w", encoding="utf-8") as f:
         f.write(ass_content)
 
-    # 5. Clean FFmpeg Video Rendering Suite (Zero text parsing vulnerabilities)
+    # 5. FFmpeg Video Rendering Suite
     print("\n[FFmpeg] Rendering final video package...")
     total_duration = int(current_time) + 2
 
