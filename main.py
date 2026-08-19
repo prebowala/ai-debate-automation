@@ -41,7 +41,7 @@ def synthesize_speech_chatterbox(text, output_path):
 
 
 # ==========================================
-# 2. 10 FRONTIER JUDGES + 5 FALLBACKS PANEL (OPTIMIZED TIMEOUTS)
+# 2. 10 FRONTIER JUDGES + 5 FALLBACKS PANEL
 # ==========================================
 def evaluate_debate_round(transcript_text):
     log("Evaluating debate round with 10 primary frontier judges and 5 backups...")
@@ -129,7 +129,7 @@ def load_topics_from_file(filename="topic.txt"):
             log(f"Successfully loaded {len(dynamic_rounds)} topics from {filename}.")
             return dynamic_rounds
             
-    log("Warning: topic.txt not found or empty. Falling back to default hardcoded topics.")
+    log("Warning: topic.txt not found or empty. Falling back to default hardcoded topic.")
     return [
         {
             "round": 1,
@@ -143,6 +143,10 @@ def load_topics_from_file(filename="topic.txt"):
 # ==========================================
 # 4. YOUTUBE-STYLE CINEMATIC COMPOSITOR
 # ==========================================
+def escape_ffmpeg_text(text):
+    # Escape colons, quotes, and backslashes that break FFmpeg drawtext syntax
+    return text.replace("\\", "\\\\").replace("'", "\\'").replace(":", "\\:")
+
 def render_youtube_debate_video(audio_files, captions, output_filename="final_debate_output.mp4"):
     log(f"Rendering cinematic video combining {len(audio_files)} audio segments via FFmpeg...")
     
@@ -155,11 +159,13 @@ def render_youtube_debate_video(audio_files, captions, output_filename="final_de
     for af in audio_files:
         cmd.extend(["-i", af])
         
+    safe_caption = escape_ffmpeg_text(captions[0]) if captions else "AI Debate Arena"
+    
     filter_parts = [
         "[0:v]scale=640:720[v0]",
         "[1:v]scale=640:720[v1]",
         "[v0][v1]hstack=inputs=2[v_base]",
-        f"[v_base]drawtext=text='{captions[0]}':fontcolor=white:fontsize=22:x=(w-text_w)/2:y=h-50:box=1:boxcolor=black@0.7[v_out]"
+        f"[v_base]drawtext=text='{safe_caption}':fontcolor=white:fontsize=22:x=(w-text_w)/2:y=h-50:box=1:boxcolor=black@0.7[v_out]"
     ]
     
     concat_inputs = []
