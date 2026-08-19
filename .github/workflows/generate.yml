@@ -1,14 +1,13 @@
-name: Generate AI Debate Video
+name: Build Video
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: '0 0 * * *'
+  push:
+    branches: [ main ]
 
 jobs:
   build-video:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -17,16 +16,23 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
+          cache: 'pip'
+
+      - name: Fix Ubuntu Mirrors
+        run: |
+          sudo sed -i 's|azure.archive.ubuntu.com|archive.ubuntu.com|g' /etc/apt/sources.list || true
+          sudo sed -i 's|azure.archive.ubuntu.com|archive.ubuntu.com|g' /etc/apt/sources.list.d/*.list || true
 
       - name: Install System Dependencies (espeak-ng & ffmpeg)
         run: |
-          sudo apt-get update -y
-          sudo apt-get install -y --no-install-recommends espeak-ng ffmpeg
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg espeak-ng
 
       - name: Install Python Dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install chatterbox-tts torch torchaudio requests einops perth librosa accelerate
+          pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+          pip install chatterbox-tts requests gtts pillow accelerate diffusers
 
       - name: Run Debate Generation Script
         env:
@@ -37,5 +43,5 @@ jobs:
       - name: Upload Generated Video Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: debate-video-output
+          name: final-debate-output
           path: final_debate_output.mp4
