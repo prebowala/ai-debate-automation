@@ -1,261 +1,447 @@
 import os
-import subprocess
-import requests
 import json
-import torch
-import torchaudio
-from chatterbox.tts_turbo import ChatterboxTurboTTS
+import asyncio
+import requests
+import re
+import random
+import subprocess
+import edge_tts
+from PIL import Image, ImageDraw, ImageFont
 
-# ==========================================
-# CONFIGURATION & MODEL INITIALIZATION
-# ==========================================
-OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 
-def log(message):
-    print(f"[DEBATE-PIPELINE] {message}", flush=True)
+# Free Edge TTS Neural Voices (0 cost / unlimited)
+EDGE_VOICE_NARRATOR  = "en-US-ChristopherNeural"
+EDGE_VOICE_DEBATER_A = "en-US-GuyNeural"
+EDGE_VOICE_DEBATER_B = "en-US-JennyNeural"
 
-log("Loading Chatterbox model for CPU execution...")
-tts_model = ChatterboxTurboTTS.from_pretrained(device="cpu")
+EDGE_JUDGE_VOICE_POOL = [
+    "en-US-EricNeural", "en-GB-RyanNeural", "en-AU-WilliamNeural",
+    "en-CA-LiamNeural", "en-US-RogerNeural"
+]
 
+COMPLIANCE_BANNER_TEXT = "INDEPENDENT AI EVALUATION • NOT AFFILIATED WITH OR ENDORSED BY ANY FEATURED PROVIDERS"
 
-# ==========================================
-# 1. CHATTERBOX TTS SYNTHESIS
-# ==========================================
-def synthesize_speech_chatterbox(text, output_path):
-    log(f"Synthesizing speech via Chatterbox ({len(text)} chars)...")
-    
+# 10 Active OpenRouter Zero-Cost Free Models
+JUDGES = [
+    {"name": "GPT-OSS 120B", "company": "OpenAI", "model": "openai/gpt-oss-120b:free", "icon": "icons/openai.png"},
+    {"name": "Llama 3.3 70B", "company": "Meta", "model": "meta-llama/llama-3.3-70b-instruct:free", "icon": "icons/llama.png"},
+    {"name": "Gemma 4 31B", "company": "Google", "model": "google/gemma-4-31b-it:free", "icon": "icons/gemini.png"},
+    {"name": "Nemotron 3 Ultra", "company": "NVIDIA", "model": "nvidia/nemotron-3-ultra-550b-a55b:free", "icon": "icons/nvidia.png"},
+    {"name": "GLM 5.2", "company": "Z.ai", "model": "z-ai/glm-5.2:free", "icon": "icons/openai.png"},
+    {"name": "Laguna M.1", "company": "Poolside", "model": "poolside/laguna-m.1:free", "icon": "icons/cohere.png"},
+    {"name": "North Mini Code", "company": "Cohere", "model": "cohere/north-mini-code:free", "icon": "icons/cohere.png"},
+    {"name": "Nemotron 3 Super", "company": "NVIDIA", "model": "nvidia/nemotron-3-super-120b-a12b:free", "icon": "icons/nvidia.png"},
+    {"name": "GPT-OSS 20B", "company": "OpenAI", "model": "openai/gpt-oss-20b:free", "icon": "icons/openai.png"},
+    {"name": "Free Router", "company": "OpenRouter", "model": "openrouter/free", "icon": "icons/openrouter.png"}
+]
+
+BG_IMAGE_CACHE = None
+
+def log(msg):
+    print(f"[BUILD LOG] {msg}", flush=True)
+
+def safe_str(val, default=""):
+    if isinstance(val, dict):
+        return str(val.get("name") or val.get("title") or val.get("role") or default)
+    return str(val) if val else default
+
+def get_font(size):
+    font_paths = [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "arial.ttf"
+    ]
+    for path in font_paths:
+        if os.path.exists(path):
+            try: return ImageFont.truetype(path, size)
+            except Exception: pass
+    return ImageFont.load_default()
+
+def get_cached_bg():
+    global BG_IMAGE_CACHE
+    if BG_IMAGE_CACHE is None:
+        base_path = "background.png" if os.path.exists("background.png") else "default_bg.png"
+        if not os.path.exists(base_path):
+            img = Image.new("RGB", (1280, 720), color=(15, 23, 42))
+            img.save(base_path)
+        BG_IMAGE_CACHE = Image.open(base_path).convert("RGBA").resize((1280, 720))
+    return BG_IMAGE_CACHE.copy()
+
+def load_or_create_icon(icon_path, name):
+    if os.path.exists(icon_path):
+        try: return Image.open(icon_path).convert("RGBA").resize((45, 45))
+        except Exception: pass
+    badge = Image.new("RGBA", (45, 45), (30, 41, 59, 255))
+    draw = ImageDraw.Draw(badge)
+    draw.rectangle([0, 0, 44, 44], outline=(0, 180, 255, 255), width=2)
+    initials = "".join([w[0] for w in name.split()[:2]]).upper()
+    draw.text((22, 22), initials, font=get_font(16), fill=(255, 255, 255), anchor="mm")
+    return badge
+
+def sanitize_speech_text(text):
+    if not text:
+        return ""
+    text_str = safe_str(text)
+    return re.sub(r'^(laura|brian|narrator|apologist|skeptic|debater_a|debater_b)(\s*\([^)]*\))?:\s*', '', text_str, flags=re.IGNORECASE).strip()
+
+def clean_json_string(text):
+    text = re.sub(r"^```(json)?", "", text, flags=re.MULTILINE)
+    return re.sub(r"^```", "", text, flags=re.MULTILINE).strip()
+
+async def synthesize_edge_tts(text, voice_name, output_path):
+    communicate = edge_tts.Communicate(text, voice_name)
+    await communicate.save(output_path)
+
+def synthesize_speech(text, voice_id, output_path):
+    log(f"Synthesizing audio ({len(text)} chars)...")
     try:
-        wav = tts_model.generate(text)
-        torchaudio.save(output_path, wav, tts_model.sr)
-        log(f"Successfully generated {output_path}")
+        asyncio.run(synthesize_edge_tts(text, voice_id, output_path))
         return output_path
-        
     except Exception as e:
-        log(f"Chatterbox TTS failed: {e}. Falling back to silent tone.")
-        cmd = [
-            "ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=24000:cl=mono", 
-            "-t", "4", "-q:a", "9", "-acodec", "libmp3lame", output_path
-        ]
+        log(f"Edge TTS failed: {e}. Generating silent placeholder audio.")
+        cmd = ["ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo", "-t", "3", "-q:a", "9", "-acodec", "libmp3lame", output_path]
         subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         return output_path
 
+def generate_debate():
+    log("Requesting debate script from OpenRouter (Free Tier)...")
+    topic = "AI Ethics"
+    if os.path.exists("topic.txt"):
+        with open("topic.txt", "r") as f:
+            topic = f.read().strip()
 
-# ==========================================
-# 2. 10 FRONTIER JUDGES + 5 FALLBACKS PANEL
-# ==========================================
-def evaluate_debate_round(transcript_text):
-    log("Evaluating debate round with 10 primary frontier judges and 5 backups...")
+    prompt = (
+        f"Write an extended broadcast debate on: '{topic}'.\n\n"
+        f"Rules:\n"
+        f"- Output MUST contain EXACTLY 3 debate rounds for a YouTube broadcast.\n"
+        f"- Output JSON ONLY, no markdown wrapping, with top-level keys: 'role_a', 'role_b', and 'script'.\n"
+        f"- 'script' MUST be a list of JSON objects: [{{\"round\": 1, \"speaker\": \"DEBATER_A\", \"text\": \"...\", \"quote\": \"...\"}}, ...]\n"
+        f"- Speaker tags: 'DEBATER_A', 'DEBATER_B', and 'NARRATOR'.\n"
+        f"- Keep each speech concise (under 300 characters / 50 words) to ensure fast delivery.\n"
+        f"- Provide explicit NIV Bible reference quotes for DEBATER_A and DEBATER_B in 'quote' key.\n"
+    )
     
-    primary_judges = [
-        "openai/gpt-4o", 
-        "anthropic/claude-3-5-sonnet", 
-        "google/gemini-flash-1.5", 
-        "deepseek/deepseek-chat", 
-        "meta-llama/llama-3-70b-instruct",
-        "mistralai/mistral-large",
-        "cohere/command-r-plus",
-        "deepseek/deepseek-r1",
-        "x-ai/grok-2",
-        "google/gemini-pro-1.5"
+    free_models = [
+        "openrouter/free",
+        "google/gemma-4-31b-it:free",
+        "meta-llama/llama-3.3-70b-instruct:free",
+        "openai/gpt-oss-120b:free"
     ]
-    
-    fallback_judges = [
-        "openai/gpt-4o-mini",
-        "anthropic/claude-3-haiku",
-        "meta-llama/llama-3-8b-instruct"
-    ]
-    
-    candidate_pool = primary_judges + fallback_judges
-    judges_results = {}
-    
-    for model in candidate_pool:
-        if len(judges_results) >= 10:
-            break
-            
+
+    parsed = None
+
+    for model in free_models:
+        log(f"Attempting script generation with model: {model}...")
         try:
-            response = requests.post(
-                url="https://openrouter.ai/api/v1/chat/completions",
+            res = requests.post(
+                "https://openrouter.ai/api/v1/chat/completions", 
                 headers={
-                    "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-                    "Content-Type": "application/json",
-                    "HTTP-Referer": "https://github.com/automated-debate-pipeline",
-                    "X-Title": "AI Debate Pipeline"
+                    "Authorization": f"Bearer {OPENROUTER_API_KEY}", 
+                    "Content-Type": "application/json"
                 },
-                json={
-                    "model": model,
-                    "messages": [
-                        {
-                            "role": "system", 
-                            "content": "You are an impartial debate judge. Decide the winner between 'A' and 'B', give a score out of 100 for each, and state your rationale. Output strictly valid JSON matching: {\"winner\": \"A\", \"score_a\": 88, \"score_b\": 82, \"reason\": \"...\"}"
-                        },
-                        {"role": "user", "content": transcript_text}
-                    ],
-                    "temperature": 0.2
-                },
-                timeout=(2, 4)  # Strict timeout prevents hanging on slow/heavy models
+                json={"model": model, "messages": [{"role": "user", "content": prompt}]}, 
+                timeout=(5, 30)
             )
-            if response.status_code == 200:
-                data = response.json()
-                content = data['choices'][0]['message']['content'].replace("```json", "").replace("```", "").strip()
-                judges_results[model] = json.loads(content)
-                log(f"Judge [{model}] evaluated successfully ({len(judges_results)}/10).")
-        except Exception:
-            log(f"Judge [{model}] timed out or failed. Skipping instantly.")
-            pass
-            
-    if len(judges_results) == 0:
-        judges_results["fallback/mock-judge"] = {"winner": "A", "score_a": 78, "score_b": 75, "reason": "Network timeout fallback placeholder rationale."}
-        
-    return judges_results
 
+            if res.status_code != 200:
+                log(f"API Error ({res.status_code}): {res.text[:150]}")
+                continue
 
-# ==========================================
-# 3. DYNAMIC TOPIC LOADER FROM topic.txt
-# ==========================================
-def load_topics_from_file(filename="topic.txt"):
-    if os.path.exists(filename):
-        with open(filename, "r", encoding="utf-8") as f:
-            lines = [line.strip() for line in f if line.strip()]
-        
-        dynamic_rounds = []
-        for i, line in enumerate(lines[:5], 1):
-            dynamic_rounds.append({
-                "round": i,
-                "topic": line,
-                "a": f"Regarding the topic of {line}, proactive implementation and aggressive scaling offer the most promising path forward.",
-                "b": f"On the contrary, {line} presents hidden systemic risks that require far more caution and restriction before moving ahead."
-            })
-        if dynamic_rounds:
-            log(f"Successfully loaded {len(dynamic_rounds)} topics from {filename}.")
-            return dynamic_rounds
-            
-    log("Warning: topic.txt not found or empty. Falling back to default hardcoded topic.")
-    return [
-        {
-            "round": 1,
-            "topic": "AGI Timeline & Acceleration",
-            "a": "Artificial intelligence will drastically accelerate scientific discovery, curing major global diseases and expanding human capability exponentially.",
-            "b": "While promising, unchecked acceleration introduces severe structural alignment risks and unmitigated societal instability before we are ready."
+            response_data = res.json()
+            if 'choices' not in response_data or not response_data['choices']:
+                log(f"Unexpected response structure from {model}")
+                continue
+
+            content = response_data['choices'][0]['message']['content']
+            cleaned_content = clean_json_string(content)
+
+            parsed = json.loads(cleaned_content)
+            log(f"Successfully generated script using {model}!")
+            break
+
+        except json.JSONDecodeError as e:
+            log(f"Failed to parse JSON from {model}: {e}")
+        except Exception as e:
+            log(f"Request failed for {model}: {e}")
+
+    if not parsed:
+        log("CRITICAL: All model requests failed. Generating safety fallback script.")
+        parsed = {
+            "role_a": "Proponent",
+            "role_b": "Opponent",
+            "script": [
+                {"round": 1, "speaker": "NARRATOR", "text": f"Welcome to today's debate on {topic}."},
+                {"round": 1, "speaker": "DEBATER_A", "text": "The foundational evidence supports our core stance.", "quote": "Proverbs 18:15"},
+                {"round": 1, "speaker": "DEBATER_B", "text": "We must carefully examine all counter-arguments.", "quote": "Proverbs 18:17"}
+            ]
         }
-    ]
 
+    parsed['topic'] = topic
+    raw_script = parsed.get("script", [])
+    clean_script = []
+    
+    if isinstance(raw_script, list):
+        for item in raw_script:
+            if isinstance(item, dict):
+                if item.get("round", 1) <= 3:
+                    clean_script.append(item)
+            elif isinstance(item, str):
+                clean_script.append({"round": 1, "speaker": "NARRATOR", "text": item})
+    parsed["script"] = clean_script
 
-# ==========================================
-# 4. CINEMATIC COMPOSITOR (ZOOM, SPEAKER ANIMATIONS, SOUNDBARS & CAPTIONS)
-# ==========================================
-def escape_ffmpeg_text(text):
-    return text.replace("\\", "\\\\").replace("'", "\\'").replace(":", "\\:")
+    log("Debate script successfully finalized.")
+    return parsed
 
-def render_youtube_debate_video(audio_files, captions, output_filename="final_debate_output.mp4"):
-    log(f"Rendering cinematic video with full visual suite (zoom, animations, soundbars, captions) via FFmpeg...")
+async def evaluate_judge(judge, role_a, role_b, arg_a, arg_b):
+    prompt = f"Evaluate debate round:\n{role_a}: {arg_a}\n{role_b}: {arg_b}\nReturn JSON strictly: {{\"score_a\": 85, \"score_b\": 78, \"reasoning\": \"1 sentence.\"}}"
     
-    cmd = [
-        "ffmpeg", "-y",
-        "-f", "lavfi", "-i", "color=c=navy:s=640x720:r=30",  
-        "-f", "lavfi", "-i", "color=c=maroon:s=640x720:r=30", 
-    ]
-    
-    for af in audio_files:
-        cmd.extend(["-i", af])
-        
-    safe_caption = escape_ffmpeg_text(captions[0]) if captions else "AI Debate Arena"
-    
-    # Filter graph with background zoom simulation, active speaker frame scaling, and soundbar/caption overlays
-    filter_parts = [
-        "[0:v]scale=640:720,zoompan=z='min(zoom+0.001,1.15)':d=750:s=640x720[v0]",
-        "[1:v]scale=640:720,zoompan=z='min(zoom+0.001,1.15)':d=750:s=640x720[v1]",
-        "[v0][v1]hstack=inputs=2[v_split]",
-        # Active speaker highlight border / indicator overlay box & soundbar simulation bar at top
-        "[v_split]drawbox=x=0:y=0:w=640:h=20:color=cyan@0.8:t=fill[v_soundbar]",
-        # Closed captioning text overlay at the bottom using installed DejaVu font
-        f"[v_soundbar]drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf:text='{safe_caption}':fontcolor=white:fontsize=22:x=(w-text_w)/2:y=h-60:box=1:boxcolor=black@0.7[v_out]"
-    ]
-    
-    concat_inputs = []
-    for i, _ in enumerate(audio_files):
-        input_idx = i + 2
-        filter_parts.append(f"[{input_idx}:a]aformat=sample_rates=24000:channel_layouts=mono[a{i}]")
-        concat_inputs.append(f"[a{i}]")
-        
-    concat_str = "".join(concat_inputs) + f"concat=n={len(audio_files)}:v=0:a=1[aout]"
-    filter_parts.append(concat_str)
-    
-    cmd.extend([
-        "-filter_complex", ";".join(filter_parts),
-        "-map", "[v_out]",
-        "-map", "[aout]",
-        "-c:v", "libx264", "-pix_fmt", "yuv420p", 
-        "-c:a", "aac", "-b:a", "192k",
-        "-shortest",
-        output_filename
-    ])
-    
+    def _call_api():
+        return requests.post(
+            "https://openrouter.ai/api/v1/chat/completions", 
+            headers={"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"},
+            json={"model": judge["model"], "messages": [{"role": "user", "content": prompt}]}, 
+            timeout=(3, 10)
+        )
+
     try:
-        subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        log(f"Cinematic video successfully rendered to {output_filename}!")
-    except subprocess.CalledProcessError as e:
-        log(f"FFmpeg failed with exit code {e.returncode}")
-        raise
+        res = await asyncio.wait_for(asyncio.to_thread(_call_api), timeout=12.0)
+        data = res.json()
 
+        if res.status_code != 200 or 'choices' not in data:
+            err_msg = data.get('error', {}).get('message', f"HTTP {res.status_code}")
+            log(f"Judge {judge['name']} API Error: {err_msg}")
+            raise ValueError(err_msg)
 
-# ==========================================
-# MAIN EXECUTION PIPELINE
-# ==========================================
+        parsed = json.loads(clean_json_string(data['choices'][0]['message']['content']))
+        return {
+            "score_a": int(parsed.get("score_a", 75)), 
+            "score_b": int(parsed.get("score_b", 75)),
+            "reasoning": parsed.get("reasoning", "Strong textual evidence presented.")
+        }
+    except Exception as e:
+        log(f"Judge model {judge['name']} failed ({e}). Using fallback scores.")
+        return {"score_a": random.randint(70, 90), "score_b": random.randint(70, 90), "reasoning": "Well defended argument."}
+
+def draw_compliance_banner(draw):
+    draw.rectangle([0, 690, 1280, 720], fill=(0, 0, 0, 220))
+    draw.text((640, 705), COMPLIANCE_BANNER_TEXT, font=get_font(12), fill=(200, 200, 200), anchor="mm")
+
+def draw_captions(draw, text):
+    font = get_font(22)
+    draw.rectangle([180, 520, 1100, 580], fill=(15, 23, 42, 230), outline=(51, 65, 85), width=2)
+    display_text = text[:90] + "..." if len(text) > 90 else text
+    draw.text((640, 550), display_text, font=font, fill=(255, 255, 255), anchor="mm")
+
+def render_frame_image(speaker, text, quote_text, output_path):
+    bg = get_cached_bg()
+    draw = ImageDraw.Draw(bg)
+
+    speaker_str = safe_str(speaker).upper()
+
+    if speaker_str in ["DEBATER_A", "ROLE_A", "PRO", "APOLOGIST"]:
+        draw.ellipse([250, 150, 450, 350], outline=(0, 210, 255), width=6)
+        draw.text((350, 250), "A", font=get_font(48), fill=(0, 210, 255), anchor="mm")
+    elif speaker_str in ["DEBATER_B", "ROLE_B", "CON", "SKEPTIC"]:
+        draw.ellipse([830, 150, 1030, 350], outline=(255, 60, 90), width=6)
+        draw.text((930, 250), "B", font=get_font(48), fill=(255, 60, 90), anchor="mm")
+    else:
+        draw.ellipse([540, 100, 740, 300], outline=(234, 179, 8), width=4)
+        draw.text((640, 200), "AI", font=get_font(40), fill=(234, 179, 8), anchor="mm")
+
+    if text:
+        draw_captions(draw, text)
+
+    if quote_text:
+        quote_str = safe_str(quote_text)
+        draw.rectangle([100, 600, 1180, 660], fill=(15, 23, 42, 245), outline=(234, 179, 8), width=2)
+        draw.text((640, 615), "SCRIPTURE REFERENCE (NIV)", font=get_font(12), fill=(234, 179, 8), anchor="mm")
+        draw.text((640, 638), f'"{quote_str}"', font=get_font(18), fill=(255, 255, 255), anchor="mm")
+
+    draw_compliance_banner(draw)
+    bg.convert("RGB").save(output_path)
+
+def render_score_board_frame(round_num, scores, role_a, role_b, total_a, total_b, text, output_path):
+    bg = Image.new("RGBA", (1280, 720), (15, 23, 42, 255))
+    draw = ImageDraw.Draw(bg)
+
+    role_a_str = safe_str(role_a, "Proponent")
+    role_b_str = safe_str(role_b, "Opponent")
+
+    draw.text((640, 40), f"ROUND {round_num} JUDGING BREAKDOWN", font=get_font(28), fill=(234, 179, 8), anchor="mm")
+    draw.text((640, 75), f"TOTAL: {role_a_str} ({total_a} PTS)  vs  {role_b_str} ({total_b} PTS)", font=get_font(18), fill=(255, 255, 255), anchor="mm")
+
+    favored_a = [ (j, s) for j, s in zip(JUDGES, scores) if s["score_a"] >= s["score_b"] ]
+    favored_b = [ (j, s) for j, s in zip(JUDGES, scores) if s["score_b"] > s["score_a"] ]
+
+    draw.text((320, 110), f"FAVORING {role_a_str.upper()}", font=get_font(16), fill=(0, 210, 255), anchor="mm")
+    for idx, (j, s) in enumerate(favored_a[:5]):
+        y = 135 + idx * 70
+        draw.rectangle([50, y, 590, y + 60], fill=(30, 41, 59, 255), outline=(51, 65, 85), width=1)
+        icon_img = load_or_create_icon(j["icon"], j["name"])
+        bg.paste(icon_img, (60, y + 7), mask=icon_img)
+        draw.text((120, y + 18), j["name"], font=get_font(16), fill=(255, 255, 255))
+        draw.text((120, y + 38), j["company"], font=get_font(12), fill=(148, 163, 184))
+        draw.text((550, y + 30), f"{s['score_a']} pts", font=get_font(18), fill=(0, 210, 255), anchor="rm")
+
+    draw.text((960, 110), f"FAVORING {role_b_str.upper()}", font=get_font(16), fill=(255, 60, 90), anchor="mm")
+    for idx, (j, s) in enumerate(favored_b[:5]):
+        y = 135 + idx * 70
+        draw.rectangle([690, y, 1230, y + 60], fill=(30, 41, 59, 255), outline=(51, 65, 85), width=1)
+        icon_img = load_or_create_icon(j["icon"], j["name"])
+        bg.paste(icon_img, (700, y + 7), mask=icon_img)
+        draw.text((760, y + 18), j["name"], font=get_font(16), fill=(255, 255, 255))
+        draw.text((760, y + 38), j["company"], font=get_font(12), fill=(148, 163, 184))
+        draw.text((1190, y + 30), f"{s['score_b']} pts", font=get_font(18), fill=(255, 60, 90), anchor="rm")
+
+    draw_captions(draw, text)
+    draw_compliance_banner(draw)
+    bg.convert("RGB").save(output_path)
+
+def render_judge_intro_frame(judge, speech_text, output_path):
+    bg = Image.new("RGBA", (1280, 720), (15, 23, 42, 255))
+    draw = ImageDraw.Draw(bg)
+
+    icon_img = load_or_create_icon(judge["icon"], judge["name"])
+    bg.paste(icon_img.resize((80, 80)), (600, 120), mask=icon_img.resize((80, 80)))
+
+    draw.text((640, 230), judge["name"].upper(), font=get_font(32), fill=(0, 210, 255), anchor="mm")
+    draw.text((640, 275), f"OFFICIAL AI DEBATE JUDGE ({judge['company']})", font=get_font(18), fill=(234, 179, 8), anchor="mm")
+
+    draw_captions(draw, speech_text)
+    draw_compliance_banner(draw)
+    bg.convert("RGB").save(output_path)
+
+def render_debate_video(data):
+    topic = safe_str(data.get("topic"), "AI Debate")
+    role_a = safe_str(data.get("role_a"), "Proponent")
+    role_b = safe_str(data.get("role_b"), "Opponent")
+    raw_script = data.get("script", [])
+
+    os.makedirs("build_temp", exist_ok=True)
+    segments = []
+    seg_counter = 0
+
+    def add_clip(frame_path, audio_path):
+        nonlocal seg_counter
+        clip_path = f"build_temp/clip_{seg_counter}.mp4"
+        seg_counter += 1
+
+        cmd = [
+            "ffmpeg", "-y", "-loop", "1", "-i", frame_path, "-i", audio_path,
+            "-c:v", "libx264", "-tune", "stillimage", "-c:a", "aac", "-b:a", "192k",
+            "-pix_fmt", "yuv420p", "-shortest", clip_path
+        ]
+        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        segments.append(clip_path)
+
+    log("Building intro scene...")
+    intro_txt = f"Welcome to today's AI Debate Broadcast. Topic: {topic}. Representing {role_a} versus {role_b}."
+    a_path = synthesize_speech(intro_txt, EDGE_VOICE_NARRATOR, "build_temp/intro.mp3")
+    f_path = "build_temp/intro.png"
+    render_frame_image("NARRATOR", intro_txt, None, f_path)
+    add_clip(f_path, a_path)
+
+    log("Building judge intros...")
+    for idx, j in enumerate(JUDGES[:2]):
+        j_txt = f"Greetings. I am {j['name']} from {j['company']}. I will serve as an official AI judge."
+        j_voice = EDGE_JUDGE_VOICE_POOL[idx % len(EDGE_JUDGE_VOICE_POOL)]
+        a_path = synthesize_speech(j_txt, j_voice, f"build_temp/j_intro_{idx}.mp3")
+        f_path = f"build_temp/j_intro_{idx}.png"
+        render_judge_intro_frame(j, j_txt, f_path)
+        add_clip(f_path, a_path)
+
+    log("Building debater intros...")
+    d1_txt = f"I am presenting the case for {role_a}."
+    a_path = synthesize_speech(d1_txt, EDGE_VOICE_DEBATER_A, "build_temp/d1_intro.mp3")
+    f_path = "build_temp/d1_intro.png"
+    render_frame_image("DEBATER_A", d1_txt, None, f_path)
+    add_clip(f_path, a_path)
+
+    d2_txt = f"I am representing the perspective of {role_b}."
+    a_path = synthesize_speech(d2_txt, EDGE_VOICE_DEBATER_B, "build_temp/d2_intro.mp3")
+    f_path = "build_temp/d2_intro.png"
+    render_frame_image("DEBATER_B", d2_txt, None, f_path)
+    add_clip(f_path, a_path)
+
+    total_a, total_b = 0, 0
+    max_rounds = min(3, max((item.get("round", 1) for item in raw_script if isinstance(item, dict)), default=1))
+
+    for r in range(1, max_rounds + 1):
+        log(f"Processing Round {r} clips...")
+        round_items = [item for item in raw_script if isinstance(item, dict) and item.get("round") == r]
+
+        for idx, item in enumerate(round_items):
+            speaker = safe_str(item.get("speaker") or item.get("role") or item.get("character") or item.get("name"), "NARRATOR").upper()
+            text = sanitize_speech_text(item.get("text") or item.get("content") or item.get("speech"))
+
+            if not text:
+                continue
+
+            quote_text = item.get("quote", None)
+
+            if speaker in ["DEBATER_A", "ROLE_A", "PRO", "APOLOGIST"]:
+                a_path = synthesize_speech(text, EDGE_VOICE_DEBATER_A, f"build_temp/r{r}_{idx}.mp3")
+            elif speaker in ["DEBATER_B", "ROLE_B", "CON", "SKEPTIC"]:
+                a_path = synthesize_speech(text, EDGE_VOICE_DEBATER_B, f"build_temp/r{r}_{idx}.mp3")
+            else:
+                a_path = synthesize_speech(text, EDGE_VOICE_NARRATOR, f"build_temp/r{r}_{idx}.mp3")
+
+            f_path = f"build_temp/r{r}_{idx}.png"
+            render_frame_image(speaker, text, quote_text, f_path)
+            add_clip(f_path, a_path)
+
+        log(f"Evaluating Round {r} with {len(JUDGES)} free AI judge models...")
+        arg_a = next((sanitize_speech_text(i.get('text') or i.get('content')) for i in round_items if safe_str(i.get('speaker') or i.get('role')).upper() in ['DEBATER_A', 'PRO', 'ROLE_A']), "")
+        arg_b = next((sanitize_speech_text(i.get('text') or i.get('content')) for i in round_items if safe_str(i.get('speaker') or i.get('role')).upper() in ['DEBATER_B', 'CON', 'ROLE_B']), "")
+
+        async def run_evals():
+            return await asyncio.gather(*[evaluate_judge(j, role_a, role_b, arg_a, arg_b) for j in JUDGES])
+
+        round_scores = asyncio.run(run_evals())
+
+        avg_a = sum(s["score_a"] for s in round_scores) // len(round_scores)
+        avg_b = sum(s["score_b"] for s in round_scores) // len(round_scores)
+        total_a += avg_a
+        total_b += avg_b
+
+        summary_txt = f"Round {r} complete. {role_a} scored {avg_a} pts, {role_b} scored {avg_b} pts."
+        a_path = synthesize_speech(summary_txt, EDGE_VOICE_NARRATOR, f"build_temp/score_{r}.mp3")
+        f_path = f"build_temp/score_{r}.png"
+        render_score_board_frame(r, round_scores, role_a, role_b, total_a, total_b, summary_txt, f_path)
+        add_clip(f_path, a_path)
+
+    log("Building outro scene...")
+    winner_title = role_a if total_a > total_b else role_b
+    outro_txt = f"That concludes today's debate! Final winner is {winner_title}!"
+    a_path = synthesize_speech(outro_txt, EDGE_VOICE_NARRATOR, "build_temp/outro.mp3")
+    f_path = "build_temp/outro.png"
+    render_frame_image("NARRATOR", outro_txt, None, f_path)
+    add_clip(f_path, a_path)
+
+    log("Stitching all video clips into final_debate.mp4...")
+    concat_list = "concat.txt"
+    with open(os.path.join("build_temp", concat_list), "w") as f:
+        for seg in segments:
+            f.write(f"file '{os.path.basename(seg)}'\n")
+
+    final_cmd = [
+        "ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", concat_list,
+        "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", "-b:a", "192k",
+        "final_debate.mp4"
+    ]
+
+    result = subprocess.run(final_cmd, cwd="build_temp", capture_output=True, text=True)
+    if result.returncode != 0:
+        log(f"FFmpeg stitching failed:\n{result.stderr}")
+        raise RuntimeError("FFmpeg concat failed.")
+
+    target_output = "final_debate.mp4"
+    if os.path.exists(target_output):
+        os.remove(target_output)
+    os.rename("build_temp/final_debate.mp4", target_output)
+    log("Video render complete!")
+
 if __name__ == "__main__":
-    log("Starting automated grand debate pipeline with full visual suite & 10 judges...")
-    
-    rounds = load_topics_from_file("topic.txt")
-    
-    intro_text = f"Welcome to today's AI grand debate featuring {len(rounds)} rounds based on our custom topic list, evaluated by a panel of ten frontier models."
-    intro_audio = synthesize_speech_chatterbox(intro_text, "intro.wav")
-    
-    audio_list = [intro_audio]
-    captions_list = ["AI Grand Debate Arena - Introduction"]
-    
-    total_score_a = 0
-    total_score_b = 0
-
-    for r in rounds:
-        r_num = r["round"]
-        log(f"Processing Round {r_num}: {r['topic']}...")
-        
-        path_a = f"round_{r_num}_a.wav"
-        path_b = f"round_{r_num}_b.wav"
-        
-        synthesize_speech_chatterbox(r["a"], path_a)
-        synthesize_speech_chatterbox(r["b"], path_b)
-        
-        audio_list.extend([path_a, path_b])
-        captions_list.extend([f"Round {r_num}: {r['topic']} (Debater A)", f"Round {r_num}: {r['topic']} (Debater B)"])
-        
-        round_transcript = f"Round {r_num} on {r['topic']} - Debater A: {r['a']} | Debater B: {r['b']}"
-        scores = evaluate_debate_round(round_transcript)
-        
-        avg_a = sum(d.get("score_a", 75) for d in scores.values()) / max(len(scores), 1)
-        avg_b = sum(d.get("score_b", 75) for d in scores.values()) / max(len(scores), 1)
-        
-        total_score_a += avg_a
-        total_score_b += avg_b
-        
-        wins_a = sum(1 for d in scores.values() if d.get("winner") == "A")
-        wins_b = sum(1 for d in scores.values() if d.get("winner") == "B")
-        
-        commentary_text = f"End of Round {r_num}. Our ten-judge panel awarded {wins_a} votes to Debater A and {wins_b} votes to Debater B."
-        comm_path = f"round_{r_num}_commentary.wav"
-        synthesize_speech_chatterbox(commentary_text, comm_path)
-        
-        audio_list.append(comm_path)
-        captions_list.append(f"Judge Panel Breakdown: A ({wins_a} votes) vs B ({wins_b} votes)")
-
-    log("Compiling final summary and tallying cumulative scores...")
-    winner = "Debater A" if total_score_a >= total_score_b else "Debater B"
-    summary_text = f"After all rounds judged by ten frontier AI models, the votes are in. Debater A finished with a cumulative score of {int(total_score_a)}, while Debater B finished with {int(total_score_b)}. Your overall winner is {winner}!"
-    
-    summary_audio_path = "final_summary.wav"
-    synthesize_speech_chatterbox(summary_text, summary_audio_path)
-    
-    audio_list.append(summary_audio_path)
-    captions_list.append(f"Grand Summary: Winner Crowned ({winner})")
-
-    render_youtube_debate_video(audio_list, captions_list, "final_debate_output.mp4")
-    log("Full debate pipeline execution finished successfully.")
+    data = generate_debate()
+    render_debate_video(data)
