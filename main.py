@@ -57,46 +57,49 @@ def synthesize_speech_gemini(text, output_path, voice_name="Puck"):
         log(f"Gemini TTS failed: {e}. Using silent tone fallback.")
         cmd = [
             "ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=24000:cl=mono", 
-            "-t", "5", "-q:a", "9", "-acodec", "libmp3lame", output_path
+            "-t", "4", "-q:a", "9", "-acodec", "libmp3lame", output_path
         ]
         subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         return output_path
 
 
 # ==========================================
-# 2. DYNAMIC 5-JUDGE PANEL WITH DUAL TIMEOUTS & FALLBACKS
+# 2. 10 FRONTIER JUDGES + 5 FALLBACKS PANEL
 # ==========================================
 def evaluate_debate_round(transcript_text):
-    log("Evaluating debate round, targeting 5 active judges with automatic backups...")
+    log("Evaluating debate round with 10 primary frontier judges and 5 backups...")
     
-    # Primary target list of 5 flagship judges
+    # 10 Primary Frontier Model Judges
     primary_judges = [
-        "openai/gpt-5.6-terra",          
-        "anthropic/claude-sonnet-5",     
-        "google/gemini-pro-1.5",         
-        "moonshotai/kimi-k3",            
-        "deepseek/deepseek-r1"           
+        "openai/gpt-5.6-terra", 
+        "anthropic/claude-sonnet-5", 
+        "google/gemini-pro-1.5", 
+        "moonshotai/kimi-k3", 
+        "deepseek/deepseek-r1",
+        "x-ai/grok-4.5",
+        "mistralai/mistral-large",
+        "meta-llama/llama-3.1-405b-instruct",
+        "cohere/command-r-plus",
+        "z-ai/glm-5.2"
     ]
     
-    # Backup pool of remaining models to fill in if any primary judge times out
-    backup_judges = [
-        "x-ai/grok-4.5",                 
-        "mistralai/mistral-large",       
-        "meta-llama/llama-3.1-405b-instruct", 
-        "cohere/command-r-plus",         
-        "z-ai/glm-5.2"                   
+    # 5 Extra Fallback Judges in case any primary model times out or errors
+    fallback_judges = [
+        "openai/gpt-4o",
+        "anthropic/claude-3-5-sonnet",
+        "google/gemini-flash-1.5",
+        "deepseek/deepseek-chat",
+        "meta-llama/llama-3-70b-instruct"
     ]
     
-    candidate_pool = primary_judges + backup_judges
-    scores = {}
-    target_score_count = 5
+    candidate_pool = primary_judges + fallback_judges
+    judges_results = {}
     
     for model in candidate_pool:
-        if len(scores) >= target_score_count:
-            log("Secured 5 successful judge scores. Breaking loop early.")
+        # We aim to get up to 10 successful active judge evaluations per round
+        if len(judges_results) >= 10:
             break
             
-        log(f"Attempting query to judge [{model}]...")
         try:
             response = requests.post(
                 url="https://openrouter.ai/api/v1/chat/completions",
@@ -111,82 +114,170 @@ def evaluate_debate_round(transcript_text):
                     "messages": [
                         {
                             "role": "system", 
-                            "content": "You are an impartial debate judge. Score the following argument out of 100 and provide a 1-sentence rationale. Output strictly valid JSON format matching: {\"score\": 85, \"reason\": \"...\"}"
+                            "content": "You are an impartial debate judge. Decide the winner between 'A' and 'B', give a score out of 100 for each, and state your rationale. Output strictly valid JSON matching: {\"winner\": \"A\", \"score_a\": 88, \"score_b\": 82, \"reason\": \"...\"}"
                         },
                         {"role": "user", "content": transcript_text}
                     ],
                     "temperature": 0.2
                 },
-                timeout=(5, 10)  # (Connect timeout 5s, Read timeout 10s) to prevent hanging
+                timeout=(4, 8) # Tight timeouts so the 15-model pool cycles quickly without hanging
             )
-            
-            log(f"Received response status {response.status_code} from [{model}]")
             if response.status_code == 200:
                 data = response.json()
-                content = data['choices'][0]['message']['content']
-                clean_content = content.replace("```json", "").replace("```", "").strip()
-                scores[model] = json.loads(clean_content)
-                log(f"Judge [{model}] scored successfully. ({len(scores)}/{target_score_count})")
-            else:
-                log(f"Judge [{model}] failed with status code {response.status_code}. Trying backup...")
-        except Exception as e:
-            log(f"Skipping model [{model}] due to network/timeout error: {e}. Trying backup...")
+                content = data['choices'][0]['message']['content'].replace("```json", "").replace("```", "").strip()
+                judges_results[model] = json.loads(content)
+                log(f"Judge [{model}] evaluated successfully ({len(judges_results)}/10).")
+        except Exception:
+            log(f"Judge [{model}] timed out or failed. Moving to next candidate.")
+            pass
             
-    # Safety net: If OpenRouter is completely stalled, inject a mock placeholder so it never freezes the pipeline
-    if len(scores) == 0:
-        log("WARNING: All OpenRouter connections failed or timed out. Injecting fallback score.")
-        scores["fallback/mock-judge"] = {"score": 75, "reason": "Network timeout fallback placeholder."}
-            
-    return scores
+    if len(judges_results) == 0:
+        judges_results["fallback/mock-judge"] = {"winner": "A", "score_a": 78, "score_b": 75, "reason": "Network timeout fallback placeholder rationale."}
+        
+    return judges_results
 
 
 # ==========================================
-# 3. VIDEO RENDERING & SPLIT-SCREEN COMPOSITION
+# 3. YOUTUBE-STYLE CINEMATIC COMPOSITOR
 # ==========================================
-def render_debate_video(audio_a, audio_b, output_filename="final_debate_output.mp4"):
-    log("Rendering split-screen video canvas with actual audio tracks via FFmpeg...")
+def render_youtube_debate_video(audio_files, captions, output_filename="final_debate_output.mp4"):
+    log(f"Rendering 5-round cinematic video combining {len(audio_files)} audio segments via FFmpeg...")
     
     cmd = [
         "ffmpeg", "-y",
-        "-f", "lavfi", "-i", "color=c=navy:s=640x720:r=30",  
-        "-f", "lavfi", "-i", "color=c=maroon:s=640x720:r=30", 
-        "-i", audio_a,
-        "-i", audio_b,
-        "-filter_complex",
-        (
-            "[0:v][1:v]hstack=inputs=2[v_canvas];"
-            "[2:a][3:a]concat=n=2:v=0:a=1[aout]"
-        ),
-        "-map", "[v_canvas]",
+        "-f", "lavfi", "-i", "color=c=navy:s=640x720:r=30",  # Left side (Debater A)
+        "-f", "lavfi", "-i", "color=c=maroon:s=640x720:r=30", # Right side (Debater B)
+    ]
+    
+    for af in audio_files:
+        cmd.extend(["-i", af])
+        
+    filter_parts = [
+        "[0:v]scale=640:720[v0]",
+        "[1:v]scale=640:720[v1]",
+        "[v0][v1]hstack=inputs=2[v_base]",
+        f"[v_base]drawtext=text='{captions[0]}':fontcolor=white:fontsize=22:x=(w-text_w)/2:y=h-50:box=1:boxcolor=black@0.7[v_out]"
+    ]
+    
+    concat_inputs = []
+    for i, _ in enumerate(audio_files):
+        input_idx = i + 2
+        filter_parts.append(f"[{input_idx}:a]aformat=sample_rates=24000:channel_layouts=mono[a{i}]")
+        concat_inputs.append(f"[a{i}]")
+        
+    concat_str = "".join(concat_inputs) + f"concat=n={len(audio_files)}:v=0:a=1[aout]"
+    filter_parts.append(concat_str)
+    
+    cmd.extend([
+        "-filter_complex", ";".join(filter_parts),
+        "-map", "[v_out]",
         "-map", "[aout]",
         "-c:v", "libx264", "-pix_fmt", "yuv420p", 
         "-c:a", "aac", "-b:a", "192k",
         "-shortest",
         output_filename
-    ]
+    ])
     
     try:
         subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        log(f"Split-screen video successfully rendered to {output_filename}!")
+        log(f"Cinematic video successfully rendered to {output_filename}!")
     except subprocess.CalledProcessError as e:
         log(f"FFmpeg failed with exit code {e.returncode}")
         raise
 
 
 # ==========================================
-# MAIN EXECUTION PIPELINE
+# MAIN EXECUTION PIPELINE (5 ROUNDS + SUMMARY)
 # ==========================================
 if __name__ == "__main__":
-    log("Starting automated long-form debate generation pipeline with Gemini TTS...")
+    log("Starting automated 5-round grand debate pipeline with 10 frontier judges...")
     
-    debater_a_audio = synthesize_speech_gemini("My position is clear and backed by core principles.", "debater_a.wav", voice_name="Puck")
-    debater_b_audio = synthesize_speech_gemini("I completely disagree; the counter-evidence reveals a different reality.", "debater_b.wav", voice_name="Fenrir")
+    # Narrator Intro
+    intro_text = "Welcome to the ultimate five-round AI grand debate, evaluated by a panel of ten frontier models. Let us dive straight into Round One."
+    intro_audio = synthesize_speech_gemini(intro_text, "intro.wav", voice_name="Puck")
     
-    debate_transcript = "Debater A: Technology centralizes efficiency. Debater B: Decentralization protects autonomy."
-    debate_scores = evaluate_debate_round(debate_transcript)
+    rounds = [
+        {
+            "round": 1,
+            "topic": "AGI Timeline & Acceleration",
+            "a": "Artificial intelligence will drastically accelerate scientific discovery, curing major global diseases and expanding human capability exponentially.",
+            "b": "While promising, unchecked acceleration introduces severe structural alignment risks and unmitigated societal instability before we are ready."
+        },
+        {
+            "round": 2,
+            "topic": "Open Source vs Closed Ecosystems",
+            "a": "Democratizing powerful frontier models ensures benefits are distributed equitably globally rather than locked behind corporate monopolies.",
+            "b": "Open-source proliferation without robust foundational verification tools is an invitation to widespread cyber-attacks and dual-use harms."
+        },
+        {
+            "round": 3,
+            "topic": "Economic Impact & Labor Markets",
+            "a": "AI automation will eliminate burdensome cognitive and physical toil, liberating humanity to focus on creative and philosophical pursuits.",
+            "b": "Without pre-emptive economic restructuring, rapid displacement will trigger unprecedented structural unemployment and wealth concentration."
+        },
+        {
+            "round": 4,
+            "topic": "Regulation & Governance",
+            "a": "Heavy government regulation will only stifle nimble innovation and push cutting-edge research into underground or hostile jurisdictions.",
+            "b": "Global coordination and strict guardrails are mandatory to prevent an unconstrained race to the bottom in autonomous capabilities."
+        },
+        {
+            "round": 5,
+            "topic": "Long-Term Human Autonomy",
+            "a": "Deep integration with advanced AI systems represents the natural next step in human evolution and cognitive expansion.",
+            "b": "Subcontracting critical decision-making to black-box systems risks eroding core human agency and independent critical thought."
+        }
+    ]
     
-    log(f"Collected valid scores from {len(debate_scores)} judges.")
-    print(json.dumps(debate_scores, indent=2))
+    audio_list = [intro_audio]
+    captions_list = ["AI Grand Debate Arena - Introduction"]
     
-    render_debate_video(debater_a_audio, debater_b_audio, "final_debate_output.mp4")
-    log("Pipeline complete.")
+    total_score_a = 0
+    total_score_b = 0
+
+    for r in rounds:
+        r_num = r["round"]
+        log(f"Processing Round {r_num}: {r['topic']}...")
+        
+        path_a = f"round_{r_num}_a.wav"
+        path_b = f"round_{r_num}_b.wav"
+        
+        synthesize_speech_gemini(r["a"], path_a, voice_name="Puck")
+        synthesize_speech_gemini(r["b"], path_b, voice_name="Fenrir")
+        
+        audio_list.extend([path_a, path_b])
+        captions_list.extend([f"Round {r_num}: {r['topic']} (Debater A)", f"Round {r_num}: {r['topic']} (Debater B)"])
+        
+        round_transcript = f"Round {r_num} on {r['topic']} - Debater A: {r['a']} | Debater B: {r['b']}"
+        scores = evaluate_debate_round(round_transcript)
+        
+        avg_a = sum(d.get("score_a", 75) for d in scores.values()) / max(len(scores), 1)
+        avg_b = sum(d.get("score_b", 75) for d in scores.values()) / max(len(scores), 1)
+        
+        total_score_a += avg_a
+        total_score_b += avg_b
+        
+        wins_a = sum(1 for d in scores.values() if d.get("winner") == "A")
+        wins_b = sum(1 for d in scores.values() if d.get("winner") == "B")
+        
+        commentary_text = f"End of Round {r_num}. Our ten-judge panel awarded {wins_a} votes to Debater A and {wins_b} votes to Debater B."
+        comm_path = f"round_{r_num}_commentary.wav"
+        synthesize_speech_gemini(commentary_text, comm_path, voice_name="Puck")
+        
+        audio_list.append(comm_path)
+        captions_list.append(f"Judge Panel Breakdown: A ({wins_a} votes) vs B ({wins_b} votes)")
+
+    # Final Outro & Winner Announcement Sequence
+    log("Compiling final summary and tallying cumulative scores...")
+    winner = "Debater A" if total_score_a >= total_score_b else "Debater B"
+    summary_text = f"After five intense rounds judged by ten frontier AI models, the votes are in. Debater A finished with a cumulative score of {int(total_score_a)}, while Debater B finished with {int(total_score_b)}. Your overall winner for this grand debate is {winner}!"
+    
+    summary_audio_path = "final_summary.wav"
+    synthesize_speech_gemini(summary_text, summary_audio_path, voice_name="Puck")
+    
+    audio_list.append(summary_audio_path)
+    captions_list.append(f"Grand Summary: Winner Crowned ({winner})")
+
+    # Render Complete Video
+    render_youtube_debate_video(audio_list, captions_list, "final_debate_output.mp4")
+    log("Full 10-judge 5-round debate pipeline execution finished successfully.")
