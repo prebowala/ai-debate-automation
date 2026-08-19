@@ -1,4 +1,4 @@
-name: Generate AI Debate Video (Chatterbox Nano)
+name: Build AI Debate Video
 
 on:
   workflow_dispatch:
@@ -16,25 +16,23 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
+          cache: 'pip'
 
-      - name: Install FFmpeg (Lightning Fast Static Build)
+      - name: Install System Dependencies & Fonts
         run: |
-          sudo curl -L https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz -o ffmpeg.tar.xz
-          tar -xf ffmpeg.tar.xz
-          sudo mv ffmpeg-*-amd64-static/ffmpeg /usr/local/bin/
-          sudo mv ffmpeg-*-amd64-static/ffprobe /usr/local/bin/
-          rm -rf ffmpeg*
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg libsndfile1 fonts-dejavu-core
 
-      - name: Install Python Dependencies & Chatterbox
+      - name: Install Python Dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
-          pip install chatterbox-tts requests
+          pip install torch torchaudio requests chatterbox-tts
 
       - name: Run Pipeline Script
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-        run: python main.py
+        run: |
+          python main.py
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
