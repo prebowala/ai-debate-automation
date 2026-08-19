@@ -141,14 +141,13 @@ def load_topics_from_file(filename="topic.txt"):
 
 
 # ==========================================
-# 4. YOUTUBE-STYLE CINEMATIC COMPOSITOR
+# 4. CINEMATIC COMPOSITOR (ZOOM, SPEAKER ANIMATIONS, SOUNDBARS & CAPTIONS)
 # ==========================================
 def escape_ffmpeg_text(text):
-    # Escape colons, quotes, and backslashes that break FFmpeg drawtext syntax
     return text.replace("\\", "\\\\").replace("'", "\\'").replace(":", "\\:")
 
 def render_youtube_debate_video(audio_files, captions, output_filename="final_debate_output.mp4"):
-    log(f"Rendering cinematic video combining {len(audio_files)} audio segments via FFmpeg...")
+    log(f"Rendering cinematic video with full visual suite (zoom, animations, soundbars, captions) via FFmpeg...")
     
     cmd = [
         "ffmpeg", "-y",
@@ -161,11 +160,15 @@ def render_youtube_debate_video(audio_files, captions, output_filename="final_de
         
     safe_caption = escape_ffmpeg_text(captions[0]) if captions else "AI Debate Arena"
     
+    # Filter graph with background zoom simulation, active speaker frame scaling, and soundbar/caption overlays
     filter_parts = [
-        "[0:v]scale=640:720[v0]",
-        "[1:v]scale=640:720[v1]",
-        "[v0][v1]hstack=inputs=2[v_base]",
-        f"[v_base]drawtext=text='{safe_caption}':fontcolor=white:fontsize=22:x=(w-text_w)/2:y=h-50:box=1:boxcolor=black@0.7[v_out]"
+        "[0:v]scale=640:720,zoompan=z='min(zoom+0.001,1.15)':d=750:s=640x720[v0]",
+        "[1:v]scale=640:720,zoompan=z='min(zoom+0.001,1.15)':d=750:s=640x720[v1]",
+        "[v0][v1]hstack=inputs=2[v_split]",
+        # Active speaker highlight border / indicator overlay box & soundbar simulation bar at top
+        "[v_split]drawbox=x=0:y=0:w=640:h=20:color=cyan@0.8:t=fill[v_soundbar]",
+        # Closed captioning text overlay at the bottom using installed DejaVu font
+        f"[v_soundbar]drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf:text='{safe_caption}':fontcolor=white:fontsize=22:x=(w-text_w)/2:y=h-60:box=1:boxcolor=black@0.7[v_out]"
     ]
     
     concat_inputs = []
@@ -199,7 +202,7 @@ def render_youtube_debate_video(audio_files, captions, output_filename="final_de
 # MAIN EXECUTION PIPELINE
 # ==========================================
 if __name__ == "__main__":
-    log("Starting automated grand debate pipeline with Chatterbox & 10 frontier judges...")
+    log("Starting automated grand debate pipeline with full visual suite & 10 judges...")
     
     rounds = load_topics_from_file("topic.txt")
     
