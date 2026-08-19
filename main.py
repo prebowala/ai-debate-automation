@@ -1,8 +1,7 @@
 import os
 import requests
 import subprocess
-import torch
-import torchaudio
+import wave
 
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY")
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
@@ -51,8 +50,15 @@ def generate_chatterbox_audio(text, speaker_role, output_filename):
     print(f"[CHATTERBOX-NANO] Synthesizing [{speaker_role}] audio -> {output_filename}...")
     sample_rate = 16000
     duration_seconds = max(4, len(text.split()) // 3) 
-    dummy_waveform = torch.zeros((1, sample_rate * duration_seconds))
-    torchaudio.save(output_filename, dummy_waveform, sample_rate)
+    num_frames = sample_rate * duration_seconds
+    
+    # Write a clean WAV file using Python's built-in wave library (bypassing torchcodec errors)
+    with wave.open(output_filename, 'w') as wav_file:
+        wav_file.setnchannels(1)  # Mono
+        wav_file.setsampwidth(2)  # 16-bit
+        wav_file.setframerate(sample_rate)
+        wav_file.writeframes(b'\x00' * (num_frames * 2))
+        
     return duration_seconds
 
 def format_ass_time(seconds):
@@ -73,7 +79,7 @@ def run_debate_pipeline():
     print(f"\n[DEBATE-PIPELINE] Loaded Topic: '{topic}'")
     print("==================================================")
 
-    # Dynamically generate verse/reference per run if not provided
+    # Dynamically generate or load verse reference per run
     if os.path.exists("verse.txt"):
         with open("verse.txt", "r") as vf:
             verse_text = vf.read().strip()
@@ -149,8 +155,8 @@ def run_debate_pipeline():
     dialogue_events.append((current_time, current_time + dur_out, "Narrator", outro_text))
     current_time += dur_out
 
-    # 4. Build Animated ASS Subtitle File (With active speaker lighting color codes)
-    print("\n[SUBTITLES] Building animated subtitles.ass...")
+    # 4. Build Animated ASS Subtitle File with active speaker colors
+    print("\n[SUBTITLES] Building subtitles.ass...")
     ass_content = """[Script Info]
 Title: AI Debate Animated Captions
 ScriptType: v4.00+
@@ -185,7 +191,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     with open("subtitles.ass", "w", encoding="utf-8") as f:
         f.write(ass_content)
 
-    # 5. FFmpeg Video Rendering (Zoompan, Sound Bar Waveform, Verse Footer, & Animated ASS Captions)
+    # 5. FFmpeg Video Rendering Suite
     print("\n[FFmpeg] Rendering final video package...")
     total_duration = int(current_time) + 2
     clean_verse = verse_text.replace("'", "")
@@ -213,7 +219,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     ]
 
     subprocess.run(ffmpeg_cmd, check=True)
-    print("[DEBATE-PIPELINE] Success! Video saved as final_debate_output.mp4 with animated active speaker captioning.")
+    print("[DEBATE-PIPELINE] Success! Video saved as final_debate_output.mp4")
 
 if __name__ == "__main__":
     run_debate_pipeline()
