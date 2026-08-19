@@ -24,7 +24,7 @@ def synthesize_speech_gemini(text, output_path, voice_name="Puck"):
     log(f"Synthesizing speech with Gemini TTS (Voice: {voice_name}, {len(text)} chars)...")
     try:
         response = client.models.generate_content(
-            model='gemini-2.5-flash',
+            model='gemini-2.5-flash-preview-tts',
             contents=text,
             config=types.GenerateContentConfig(
                 response_modalities=["AUDIO"],
