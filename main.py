@@ -69,7 +69,6 @@ def synthesize_speech_gemini(text, output_path, voice_name="Puck"):
 def evaluate_debate_round(transcript_text):
     log("Evaluating debate round with 10 primary frontier judges and 5 backups...")
     
-    # 10 Primary Frontier Model Judges
     primary_judges = [
         "openai/gpt-5.6-terra", 
         "anthropic/claude-sonnet-5", 
@@ -83,7 +82,6 @@ def evaluate_debate_round(transcript_text):
         "z-ai/glm-5.2"
     ]
     
-    # 5 Extra Fallback Judges in case any primary model times out or errors
     fallback_judges = [
         "openai/gpt-4o",
         "anthropic/claude-3-5-sonnet",
@@ -96,7 +94,6 @@ def evaluate_debate_round(transcript_text):
     judges_results = {}
     
     for model in candidate_pool:
-        # We aim to get up to 10 successful active judge evaluations per round
         if len(judges_results) >= 10:
             break
             
@@ -120,7 +117,7 @@ def evaluate_debate_round(transcript_text):
                     ],
                     "temperature": 0.2
                 },
-                timeout=(4, 8) # Tight timeouts so the 15-model pool cycles quickly without hanging
+                timeout=(4, 8)
             )
             if response.status_code == 200:
                 data = response.json()
@@ -145,8 +142,8 @@ def render_youtube_debate_video(audio_files, captions, output_filename="final_de
     
     cmd = [
         "ffmpeg", "-y",
-        "-f", "lavfi", "-i", "color=c=navy:s=640x720:r=30",  # Left side (Debater A)
-        "-f", "lavfi", "-i", "color=c=maroon:s=640x720:r=30", # Right side (Debater B)
+        "-f", "lavfi", "-i", "color=c=navy:s=640x720:r=30",  
+        "-f", "lavfi", "-i", "color=c=maroon:s=640x720:r=30", 
     ]
     
     for af in audio_files:
@@ -192,7 +189,6 @@ def render_youtube_debate_video(audio_files, captions, output_filename="final_de
 if __name__ == "__main__":
     log("Starting automated 5-round grand debate pipeline with 10 frontier judges...")
     
-    # Narrator Intro
     intro_text = "Welcome to the ultimate five-round AI grand debate, evaluated by a panel of ten frontier models. Let us dive straight into Round One."
     intro_audio = synthesize_speech_gemini(intro_text, "intro.wav", voice_name="Puck")
     
@@ -267,7 +263,6 @@ if __name__ == "__main__":
         audio_list.append(comm_path)
         captions_list.append(f"Judge Panel Breakdown: A ({wins_a} votes) vs B ({wins_b} votes)")
 
-    # Final Outro & Winner Announcement Sequence
     log("Compiling final summary and tallying cumulative scores...")
     winner = "Debater A" if total_score_a >= total_score_b else "Debater B"
     summary_text = f"After five intense rounds judged by ten frontier AI models, the votes are in. Debater A finished with a cumulative score of {int(total_score_a)}, while Debater B finished with {int(total_score_b)}. Your overall winner for this grand debate is {winner}!"
@@ -278,6 +273,5 @@ if __name__ == "__main__":
     audio_list.append(summary_audio_path)
     captions_list.append(f"Grand Summary: Winner Crowned ({winner})")
 
-    # Render Complete Video
     render_youtube_debate_video(audio_list, captions_list, "final_debate_output.mp4")
     log("Full 10-judge 5-round debate pipeline execution finished successfully.")
