@@ -289,7 +289,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             f.write(f"file '{img_path}'\n")
             f.write(f"duration {dur}\n")
         if segment_images:
-            f.write(f"file '{segment_images[-1][0] ?? ''}'\n")
+            f.write(f"file '{segment_images[-1][0]}'\n")
 
     print("\n[FFmpeg] Assembling final 10-minute video package...")
     ffmpeg_cmd = [
