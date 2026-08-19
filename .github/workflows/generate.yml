@@ -22,20 +22,20 @@ jobs:
           sudo sed -i 's|azure.archive.ubuntu.com|archive.ubuntu.com|g' /etc/apt/sources.list || true
           sudo sed -i 's|azure.archive.ubuntu.com|archive.ubuntu.com|g' /etc/apt/sources.list.d/*.list || true
 
-      - name: Install System Dependencies (espeak-ng & ffmpeg)
+      - name: Install System Dependencies (ffmpeg)
         run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg espeak-ng
+          sudo apt-get install -y ffmpeg
 
       - name: Install Python Dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
-          pip install chatterbox-tts requests gtts pillow accelerate diffusers
+          pip install google-genai requests pillow
 
       - name: Run Debate Generation Script
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
           python main.py
 
