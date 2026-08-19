@@ -1,14 +1,12 @@
 name: Generate AI Debate Video
 
 on:
-  workflow_dispatch: # Allows manual trigger from GitHub tab
-  schedule:
-    - cron: '0 0 * * 0' # Optional: runs weekly
+  workflow_dispatch:
 
 jobs:
   build-video:
     runs-on: ubuntu-latest
-    timeout-minutes: 15 # Fails fast if anything hangs
+    timeout-minutes: 20
 
     steps:
       - name: Checkout repository
@@ -32,6 +30,7 @@ jobs:
       - name: Run Pipeline Script
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: python main.py
 
       - name: Upload Artifact
