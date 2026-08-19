@@ -1,41 +1,36 @@
-name: Generate AI Debate Video
+name: Build AI Debate Video
 
 on:
   workflow_dispatch:
   push:
-    branches: [ "main" ]
+    branches: [ main ]
 
 jobs:
   build-video:
     runs-on: ubuntu-latest
-    
+
     steps:
-      - name: Checkout Repository
+      - name: Post Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Post Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
-      - name: Setup FFmpeg
-        uses: FedericoCarboni/setup-ffmpeg@v3
-        with:
-          ffmpeg-version: release
-
-      - name: Install System Fonts
+      - name: Install System Dependencies (FFmpeg)
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends fonts-dejavu-core
+          sudo apt-get install -y ffmpeg
 
       - name: Install Python Requirements
         run: |
           python -m pip install --upgrade pip
-          pip install requests
+          pip install requests Pillow
 
       - name: Run Debate Generation Pipeline
         env:
-          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROURED_API_KEY }}
         run: |
           python main.py
 
@@ -44,4 +39,3 @@ jobs:
         with:
           name: final-debate-video
           path: final_debate_output.mp4
-          retention-days: 7
