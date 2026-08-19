@@ -144,7 +144,7 @@ def evaluate_debate_round(transcript_text):
 # 3. VIDEO RENDERING & SPLIT-SCREEN COMPOSITION
 # ==========================================
 def render_debate_video(audio_a, audio_b, output_filename="final_debate_output.mp4"):
-    log("Rendering split-screen video canvas with sequential audio via FFmpeg...")
+    log("Rendering split-screen video canvas with actual audio tracks via FFmpeg...")
     
     cmd = [
         "ffmpeg", "-y",
@@ -155,9 +155,7 @@ def render_debate_video(audio_a, audio_b, output_filename="final_debate_output.m
         "-filter_complex",
         (
             "[0:v][1:v]hstack=inputs=2[v_canvas];"
-            "[2:a]aformat=sample_rates=24000:channel_layouts=mono[a1];"
-            "[3:a]aformat=sample_rates=24000:channel_layouts=mono[a2];"
-            "[a1][a2]concat=n=2:v=0:a=1[aout]"
+            "[2:a][3:a]concat=n=2:v=0:a=1[aout]"
         ),
         "-map", "[v_canvas]",
         "-map", "[aout]",
