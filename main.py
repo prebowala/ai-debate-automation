@@ -2,61 +2,72 @@ import os
 import subprocess
 import requests
 import json
-import torch
-import torchaudio
-from chatterbox.tts_turbo import ChatterboxTurboTTS
+from google import genai
+from google.genai import types
 
 # ==========================================
-# CONFIGURATION & VOICE MAPPING
+# CONFIGURATION & API CLIENTS
 # ==========================================
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
+# Uses GEMINI_API_KEY if present, falls back to OPENROUTER_API_KEY if shared
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", OPENROUTER_API_KEY)
 
-log_msg = lambda msg: print(f"[DEBATE-PIPELINE] {msg}")
-log_msg("Loading Chatterbox TTS model...")
-tts_model = ChatterboxTurboTTS.from_pretrained(device="cuda" if torch.cuda.is_available() else "cpu")
+client = genai.Client(api_key=GEMINI_API_KEY)
 
 def log(message):
     print(f"[DEBATE-PIPELINE] {message}")
 
 
 # ==========================================
-# 1. CHATTERBOX TTS AUDIO SYNTHESIS
+# 1. GEMINI TTS AUDIO SYNTHESIS
 # ==========================================
-def synthesize_speech(text, output_path):
-    log(f"Synthesizing speech with Chatterbox TTS ({len(text)} chars)...")
+def synthesize_speech_gemini(text, output_path, voice_name="Puck"):
+    log(f"Synthesizing speech with Gemini TTS (Voice: {voice_name}, {len(text)} chars)...")
     try:
-        wav = tts_model.generate(text)
-        if wav.dim() == 1:
-            wav = wav.unsqueeze(0)
-            
-        torchaudio.save(output_path, wav, tts_model.sr)
+        # Requesting audio output modality using a Gemini model supporting TTS
+        response = client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=text,
+            config=types.GenerateContentConfig(
+                response_modalities=["AUDIO"],
+                speech_config=types.SpeechConfig(
+                    voice_config=types.VoiceConfig(
+                        prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                            voice_name=voice_name
+                        )
+                    )
+                )
+            )
+        )
         
-        if os.path.exists(output_path) and os.path.getsize(output_path) > 1000:
-            log(f"Successfully generated {output_path} ({os.path.getsize(output_path)} bytes)")
-            return output_path
-        else:
-            raise Exception("Generated audio file is missing or too small.")
-            
+        # Extract raw PCM audio data from candidate parts and write to a wave file
+        for candidate in response.candidates:
+            for part in candidate.content.parts:
+                if part.inline_data and part.inline_data.mime_type.startswith("audio/"):
+                    pcm_bytes = part.inline_data.data
+                    import wave
+                    with wave.open(output_path, 'wb') as wf:
+                        wf.setnchannels(1)
+                        wf.setsampwidth(2) # 16-bit PCM
+                        wf.setframerate(24000)
+                        wf.writeframes(pcm_bytes)
+                    log(f"Successfully generated {output_path} via Gemini TTS")
+                    return output_path
+                    
+        raise Exception("No audio data returned in Gemini response payload.")
+        
     except Exception as e:
-        log(f"Chatterbox generation failed: {e}. Falling back to gTTS engine...")
-        try:
-            from gtts import gTTS
-            tts = gTTS(text=text, lang='en', slow=False)
-            tts.save(output_path)
-            log(f"gTTS fallback successfully created {output_path}")
-            return output_path
-        except Exception as gtts_error:
-            log(f"gTTS fallback also failed: {gtts_error}. Using silent tone fallback.")
-            cmd = [
-                "ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=24000:cl=mono", 
-                "-t", "5", "-q:a", "9", "-acodec", "libmp3lame", output_path
-            ]
-            subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            return output_path
+        log(f"Gemini TTS failed: {e}. Using silent tone fallback.")
+        cmd = [
+            "ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=24000:cl=mono", 
+            "-t", "5", "-q:a", "9", "-acodec", "libmp3lame", output_path
+        ]
+        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return output_path
 
 
 # ==========================================
-# 2. OPENROUTER FRONTIER PANEL (Unique Flagship per Company)
+# 2. OPENROUTER FRONTIER PANEL
 # ==========================================
 def evaluate_debate_round(transcript_text):
     log("Evaluating debate round with top frontier flagship models via OpenRouter...")
@@ -96,7 +107,7 @@ def evaluate_debate_round(transcript_text):
                     ],
                     "temperature": 0.2
                 },
-                timeout=45
+                timeout=30
             )
             
             if response.status_code == 200:
@@ -106,7 +117,7 @@ def evaluate_debate_round(transcript_text):
                 scores[model] = json.loads(clean_content)
                 log(f"Judge [{model}] scored successfully.")
             else:
-                log(f"Judge [{model}] failed with status code {response.status_code}: {response.text}")
+                log(f"Judge [{model}] failed with status code {response.status_code}")
         except Exception as e:
             log(f"Error executing judge [{model}]: {e}")
             
@@ -145,7 +156,6 @@ def render_debate_video(audio_a, audio_b, output_filename="final_debate_output.m
         log(f"Split-screen video successfully rendered to {output_filename}!")
     except subprocess.CalledProcessError as e:
         log(f"FFmpeg failed with exit code {e.returncode}")
-        log(f"FFmpeg stdout: {e.stdout}")
         log(f"FFmpeg stderr: {e.stderr}")
         raise
 
@@ -154,11 +164,11 @@ def render_debate_video(audio_a, audio_b, output_filename="final_debate_output.m
 # MAIN EXECUTION PIPELINE
 # ==========================================
 if __name__ == "__main__":
-    log("Starting automated long-form debate generation pipeline...")
+    log("Starting automated long-form debate generation pipeline with Gemini TTS...")
     
-    narrator_audio = synthesize_speech("Welcome to today's AI debate showdown.", "narrator.wav")
-    debater_a_audio = synthesize_speech("My position is clear and backed by core principles.", "debater_a.wav")
-    debater_b_audio = synthesize_speech("I completely disagree; the counter-evidence reveals a different reality.", "debater_b.wav")
+    # Generate audio tracks using different Gemini TTS voices
+    debater_a_audio = synthesize_speech_gemini("My position is clear and backed by core principles.", "debater_a.wav", voice_name="Puck")
+    debater_b_audio = synthesize_speech_gemini("I completely disagree; the counter-evidence reveals a different reality.", "debater_b.wav", voice_name="Fenrir")
     
     debate_transcript = "Debater A: Technology centralizes efficiency. Debater B: Decentralization protects autonomy."
     debate_scores = evaluate_debate_round(debate_transcript)
