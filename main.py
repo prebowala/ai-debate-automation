@@ -52,7 +52,7 @@ def generate_chatterbox_audio(text, speaker_role, output_filename):
     duration_seconds = max(4, len(text.split()) // 3) 
     num_frames = sample_rate * duration_seconds
     
-    # Write a clean WAV file using Python's built-in wave library (bypassing torchcodec errors)
+    # Write a clean WAV file using Python's built-in wave library
     with wave.open(output_filename, 'w') as wav_file:
         wav_file.setnchannels(1)  # Mono
         wav_file.setsampwidth(2)  # 16-bit
@@ -191,11 +191,11 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     with open("subtitles.ass", "w", encoding="utf-8") as f:
         f.write(ass_content)
 
-    # 5. FFmpeg Video Rendering Suite
+    # 5. FFmpeg Video Rendering Suite (Safely sanitized text strings)
     print("\n[FFmpeg] Rendering final video package...")
     total_duration = int(current_time) + 2
-    clean_verse = verse_text.replace("'", "")
-    clean_topic = topic.replace("'", "")
+    clean_verse = verse_text.replace("'", "").replace('"', '').replace(":", " -")
+    clean_topic = topic.replace("'", "").replace('"', '').replace(":", " -")
 
     ffmpeg_cmd = [
         "ffmpeg",
