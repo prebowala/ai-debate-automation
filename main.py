@@ -14,16 +14,16 @@ OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
 def log(message):
     print(f"[DEBATE-PIPELINE] {message}", flush=True)
 
-log("Loading Chatterbox-Nano model for fast CPU execution...")
-# Forces CPU execution mode and enables the lightweight nano parameter profile
-tts_model = ChatterboxTurboTTS.from_pretrained(device="cpu", nano=True)
+log("Loading Chatterbox-Turbo model for CPU execution...")
+# Initialize with just the device argument
+tts_model = ChatterboxTurboTTS.from_pretrained(device="cpu")
 
 
 # ==========================================
-# 1. CHATTERBOX-NANO TTS SYNTHESIS
+# 1. CHATTERBOX TTS SYNTHESIS
 # ==========================================
 def synthesize_speech_chatterbox(text, output_path):
-    log(f"Synthesizing speech via Chatterbox-Nano ({len(text)} chars)...")
+    log(f"Synthesizing speech via Chatterbox ({len(text)} chars)...")
     
     try:
         wav = tts_model.generate(text)
@@ -165,7 +165,7 @@ def render_youtube_debate_video(audio_files, captions, output_filename="final_de
 # MAIN EXECUTION PIPELINE (5 ROUNDS + SUMMARY)
 # ==========================================
 if __name__ == "__main__":
-    log("Starting automated 5-round grand debate pipeline with Chatterbox-Nano & 10 frontier judges...")
+    log("Starting automated 5-round grand debate pipeline with Chatterbox-Turbo & 10 frontier judges...")
     
     intro_text = "Welcome to the ultimate five-round AI grand debate, evaluated by a panel of ten frontier models. Let us dive straight into Round One."
     intro_audio = synthesize_speech_chatterbox(intro_text, "intro.wav")
