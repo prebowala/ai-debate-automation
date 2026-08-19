@@ -1,22 +1,23 @@
 name: Build AI Debate Video
 
 on:
-  workflow_dispatch:
   push:
-    branches: [ main ]
+    branches: [ "main" ]
+  workflow_dispatch:
 
 jobs:
-  build-video:
+  build:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Post Checkout Repository
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Post Set up Python
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
+          cache: 'pip'
 
       - name: Install System Dependencies (FFmpeg)
         run: |
@@ -26,11 +27,11 @@ jobs:
       - name: Install Python Requirements
         run: |
           python -m pip install --upgrade pip
-          pip install requests Pillow
+          pip install -r requirements.txt
 
       - name: Run Debate Generation Pipeline
         env:
-          OPENROUTER_API_KEY: ${{ secrets.OPENROURED_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         run: |
           python main.py
 
