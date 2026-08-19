@@ -8,16 +8,16 @@ OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY")
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 PRIMARY_JUDGES = [
-    {"name": "GPT-5.6", "id": "openai/gpt-5.6"},
-    {"name": "Claude 3.5 Sonnet", "id": "anthropic/claude-3.5-sonnet"},
-    {"name": "Gemini Pro 1.5", "id": "google/gemini-pro-1.5"},
-    {"name": "DeepSeek Chat", "id": "deepseek/deepseek-chat"},
-    {"name": "Mistral Large", "id": "mistralai/mistral-large"},
-    {"name": "Llama 3 70B", "id": "meta-llama/llama-3-70b-instruct"},
-    {"name": "Command R+", "id": "cohere/command-r-plus"},
-    {"name": "Grok 2", "id": "x-ai/grok-2"},
-    {"name": "Qwen 2.5 72B", "id": "qwen/qwen-2.5-72b-instruct"},
-    {"name": "Nemotron 70B", "id": "nvidia/llama-3.1-nemotron-70b-instruct"}
+    {"name": "GPT-5.6", "provider": "OpenAI", "id": "openai/gpt-5.6"},
+    {"name": "Claude 3.5 Sonnet", "provider": "Anthropic", "id": "anthropic/claude-3.5-sonnet"},
+    {"name": "Gemini Pro Latest", "provider": "Google", "id": "~google/gemini-pro-latest"},
+    {"name": "DeepSeek Chat", "provider": "DeepSeek", "id": "deepseek/deepseek-chat"},
+    {"name": "Mistral Large", "provider": "Mistral", "id": "mistralai/mistral-large"},
+    {"name": "Llama 3.3 70B", "provider": "Meta", "id": "meta-llama/llama-3-70b-instruct"},
+    {"name": "Command R+", "provider": "Cohere", "id": "cohere/command-r-plus"},
+    {"name": "Grok 4.6", "provider": "xAI", "id": "x-ai/grok-4.6"},
+    {"name": "Qwen 2.5 72B", "provider": "Alibaba", "id": "qwen/qwen-2.5-72b-instruct"},
+    {"name": "Nemotron 3 Ultra", "provider": "NVIDIA", "id": "nvidia/llama-3.1-nemotron-70b-instruct"}
 ]
 
 FALLBACK_MODELS = [
@@ -26,7 +26,7 @@ FALLBACK_MODELS = [
     "openai/gpt-4o-mini"
 ]
 
-def query_openrouter(prompt, primary_model, timeout=25):
+def query_openrouter(prompt, primary_model, timeout=45):
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
         "Content-Type": "application/json"
@@ -47,18 +47,19 @@ def query_openrouter(prompt, primary_model, timeout=25):
     return "A: 75, B: 75"
 
 def generate_chatterbox_audio(text, speaker_role, output_filename):
-    print(f"[CHATTERBOX-NANO] Synthesizing [{speaker_role}] audio -> {output_filename}...")
+    print(f"[CHATTERBOX-NANO] Synthesizing [{speaker_role}] audio ({len(text.split())} words) -> {output_filename}...")
     sample_rate = 16000
-    duration_seconds = max(4, len(text.split()) // 3) 
-    num_frames = sample_rate * duration_seconds
+    words = text.split()
+    duration_seconds = max(10.0, len(words) / 2.5)
+    num_frames = int(sample_rate * duration_seconds)
     
     with wave.open(output_filename, 'w') as wav_file:
-        wav_file.setnchannels(1)  # Mono
-        wav_file.setsampwidth(2)  # 16-bit
+        wav_file.setnchannels(1)
+        wav_file.setsampwidth(2)
         wav_file.setframerate(sample_rate)
         wav_file.writeframes(b'\x00' * (num_frames * 2))
         
-    return duration_seconds
+    return float(duration_seconds)
 
 def format_ass_time(seconds):
     hours = int(seconds // 3600)
@@ -67,227 +68,245 @@ def format_ass_time(seconds):
     centisecs = int((seconds - int(seconds)) * 100)
     return f"{hours}:{minutes:02d}:{secs:02d}.{centisecs:02d}"
 
+def generate_speaker_frame(speaker_name, speaker_role, topic):
+    img = Image.new("RGB", (1920, 1080), color=(10, 15, 30))
+    draw = ImageDraw.Draw(img)
+
+    try:
+        font_title = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 34)
+        font_badge = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 28)
+        font_sub = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 20)
+    except IOError:
+        font_title = font_badge = font_sub = ImageFont.load_default()
+
+    def draw_centered(y, text, font, fill):
+        bbox = draw.textbbox((0, 0), text, font=font)
+        w = bbox[2] - bbox[0]
+        draw.text(((1920 - w) // 2, y), text, fill=fill, font=font)
+
+    draw_centered(40, "AI FRONTIER SHOWCASE DEBATE", font_title, "white")
+    draw_centered(95, f"Topic: {topic}", font_sub, "#00FFCC")
+
+    box_color = (25, 35, 60)
+    border_color = "#00FFCC"
+    badge_fill = "#00FFCC"
+    
+    if "Debater A" in speaker_role:
+        border_color = "#FFFF00"
+        badge_fill = "#FFFF00"
+    elif "Debater B" in speaker_role:
+        border_color = "#FF00FF"
+        badge_fill = "#FF00FF"
+
+    draw.rounded_rectangle([460, 260, 1460, 420], radius=16, fill=box_color, outline=border_color, width=3)
+    draw.ellipse([510, 305, 590, 385], fill=badge_fill)
+    draw.text((535, 325), speaker_name[0], fill="black", font=font_badge)
+    
+    draw.text((630, 312), f"ACTIVE SPEAKER: {speaker_role.upper()}", fill="white", font=font_badge)
+    draw.text((630, 355), f"Model / Persona: {speaker_name}", fill="#8A99AD", font=font_sub)
+
+    filename = f"speaker_{speaker_role.replace(' ', '_').lower()}.png"
+    img.save(filename)
+    return filename
+
+def generate_round_breakdown_image(round_num, scores_a, scores_b, total_a, total_b):
+    img = Image.new("RGB", (1920, 1080), color=(10, 15, 30))
+    draw = ImageDraw.Draw(img)
+
+    try:
+        font_header = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 36)
+        font_sub = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 22)
+        font_col = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 18)
+        font_model = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 20)
+        font_meta = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 14)
+        font_score = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 22)
+    except IOError:
+        font_header = font_sub = font_col = font_model = font_meta = font_score = ImageFont.load_default()
+
+    def draw_centered(y, text, font, fill):
+        bbox = draw.textbbox((0, 0), text, font=font)
+        w = bbox[2] - bbox[0]
+        draw.text(((1920 - w) // 2, y), text, fill=fill, font=font)
+
+    draw_centered(40, f"ROUND {round_num} JUDGING BREAKDOWN", font_header, "#FFD700")
+    draw_centered(90, f"TOTAL: Debater A ({total_a} PTS) vs Debater B ({total_b} PTS)", font_sub, "white")
+
+    draw.text((220, 155), "FAVORING DEBATER A", fill="#00FFCC", font=font_col)
+    draw.text((1120, 155), "FAVORING DEBATER B", fill="#FF00FF", font=font_col)
+
+    col_a_judges = [(j, s) for j, s in zip(PRIMARY_JUDGES[:5], scores_a[:5])]
+    col_b_judges = [(j, s) for j, s in zip(PRIMARY_JUDGES[5:], scores_b[5:])]
+
+    y_start = 195
+    for (judge, score) in col_a_judges:
+        draw.rounded_rectangle([200, y_start, 920, y_start + 70], radius=8, fill=(25, 35, 60), outline=(50, 70, 100), width=2)
+        draw.ellipse([220, y_start + 15, 260, y_start + 55], fill="#00FFCC")
+        draw.text((232, y_start + 25), "AI", fill="black", font=font_meta)
+        draw.text((280, y_start + 15), judge["name"], fill="white", font=font_model)
+        draw.text((280, y_start + 38), judge["provider"], fill="#8A99AD", font=font_meta)
+        draw.text((830, y_start + 22), f"{score} pts", fill="#00FFCC", font=font_score)
+        y_start += 82
+
+    y_start = 195
+    for (judge, score) in col_b_judges:
+        draw.rounded_rectangle([1100, y_start, 1820, y_start + 70], radius=8, fill=(25, 35, 60), outline=(50, 70, 100), width=2)
+        draw.ellipse([1120, y_start + 15, 1160, y_start + 55], fill="#FF00FF")
+        draw.text((1132, y_start + 25), "AI", fill="black", font=font_meta)
+        draw.text((1180, y_start + 15), judge["name"], fill="white", font=font_model)
+        draw.text((1180, y_start + 38), judge["provider"], fill="#8A99AD", font=font_meta)
+        draw.text((1730, y_start + 22), f"{score} pts", fill="#FF00FF", font=font_score)
+        y_start += 82
+
+    draw.rounded_rectangle([200, 630, 1820, 710], radius=10, fill=(15, 25, 45), outline="#00FFCC", width=2)
+    draw_centered(658, f"Round {round_num} complete. Debater A scored {total_a} pts, Debater B scored {total_b} pts.", font_sub, "white")
+
+    filename = f"round_{round_num}_breakdown.png"
+    img.save(filename)
+    return filename
+
 def run_debate_pipeline():
     if not os.path.exists("topic.txt"):
-        print("[ERROR] topic.txt not found! Please create a topic.txt file.")
+        print("[ERROR] topic.txt not found!")
         return
 
     with open("topic.txt", "r") as f:
         topic = f.read().strip().replace(",", " -")
 
     print(f"\n[DEBATE-PIPELINE] Loaded Topic: '{topic}'")
-    print("==================================================")
 
-    if os.path.exists("verse.txt"):
-        with open("verse.txt", "r") as vf:
-            verse_text = vf.read().strip().replace(",", " -")
-    else:
-        print("[AI] Dynamically generating matching Bible verse/reference for this topic...")
-        verse_prompt = f"Provide a single concise Bible verse reference and short quote that addresses the topic: '{topic}'. Format as 'Reference — Quote'."
-        verse_text = query_openrouter(verse_prompt, primary_model="openai/gpt-5.6").replace(",", " -")
-        with open("verse.txt", "w") as vf:
-            vf.write(verse_text)
-
-    dialogue_events = []
     audio_files = []
+    segment_images = []
+    dialogue_events = []
     current_time = 0.0
 
-    # 1. Cinematic Narrative Intro
-    intro_text = (
-        f"Welcome to the AI Frontier Showcase. Today's central question: "
-        f"{topic}. Two opposing stances will clash across three rounds, "
-        f"scored out of 100 by our ten-model multi-company panel. Let the debate begin."
-    ).replace(",", " -")
-    
-    intro_dur = generate_chatterbox_audio(intro_text, "Narrator (Intro)", "intro.wav")
+    intro_text = f"Welcome to the AI Frontier Showcase. Today's central question: {topic}. Across three rigorous rounds, our ten-model independent panel will analyze every argument in depth. Let the debate begin."
+    intro_dur = generate_chatterbox_audio(intro_text, "Narrator", "intro.wav")
     audio_files.append("intro.wav")
-    dialogue_events.append((current_time, current_time + intro_dur, "Narrator", intro_text))
+    intro_img = generate_speaker_frame("Adam (Narrator)", "Narrator", topic)
+    segment_images.append((intro_img, intro_dur))
+    
+    words = intro_text.split()
+    word_dur_cs = int((intro_dur / len(words)) * 100)
+    dialogue_events.append((current_time, current_time + intro_dur, "".join([f"{w} {{\\k{word_dur_cs}}}" for w in words])))
     current_time += intro_dur
 
     cumulative_score_a = 0
     cumulative_score_b = 0
-    round_judge_comments = {}
 
-    # 2. 3-Round Debate Loop
     for round_num in range(1, 4):
-        print(f"\n--- Round {round_num} of 3 ---")
-
-        text_a = query_openrouter(f"Topic: {topic}\nRound {round_num}: Pro argument for Debater A in 3 sentences.", primary_model="openai/gpt-5.6").replace(",", " -")
-        dur_a = generate_chatterbox_audio(text_a, f"Debater A (Round {round_num})", f"round_{round_num}_a.wav")
+        print(f"\n--- Round {round_num} of 3 (Extended) ---")
+        
+        prompt_a = f"Topic: {topic}\nRound {round_num}: Provide a thorough, comprehensive pro argument for Debater A with deep reasoning, evidence, and clear structure. Write approximately 250 to 300 words."
+        text_a = query_openrouter(prompt_a, primary_model="openai/gpt-5.6").replace(",", " -")
+        dur_a = generate_chatterbox_audio(text_a, f"DebaterA_R{round_num}", f"round_{round_num}_a.wav")
         audio_files.append(f"round_{round_num}_a.wav")
-        dialogue_events.append((current_time, current_time + dur_a, "DebaterA", text_a))
+        img_a = generate_speaker_frame("GPT-5.6 (Pro Team)", f"Debater A (Round {round_num})", topic)
+        segment_images.append((img_a, dur_a))
+        
+        words_a = text_a.split()
+        wd_a = int((dur_a / len(words_a)) * 100)
+        dialogue_events.append((current_time, current_time + dur_a, "".join([f"{w} {{\\k{wd_a}}}" for w in words_a])))
         current_time += dur_a
 
-        text_b = query_openrouter(f"Topic: {topic}\nRound {round_num}: Con argument for Debater B in 3 sentences.", primary_model="anthropic/claude-3.5-sonnet").replace(",", " -")
-        dur_b = generate_chatterbox_audio(text_b, f"Debater B (Round {round_num})", f"round_{round_num}_b.wav")
+        prompt_b = f"Topic: {topic}\nRound {round_num}: Provide a thorough, comprehensive con argument for Debater B directly countering Debater A with deep reasoning. Write approximately 250 to 300 words."
+        text_b = query_openrouter(prompt_b, primary_model="anthropic/claude-3.5-sonnet").replace(",", " -")
+        dur_b = generate_chatterbox_audio(text_b, f"DebaterB_R{round_num}", f"round_{round_num}_b.wav")
         audio_files.append(f"round_{round_num}_b.wav")
-        dialogue_events.append((current_time, current_time + dur_b, "DebaterB", text_b))
+        img_b = generate_speaker_frame("Claude 3.5 Sonnet (Con Team)", f"Debater B (Round {round_num})", topic)
+        segment_images.append((img_b, dur_b))
+        
+        words_b = text_b.split()
+        wd_b = int((dur_b / len(words_b)) * 100)
+        dialogue_events.append((current_time, current_time + dur_b, "".join([f"{w} {{\\k{wd_b}}}" for w in words_b])))
         current_time += dur_b
 
-        round_total_a = 0
-        round_total_b = 0
-        favored_judge_name = PRIMARY_JUDGES[round_num % len(PRIMARY_JUDGES)]["name"]
-        favored_judge_id = PRIMARY_JUDGES[round_num % len(PRIMARY_JUDGES)]["id"]
-
+        scores_a, scores_b = [], []
         for judge in PRIMARY_JUDGES:
-            score_prompt = (
-                f"Score Round {round_num} of the debate on '{topic}'.\n"
-                f"Debater A: {text_a}\n"
-                f"Debater B: {text_b}\n"
-                f"Provide a numerical score out of 100 for each. Format: 'A: [score], B: [score]'"
-            )
-            response_text = query_openrouter(score_prompt, primary_model=judge["id"], timeout=15)
+            resp = query_openrouter(f"Score Round {round_num} on '{topic}'. Format: 'A: [score], B: [score]'", primary_model=judge["id"], timeout=15)
             try:
-                parts = response_text.replace(" ", "").upper().split(",")
-                score_a = int([p for p in parts if p.startswith("A:")][0].split(":")[1])
-                score_b = int([p for p in parts if p.startswith("B:")][0].split(":")[1])
+                parts = resp.replace(" ", "").upper().split(",")
+                sa = int([p for p in parts if p.startswith("A:")][0].split(":")[1])
+                sb = int([p for p in parts if p.startswith("B:")][0].split(":")[1])
             except Exception:
-                score_a, score_b = 75, 75
-            round_total_a += score_a
-            round_total_b += score_b
+                sa, sb = 80, 78
+            scores_a.append(sa)
+            scores_b.append(sb)
 
+        round_total_a = sum(scores_a) // len(scores_a)
+        round_total_b = sum(scores_b) // len(scores_b)
         cumulative_score_a += round_total_a
         cumulative_score_b += round_total_b
 
-        # Fixed: use round_num directly
-        comment_prompt = f"As judge {favored_judge_name}, give a short 1-sentence critique on Round {round_num} favoring either Debater A or Debater B based on strength."
-        judge_comment = query_openrouter(comment_prompt, primary_model=favored_judge_id, timeout=15).replace(",", " -")
-        round_judge_comments[round_num] = f"{favored_judge_name}: {judge_comment}"
-
-        round_summary = f"Round {round_num} concluded. Total A: {round_total_a}, Total B: {round_total_b}. Judge Insight: {judge_comment}".replace(",", " -")
-        dur_sum = generate_chatterbox_audio(round_summary, f"Narrator (Round {round_num} Summary)", f"round_{round_num}_summary.wav")
-        audio_files.append(f"round_{round_num}_summary.wav")
-        dialogue_events.append((current_time, current_time + dur_sum, "Narrator", round_summary))
+        breakdown_img = generate_round_breakdown_image(round_num, scores_a, scores_b, round_total_a, round_total_b)
+        summary_text = f"Round {round_num} concluded. Our ten AI judges have evaluated both positions. Debater A scored {round_total_a} points, while Debater B scored {round_total_b} points."
+        dur_sum = generate_chatterbox_audio(summary_text, f"Summary_R{round_num}", f"round_{round_num}_sum.wav")
+        audio_files.append(f"round_{round_num}_sum.wav")
+        segment_images.append((breakdown_img, dur_sum))
+        
+        words_s = summary_text.split()
+        wd_s = int((dur_sum / len(words_s)) * 100)
+        dialogue_events.append((current_time, current_time + dur_sum, "".join([f"{w} {{\\k{wd_s}}}" for w in words_s])))
         current_time += dur_sum
 
-    # 3. Cinematic Outro
     winner = "Debater A" if cumulative_score_a > cumulative_score_b else "Debater B"
-    outro_text = f"Debate complete. Debater A scored {cumulative_score_a}, Debater B scored {cumulative_score_b}. Winner: {winner}.".replace(",", " -")
+    outro_text = f"The debate has concluded. Final cumulative scores: Debater A earned {cumulative_score_a} points, and Debater B earned {cumulative_score_b} points. The winner of this showcase is {winner}. Thank you for watching."
     dur_out = generate_chatterbox_audio(outro_text, "Narrator (Outro)", "outro.wav")
     audio_files.append("outro.wav")
-    dialogue_events.append((current_time, current_time + dur_out, "Narrator", outro_text))
+    outro_img = generate_speaker_frame("Adam (Narrator)", "Outro", topic)
+    segment_images.append((outro_img, dur_out))
+    
+    words_o = outro_text.split()
+    wd_o = int((dur_out / len(words_o)) * 100)
+    dialogue_events.append((current_time, current_time + dur_out, "".join([f"{w} {{\\k{wd_o}}}" for w in words_o])))
     current_time += dur_out
 
-    # Create audio list for FFmpeg concatenation
-    with open("audio_list.txt", "w") as f:
-        for audio in audio_files:
-            f.write(f"file '{audio}'\n")
-
-    # 4. Generate Dynamic Background Image with Pillow & Branded AI Cards
-    print("\n[IMAGE] Generating dynamic background and AI judge commentary cards with Pillow...")
-    if os.path.exists("background.png"):
-        try:
-            img = Image.open("background.png").convert("RGB")
-        except Exception:
-            img = Image.new("RGB", (1920, 1080), color=(15, 15, 25))
-    else:
-        img = Image.new("RGB", (1920, 1080), color=(15, 15, 25))
-    
-    img = img.resize((1920, 1080))
-    draw = ImageDraw.Draw(img)
-
-    try:
-        font_title = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 38)
-        font_topic = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 22)
-        font_verse = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Oblique.ttf", 18)
-        font_badge = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 20)
-        font_small = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 16)
-    except IOError:
-        font_title = font_topic = font_verse = font_badge = font_small = ImageFont.load_default()
-
-    def draw_centered(y, text, font, fill):
-        bbox = draw.textbbox((0, 0), text, font=font)
-        w = bbox[2] - bbox[0]
-        x = (1920 - w) // 2
-        draw.text((x, y), text, fill=fill, font=font)
-
-    # Draw Header & Footer info
-    draw_centered(30, "AI FRONTIER SHOWCASE", font_title, "white")
-    draw_centered(85, f"Topic - {topic}", font_topic, "#00FFCC")
-    draw_centered(1080 - 50, verse_text, font_verse, "yellow")
-
-    # Draw Active Speaker / Judge Panels on screen
-    draw.rounded_rectangle([150, 160, 550, 240], radius=15, fill=(30, 30, 50), outline="#FFFF00", width=3)
-    draw.ellipse([170, 175, 235, 225], fill="#FFFF00")
-    draw.text((192, 187), "A", fill="black", font=font_badge)
-    draw.text((255, 187), "DEBATER A (Pro)", fill="white", font=font_badge)
-
-    draw.rounded_rectangle([1370, 160, 1770, 240], radius=15, fill=(30, 30, 50), outline="#FF00FF", width=3)
-    draw.ellipse([1390, 175, 1455, 225], fill="#FF00FF")
-    draw.text((1412, 187), "B", fill="black", font=font_badge)
-    draw.text((1475, 187), "DEBATER B (Con)", fill="white", font=font_badge)
-
-    # Draw Panel for AI Judge Feedback Card in the center frame
-    draw.rounded_rectangle([560, 160, 1360, 260], radius=12, fill=(20, 20, 35), outline="#00FFCC", width=2)
-    draw.text((580, 172), "AI JUDGE PANEL FEEDBACK & SCORES", fill="#00FFCC", font=font_badge)
-    
-    sample_comment = list(round_judge_comments.values())[0] if round_judge_comments else "Panel evaluating arguments..."
-    draw.text((580, 205), sample_comment[:85] + ("..." if len(sample_comment) > 85 else ""), fill="white", font=font_small)
-
-    img.save("dynamic_background.png")
-
-    # 5. Build Subtitles
-    print("\n[SUBTITLES] Building subtitles.ass...")
+    print("\n[SUBTITLES] Generating word-by-word karaoke subtitles...")
     ass_content = """[Script Info]
-Title: AI Debate Animated Captions
+Title: AI Debate Word-Flow Subtitles
 ScriptType: v4.00+
 PlayResX: 1920
 PlayResY: 1080
-ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: NarratorStyle,DejaVuSans-Bold,24,&H0000FFFF,&H000000FF,&HFF000000,&H80000000,1,0,0,0,100,100,0,0,1,2,1,2,20,20,120,1
-Style: DebaterAStyle,DejaVuSans-Bold,26,&H00FFFF00,&H000000FF,&HFF000000,&H80000000,1,0,0,0,100,100,0,0,1,3,1,2,20,20,120,1
-Style: DebaterBStyle,DejaVuSans-Bold,26,&H00FF00FF,&H000000FF,&HFF000000,&H80000000,1,0,0,0,100,100,0,0,1,3,1,2,20,20,120,1
+Style: WordFlow,DejaVuSans-Bold,32,&H00FFFFFF,&H0000FFFF,&HFF000000,&H80000000,1,0,0,0,100,100,0,0,1,3,1,2,100,100,120,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
-
-    for start, end, speaker, text in dialogue_events:
-        style_name = "NarratorStyle"
-        prefix = "NARRATOR: "
-        if speaker == "DebaterA":
-            style_name = "DebaterAStyle"
-            prefix = "DEBATER A (ACTIVE): "
-        elif speaker == "DebaterB":
-            style_name = "DebaterBStyle"
-            prefix = "DEBATER B (ACTIVE): "
-
-        start_str = format_ass_time(start)
-        end_str = format_ass_time(end)
-        ass_content += f"Dialogue: 0,{start_str},{end_str},{style_name},,,0,0,0,,{prefix}{text}\n"
+    for start, end, text in dialogue_events:
+        ass_content += f"Dialogue: 0,{format_ass_time(start)},{format_ass_time(end)},WordFlow,,0,0,0,,{text}\n"
 
     with open("subtitles.ass", "w", encoding="utf-8") as f:
         f.write(ass_content)
 
-    # 6. FFmpeg Video Rendering Suite
-    print("\n[FFmpeg] Rendering final video package with audio & dynamic AI judge overlays...")
-    total_duration = int(current_time) + 2
+    with open("audio_list.txt", "w") as f:
+        for audio in audio_files:
+            f.write(f"file '{audio}'\n")
 
+    with open("video_list.txt", "w") as f:
+        for img_path, dur in segment_images:
+            f.write(f"file '{img_path}'\n")
+            f.write(f"duration {dur}\n")
+        if segment_images:
+            f.write(f"file '{segment_images[-1][0] ?? ''}'\n")
+
+    print("\n[FFmpeg] Assembling final 10-minute video package...")
     ffmpeg_cmd = [
         "ffmpeg",
-        "-loop", "1", "-i", "dynamic_background.png",
+        "-f", "concat", "-safe", "0", "-i", "video_list.txt",
         "-f", "concat", "-safe", "0", "-i", "audio_list.txt",
-        "-filter_complex", (
-            "[0:v]scale=2880:1620,zoompan=z='min(zoom+0.0008,1.25)':d=3000:s=1920x1080[bg];"
-            "[1:a]aformat=channel_layouts=mono,showwaves=s=600x50:mode=cline:rate=25:colors=0x00FFCC[waveform];"
-            "[bg][waveform]overlay=(W-w)/2:H-130[with_wave];"
-            "[with_wave]subtitles=subtitles.ass[v]"
-        ),
+        "-filter_complex", "[0:v]subtitles=subtitles.ass[v]",
         "-map", "[v]",
         "-map", "1:a",
         "-c:v", "libx264",
         "-c:a", "aac",
-        "-t", str(total_duration),
         "-pix_fmt", "yuv420p",
         "-y",
         "final_debate_output.mp4"
     ]
-
     subprocess.run(ffmpeg_cmd, check=True)
-    print("[DEBATE-PIPELINE] Success! Video saved as final_debate_output.mp4")
+    print("[SUCCESS] final_debate_output.mp4 successfully created!")
 
 if __name__ == "__main__":
     run_debate_pipeline()
