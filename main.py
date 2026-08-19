@@ -2,84 +2,45 @@ import os
 import subprocess
 import requests
 import json
-import time
-from google import genai
-from google.genai import types
+import torch
+import torchaudio
+from chatterbox.tts_turbo import ChatterboxTurboTTS
 
 # ==========================================
-# CONFIGURATION & API CLIENTS
+# CONFIGURATION & MODEL INITIALIZATION
 # ==========================================
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", OPENROUTER_API_KEY)
-
-client = genai.Client(api_key=GEMINI_API_KEY)
 
 def log(message):
     print(f"[DEBATE-PIPELINE] {message}", flush=True)
 
+log("Loading Chatterbox-Turbo TTS model...")
+# Automatically targets CUDA GPU if available for lightning-fast batch generation
+device = "cuda" if torch.cuda.is_available() else "cpu"
+tts_model = ChatterboxTurboTTS.from_pretrained(device=device)
+
 
 # ==========================================
-# 1. GEMINI TTS (WITH RATE-LIMIT & RETRIES)
+# 1. CHATTERBOX-TURBO TTS SYNTHESIS
 # ==========================================
-def synthesize_speech_gemini(text, output_path, voice_name="Puck", retries=3, base_delay=60):
-    log(f"Synthesizing speech with Gemini TTS (Voice: {voice_name}, {len(text)} chars)...")
+def synthesize_speech_chatterbox(text, output_path):
+    log(f"Synthesizing speech via Chatterbox-Turbo ({len(text)} chars)...")
     
-    for attempt in range(retries):
-        try:
-            response = client.models.generate_content(
-                model='gemini-2.5-flash-preview-tts',
-                contents=text,
-                config=types.GenerateContentConfig(
-                    response_modalities=["AUDIO"],
-                    speech_config=types.SpeechConfig(
-                        voice_config=types.VoiceConfig(
-                            prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                                voice_name=voice_name
-                            )
-                        )
-                    )
-                )
-            )
-            
-            for candidate in response.candidates:
-                for part in candidate.content.parts:
-                    if part.inline_data and part.inline_data.mime_type.startswith("audio/"):
-                        pcm_bytes = part.inline_data.data
-                        import wave
-                        with wave.open(output_path, 'wb') as wf:
-                            wf.setnchannels(1)
-                            wf.setsampwidth(2) # 16-bit PCM
-                            wf.setframerate(24000)
-                            wf.writeframes(pcm_bytes)
-                        log(f"Successfully generated {output_path} via Gemini TTS")
-                        
-                        # Pace out requests to stay comfortably under free-tier rate limits
-                        time.sleep(6)
-                        return output_path
-                        
-            raise Exception("No audio data returned in Gemini response payload.")
-            
-        except Exception as e:
-            error_str = str(e)
-            log(f"Gemini TTS attempt {attempt + 1}/{retries} failed: {e}")
-            
-            if "429" in error_str or "RESOURCE_EXHAUSTED" in error_str:
-                wait_time = base_delay * (attempt + 1)
-                log(f"Rate limit reached (Free tier quota). Sleeping for {wait_time} seconds before retry...")
-                time.sleep(wait_time)
-            else:
-                if attempt < retries - 1:
-                    time.sleep(5)
-                else:
-                    break
-                    
-    log("Quota exhausted or retries failed. Using silent tone fallback for this segment.")
-    cmd = [
-        "ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=24000:cl=mono", 
-        "-t", "4", "-q:a", "9", "-acodec", "libmp3lame", output_path
-    ]
-    subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    return output_path
+    try:
+        # Generates audio rapidly using Turbo's single-step distilled architecture
+        wav = tts_model.generate(text)
+        torchaudio.save(output_path, wav, tts_model.sr)
+        log(f"Successfully generated {output_path}")
+        return output_path
+        
+    except Exception as e:
+        log(f"Chatterbox TTS failed: {e}. Falling back to silent tone.")
+        cmd = [
+            "ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=24000:cl=mono", 
+            "-t", "4", "-q:a", "9", "-acodec", "libmp3lame", output_path
+        ]
+        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return output_path
 
 
 # ==========================================
@@ -206,10 +167,10 @@ def render_youtube_debate_video(audio_files, captions, output_filename="final_de
 # MAIN EXECUTION PIPELINE (5 ROUNDS + SUMMARY)
 # ==========================================
 if __name__ == "__main__":
-    log("Starting automated 5-round grand debate pipeline with 10 frontier judges...")
+    log("Starting automated 5-round grand debate pipeline with Chatterbox-Turbo & 10 frontier judges...")
     
     intro_text = "Welcome to the ultimate five-round AI grand debate, evaluated by a panel of ten frontier models. Let us dive straight into Round One."
-    intro_audio = synthesize_speech_gemini(intro_text, "intro.wav", voice_name="Puck")
+    intro_audio = synthesize_speech_chatterbox(intro_text, "intro.wav")
     
     rounds = [
         {
@@ -257,8 +218,8 @@ if __name__ == "__main__":
         path_a = f"round_{r_num}_a.wav"
         path_b = f"round_{r_num}_b.wav"
         
-        synthesize_speech_gemini(r["a"], path_a, voice_name="Puck")
-        synthesize_speech_gemini(r["b"], path_b, voice_name="Fenrir")
+        synthesize_speech_chatterbox(r["a"], path_a)
+        synthesize_speech_chatterbox(r["b"], path_b)
         
         audio_list.extend([path_a, path_b])
         captions_list.extend([f"Round {r_num}: {r['topic']} (Debater A)", f"Round {r_num}: {r['topic']} (Debater B)"])
@@ -277,7 +238,7 @@ if __name__ == "__main__":
         
         commentary_text = f"End of Round {r_num}. Our ten-judge panel awarded {wins_a} votes to Debater A and {wins_b} votes to Debater B."
         comm_path = f"round_{r_num}_commentary.wav"
-        synthesize_speech_gemini(commentary_text, comm_path, voice_name="Puck")
+        synthesize_speech_chatterbox(commentary_text, comm_path)
         
         audio_list.append(comm_path)
         captions_list.append(f"Judge Panel Breakdown: A ({wins_a} votes) vs B ({wins_b} votes)")
@@ -287,7 +248,7 @@ if __name__ == "__main__":
     summary_text = f"After five intense rounds judged by ten frontier AI models, the votes are in. Debater A finished with a cumulative score of {int(total_score_a)}, while Debater B finished with {int(total_score_b)}. Your overall winner for this grand debate is {winner}!"
     
     summary_audio_path = "final_summary.wav"
-    synthesize_speech_gemini(summary_text, summary_audio_path, voice_name="Puck")
+    synthesize_speech_chatterbox(summary_text, summary_audio_path)
     
     audio_list.append(summary_audio_path)
     captions_list.append(f"Grand Summary: Winner Crowned ({winner})")
