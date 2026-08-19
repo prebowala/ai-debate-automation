@@ -191,11 +191,15 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     with open("subtitles.ass", "w", encoding="utf-8") as f:
         f.write(ass_content)
 
-    # 5. FFmpeg Video Rendering Suite (Safely sanitized text strings with colons removed)
+    # 5. Write clean text files for FFmpeg drawtext to read safely (bypassing all character escaping bugs)
+    with open("topic_text.txt", "w", encoding="utf-8") as tf:
+        tf.write(f"Topic - {topic}")
+    with open("verse_text.txt", "w", encoding="utf-8") as vf:
+        vf.write(verse_text)
+
+    # 6. FFmpeg Video Rendering Suite using textfile parameters
     print("\n[FFmpeg] Rendering final video package...")
     total_duration = int(current_time) + 2
-    clean_verse = verse_text.replace("'", "").replace('"', '').replace(":", " -")
-    clean_topic = topic.replace("'", "").replace('"', '').replace(":", " -")
 
     ffmpeg_cmd = [
         "ffmpeg",
@@ -206,8 +210,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             "[1:a]aformat=channel_layouts=mono,showwaves=s=600x50:mode=cline:rate=25:colors=0x00FFCC[waveform];"
             "[bg][waveform]overlay=(W-w)/2:H-130[with_wave];"
             "[with_wave]drawtext=text='AI FRONTIER SHOWCASE':fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf:fontsize=40:fontcolor=white:x=(w-text_w)/2:y=30,"
-            "drawtext=text='Topic - " + clean_topic + "':fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf:fontsize=20:fontcolor=0x00FFCC:x=(w-text_w)/2:y=80,"
-            "drawtext=text='" + clean_verse + "':fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Oblique.ttf:fontsize=18:fontcolor=yellow:x=(w-text_w)/2:y=h-45,"
+            "drawtext=textfile=topic_text.txt:fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf:fontsize=20:fontcolor=0x00FFCC:x=(w-text_w)/2:y=80,"
+            "drawtext=textfile=verse_text.txt:fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Oblique.ttf:fontsize=18:fontcolor=yellow:x=(w-text_w)/2:y=h-45,"
             "subtitles=subtitles.ass[v]"
         ),
         "-map", "[v]",
