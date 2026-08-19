@@ -117,27 +117,26 @@ def evaluate_debate_round(transcript_text):
 # 3. VIDEO RENDERING & SPLIT-SCREEN COMPOSITION
 # ==========================================
 def render_debate_video(audio_a, audio_b, output_filename="final_debate_output.mp4"):
-    log("Rendering split-screen video canvas with active speaker framing via FFmpeg...")
+    log("Rendering split-screen video canvas matched to audio duration via FFmpeg...")
     
-    # This FFmpeg filter graph generates a dual-panel split screen visual layout 
-    # matched dynamically with the stereo audio tracks for Debater A and Debater B.
     cmd = [
         "ffmpeg", "-y",
-        "-f", "lavfi", "-i", "color=c=navy:s=640x720:r=30",  # Left Panel (Debater A background)
-        "-f", "lavfi", "-i", "color=c=maroon:s=640x720:r=30", # Right Panel (Debater B background)
+        "-loop", "1", "-f", "lavfi", "-i", "color=c=navy:s=640x720:r=30",  
+        "-loop", "1", "-f", "lavfi", "-i", "color=c=maroon:s=640x720:r=30", 
         "-i", audio_a,
         "-i", audio_b,
         "-filter_complex",
         "[0:v][1:v]hstack=inputs=2[v_canvas];[2:a][3:a]amerge=inputs=2[aout]",
         "-map", "[v_canvas]",
         "-map", "[aout]",
-        "-c:v", "libx264", "-pix_fmt", "yuv420p", "-shortest",
+        "-c:v", "libx264", "-pix_fmt", "yuv420p", 
         "-c:a", "aac", "-b:a", "192k",
+        "-shortest",
         output_filename
     ]
     
     subprocess.run(cmd, check=True)
-    log(f"Full split-screen video successfully rendered to {output_filename}!")
+    log(f"Optimized split-screen video successfully rendered to {output_filename}!")
 
 
 # ==========================================
