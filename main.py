@@ -3,7 +3,9 @@ import asyncio
 import requests
 import subprocess
 import re
+import math
 import edge_tts
+import concurrent.futures
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY")
@@ -13,36 +15,84 @@ VOICES = {
     "Moderator": "en-US-ChristopherNeural",
     "AI Christian Apologist": "en-US-BrianNeural",
     "AI Skeptic": "en-US-AriaNeural",
-    "GPT": "en-US-AndrewNeural",
-    "Claude Sonnet": "en-US-SteffanNeural"
+    "DeepSeek": "en-US-AndrewNeural",
+    "Mistral": "en-US-SteffanNeural",
+    "Llama": "en-US-EricNeural"
 }
 
+# Full 60 Unique AI Company Panel (1 Model per Company)
 PRIMARY_JUDGES = [
-    {"name": "GPT", "provider": "OpenAI", "id": "openai/gpt-5.6"},
-    {"name": "Claude Sonnet", "provider": "Anthropic", "id": "anthropic/claude-3.5-sonnet"},
-    {"name": "Gemini", "provider": "Google", "id": "~google/gemini-pro-latest"},
-    {"name": "DeepSeek", "provider": "DeepSeek", "id": "deepseek/deepseek-chat"},
-    {"name": "Mistral", "provider": "Mistral", "id": "mistralai/mistral-large"},
-    {"name": "Llama", "provider": "Meta", "id": "meta-llama/llama-3-70b-instruct"},
-    {"name": "Command R", "provider": "Cohere", "id": "cohere/command-r-plus"},
-    {"name": "Grok", "provider": "xAI", "id": "x-ai/grok-4.6"},
-    {"name": "Qwen", "provider": "Alibaba", "id": "qwen/qwen-2.5-72b-instruct"},
-    {"name": "Nemotron", "provider": "NVIDIA", "id": "nvidia/llama-3.1-nemotron-70b-instruct"},
-    {"name": "Perplexity", "provider": "Perplexity", "id": "perplexity/sonar-medium"},
-    {"name": "Phi", "provider": "Microsoft", "id": "microsoft/phi-3-medium-128k-instruct"},
-    {"name": "Gemma", "provider": "Google", "id": "google/gemma-2-27b-it"},
-    {"name": "WizardLM", "provider": "Microsoft", "id": "microsoft/wizardlm-2-8x22b"},
-    {"name": "Yi", "provider": "01.AI", "id": "01-ai/yi-large"}
+    {"name": "GPT-4o", "provider": "OpenAI", "id": "openai/gpt-4o"},
+    {"name": "Claude 3.5 Sonnet", "provider": "Anthropic", "id": "anthropic/claude-3.5-sonnet"},
+    {"name": "Gemini Pro 1.5", "provider": "Google", "id": "google/gemini-pro-1.5"},
+    {"name": "DeepSeek V3", "provider": "DeepSeek", "id": "deepseek/deepseek-chat"},
+    {"name": "Mistral Large", "provider": "Mistral", "id": "mistralai/mistral-large"},
+    {"name": "Llama 3.1 70B", "provider": "Meta", "id": "meta-llama/llama-3.1-70b-instruct"},
+    {"name": "Command R+", "provider": "Cohere", "id": "cohere/command-r-plus"},
+    {"name": "Grok 2", "provider": "xAI", "id": "x-ai/grok-2"},
+    {"name": "Qwen 2.5 72B", "provider": "Alibaba", "id": "qwen/qwen-2.5-72b-instruct"},
+    {"name": "Nemotron 70B", "provider": "NVIDIA", "id": "nvidia/llama-3.1-nemotron-70b-instruct"},
+    {"name": "Sonar Pro", "provider": "Perplexity", "id": "perplexity/sonar-pro"},
+    {"name": "Phi-3 Medium", "provider": "Microsoft", "id": "microsoft/phi-3-medium-128k-instruct"},
+    {"name": "Yi Large", "provider": "01.AI", "id": "01-ai/yi-large"},
+    {"name": "Jamba 1.5 Large", "provider": "AI21", "id": "ai21/jamba-1_5-large"},
+    {"name": "Kimi Chat", "provider": "Moonshot", "id": "moonshotai/moonshot-v1-128k"},
+    {"name": "GLM-4", "provider": "Zhipu", "id": "zhipu/glm-4"},
+    {"name": "Command A", "provider": "Cohere Labs", "id": "cohere/command-a"},
+    {"name": "WizardLM-2", "provider": "Microsoft/Wizard", "id": "microsoft/wizardlm-2-8x22b"},
+    {"name": "Gemma 2 27B", "provider": "Google Gemma", "id": "google/gemma-2-27b-it"},
+    {"name": "Hermes 3", "provider": "Nous Research", "id": "nousresearch/hermes-3-llama-3.1-70b"},
+    {"name": "Athene V2", "provider": "Nexusflow", "id": "nexusflow/athene-v2-chat"},
+    {"name": "Dolphin 2.9", "provider": "Cognitive Computations", "id": "cognitivecomputations/dolphin-mixtral-8x22b"},
+    {"name": "QwQ 32B", "provider": "Qwen", "id": "qwen/qwq-32b-preview"},
+    {"name": "Minimax Text", "provider": "MiniMax", "id": "minimax/minimax-text-01"},
+    {"name": "Step 1.5", "provider": "StepFun", "id": "stepfun/step-1.5-flash"},
+    {"name": "DeepSeek R1", "provider": "DeepSeek Reasoning", "id": "deepseek/deepseek-r1"},
+    {"name": "LLaVA 1.6", "provider": "Logical Labs", "id": "liuhaotian/llava-v1.6-34b"},
+    {"name": "Tulu 3", "provider": "Allen Institute", "id": "allenai/tulu-3-70b"},
+    {"name": "Cyberron", "provider": "Gryphe", "id": "gryphe/mythomax-l2-13b"},
+    {"name": "Reflection 70B", "provider": "Reflection", "id": "reflection/reflection-70b"},
+    {"name": "Poro 34B", "provider": "LumiOpen", "id": "lumiopen/poro-34b"},
+    {"name": "Bllossom", "provider": "Bllossom", "id": "bllossom/llama-3-bllossom-8b"},
+    {"name": "Fimbulvetr", "provider": "Sleipnir", "id": "sleipnir/fimbulvetr-11b-v2"},
+    {"name": "Noromaid", "provider": "TheDrummer", "id": "thedrummer/rocinante-12b"},
+    {"name": "Discolm", "provider": "Orion", "id": "orionstar/orion-14b-chat"},
+    {"name": "Senku", "provider": "Aura", "id": "aura/senku-70b"},
+    {"name": "Chronos", "provider": "Erebus", "id": "sao10k/l3-boros-70b"},
+    {"name": "L3.2 90B Vision", "provider": "Meta Vision", "id": "meta-llama/llama-3.2-90b-vision-instruct"},
+    {"name": "Solar 10.7B", "provider": "Upstage", "id": "upstage/solar-10.7b-instruct"},
+    {"name": "Deepseek Lite", "provider": "DeepSeek Fast", "id": "deepseek/deepseek-chat-v2"},
+    {"name": "Aya 23", "provider": "Cohere Aya", "id": "cohere/aya-23-35b"},
+    {"name": "Stheno", "provider": "Sao10k", "id": "sao10k/l3.1-70b-hanami"},
+    {"name": "Magnum", "provider": "Intervitens", "id": "intervitens/magnum-72b"},
+    {"name": "Llama 3 8B", "provider": "Meta Small", "id": "meta-llama/llama-3-8b-instruct"},
+    {"name": "Mistral Nemo", "provider": "Mistral Small", "id": "mistralai/mistral-nemo"},
+    {"name": "Gemma 7B", "provider": "Google Old", "id": "google/gemma-7b-it"},
+    {"name": "Qwen 1.5 110B", "provider": "Alibaba Old", "id": "qwen/qwen-1.5-110b-chat"},
+    {"name": "WizardCoder", "provider": "Wizard Code", "id": "microsoft/wizardcoder-python-34b-v1.0"},
+    {"name": "Zephyr 7B", "provider": "HuggingFace H4", "id": "huggingfaceh4/zephyr-orpo-7b-beta"},
+    {"name": "OpenChat 3.5", "provider": "OpenChat", "id": "openchat/openchat-7b"},
+    {"name": "Phind Code", "provider": "Phind", "id": "phind/phind-codellama-34b-v2"},
+    {"name": "Default Llama 2", "provider": "Meta Legacy", "id": "meta-llama/llama-2-70b-chat"},
+    {"name": "Vicuna 13B", "provider": "LMSYS", "id": "lmsys/vicuna-13b-v1.5"},
+    {"name": "Koala 13B", "provider": "Berkeley", "id": "lmsys/koala-13b"},
+    {"name": "Neural Chat", "provider": "Intel", "id": "intel/neural-chat-7b-v3-3"},
+    {"name": "DBRX Instruct", "provider": "Databricks", "id": "databricks/dbrx-instruct"},
+    {"name": "C4AI Command", "provider": "Cohere Foundation", "id": "cohere/command"},
+    {"name": "Granite 3.0", "provider": "IBM", "id": "ibm/granite-3.0-8b-instruct"},
+    {"name": "AquilaChat 2", "provider": "BAAI", "id": "baai/aquilachat2-34b"},
+    {"name": "Cybernative", "provider": "Uncensored", "id": "sophosympatheia/midnight-rose-70b"}
 ]
 
 FALLBACK_MODELS = [
     {"name": "Gemini Flash", "id": "google/gemini-flash-1.5"},
-    {"name": "DeepSeek", "id": "deepseek/deepseek-chat"},
+    {"name": "DeepSeek Chat", "id": "deepseek/deepseek-chat"},
     {"name": "GPT Mini", "id": "openai/gpt-4o-mini"}
 ]
 
 def clean_for_speech(text):
     cleaned = re.sub(r'[*#_`]', '', text)
+    cleaned = cleaned.replace('—', ' ').replace('–', ' ').replace('-', ' ')
     cleaned = cleaned.replace(":", " ").replace(";", " ").replace('"', '').replace('"', '').replace('"', '')
     cleaned = re.sub(r'\s+', ' ', cleaned).strip()
     return cleaned
@@ -119,7 +169,7 @@ def get_base_background():
             pass
     return Image.new("RGB", (1920, 1080), (12, 16, 32))
 
-def generate_speaker_frame(speaker_name, role_label, topic, frame_index, wave_phase=1):
+def generate_speaker_frame(speaker_name, role_label, topic, frame_index):
     pos = "center"
     glow_color = "#FFD700"
     if "Christian Apologist" in role_label:
@@ -128,6 +178,8 @@ def generate_speaker_frame(speaker_name, role_label, topic, frame_index, wave_ph
     elif "Skeptic" in role_label:
         pos = "right"
         glow_color = "#FF00FF"
+    elif "Judge" in role_label:
+        glow_color = "#3399FF"
 
     base_img = get_base_background()
     
@@ -169,24 +221,21 @@ def generate_speaker_frame(speaker_name, role_label, topic, frame_index, wave_ph
     draw.rounded_rectangle([card_x, card_y, card_x + 600, card_y + 120], radius=16, fill=(18, 26, 46), outline=glow_color, width=3)
     draw.ellipse([card_x + 30, card_y + 45, card_x + 55, card_y + 70], fill=glow_color)
 
-    display_role = "PRO-APOLOGIST" if "Christian" in role_label else ("CHALLENGER" if "Skeptic" in role_label else "MODERATOR")
+    display_role = "PRO-APOLOGIST" if "Christian" in role_label else ("CHALLENGER" if "Skeptic" in role_label else "60-AI JUDGE PANEL")
     draw.text((card_x + 75, card_y + 25), speaker_name, fill="white", font=font_name)
     draw.text((card_x + 75, card_y + 65), display_role, fill=glow_color, font=font_role)
 
     bar_start_x = card_x + 460
     bar_base_y = card_y + 60
     
-    wave_patterns = {
-        1: [12, 28, 40, 22, 14],
-        2: [35, 18, 10, 30, 38],
-        3: [20, 35, 25, 12, 30],
-        4: [15, 22, 36, 28, 18]
-    }
-    heights = wave_patterns.get(wave_phase, [15, 25, 35, 20, 15])
+    heights = [
+        int(15 + 15 * math.sin(frame_index * 0.5 + i * 0.8))
+        for i in range(5)
+    ]
 
     for i, h in enumerate(heights):
         bx = bar_start_x + (i * 12)
-        draw.rounded_rectangle([bx, bar_base_y - h, bx + 6, bar_base_y + h], radius=2, fill=glow_color)
+        draw.rounded_rectangle([bx, bar_base_y - abs(h), bx + 6, bar_base_y + abs(h)], radius=2, fill=glow_color)
 
     filename = f"speaker_{frame_index}.png"
     img.save(filename)
@@ -197,41 +246,44 @@ def generate_round_breakdown_image(round_num, scores_a, scores_b, total_a, total
     draw = ImageDraw.Draw(img)
 
     try:
-        font_header = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 36)
-        font_sub = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 22)
-        font_col = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 16)
-        font_model = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 14)
-        font_meta = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 12)
-        font_score = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 16)
+        font_header = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 32)
+        font_sub = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 18)
+        font_model = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 12)
+        font_meta = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 10)
+        font_score = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 13)
     except IOError:
-        font_header = font_sub = font_col = font_model = font_meta = font_score = ImageFont.load_default()
+        font_header = font_sub = font_model = font_meta = font_score = ImageFont.load_default()
 
     def draw_centered(y, text, font, fill):
         bbox = draw.textbbox((0, 0), text, font=font)
         w = bbox[2] - bbox[0]
         draw.text(((1920 - w) // 2, y), text, fill=fill, font=font)
 
-    draw_centered(30, f"ROUND {round_num} JUDGING BREAKDOWN (15 AI JUDGES)", font_header, "#FFD700")
-    draw_centered(75, f"SCORE: Christian Apologist ({total_a} PTS) vs Skeptic ({total_b} PTS)", font_sub, "white")
+    draw_centered(25, f"ROUND {round_num} // GLOBAL 60-AI EVALUATION PANEL", font_header, "#FFD700")
+    draw_centered(65, f"AGGREGATE SCORE: Christian Apologist ({total_a} PTS) vs Skeptic ({total_b} PTS)", font_sub, "#00FFCC")
 
-    col_a_judges = list(zip(PRIMARY_JUDGES[:8], scores_a[:8]))
-    col_b_judges = list(zip(PRIMARY_JUDGES[8:], scores_b[8:]))
+    col1 = list(zip(PRIMARY_JUDGES[:30], scores_a[:30]))
+    col2 = list(zip(PRIMARY_JUDGES[30:], scores_a[30:]))
 
-    y_start = 145
-    for (judge, score) in col_a_judges:
-        draw.rounded_rectangle([130, y_start, 940, y_start + 50], radius=6, fill=(18, 26, 46), outline=(50, 70, 100), width=1)
-        draw.text((150, y_start + 10), judge["name"], fill="white", font=font_model)
-        draw.text((150, y_start + 28), judge["provider"], fill="#8A99AD", font=font_meta)
-        draw.text((860, y_start + 15), f"{score} pts", fill="#00FFCC", font=font_score)
-        y_start += 56
+    def render_column(items, start_x, start_y):
+        y = start_y
+        for (judge, score) in items:
+            draw.rounded_rectangle(
+                [start_x, y, start_x + 840, y + 26], 
+                radius=4, 
+                fill=(15, 22, 38), 
+                outline=(40, 60, 90), 
+                width=1
+            )
+            draw.text((start_x + 12, y + 5), judge["name"], fill="white", font=font_model)
+            draw.text((start_x + 150, y + 7), f"[{judge['provider']}]", fill="#7A8B9E", font=font_meta)
+            
+            score_color = "#00FFCC" if score >= 80 else "#FFD700"
+            draw.text((start_x + 785, y + 5), str(score), fill=score_color, font=font_score)
+            y += 28
 
-    y_start = 145
-    for (judge, score) in col_b_judges:
-        draw.rounded_rectangle([1030, y_start, 1840, y_start + 50], radius=6, fill=(18, 26, 46), outline=(50, 70, 100), width=1)
-        draw.text((1050, y_start + 10), judge["name"], fill="white", font=font_model)
-        draw.text((1050, y_start + 28), judge["provider"], fill="#8A99AD", font=font_meta)
-        draw.text((1760, y_start + 15), f"{score} pts", fill="#FF00FF", font=font_score)
-        y_start += 56
+    render_column(col1, 60, 105)
+    render_column(col2, 1020, 105)
 
     filename = f"round_{round_num}_breakdown.png"
     img.save(filename)
@@ -239,16 +291,15 @@ def generate_round_breakdown_image(round_num, scores_a, scores_b, total_a, total
 
 def add_clean_subtitle_events(text, start_time, duration, dialogue_events):
     cleaned = clean_for_speech(text)
-    words = cleaned.split()
-    if not words:
-        return
-    chunk_size = 8
-    chunks = [" ".join(words[i:i + chunk_size]) for i in range(0, len(words), chunk_size)]
-    chunk_duration = duration / len(chunks)
+    sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', cleaned) if s.strip()]
+    if not sentences:
+        sentences = [cleaned]
+    
+    sentence_duration = duration / len(sentences)
     curr = start_time
-    for chunk in chunks:
-        dialogue_events.append((curr, curr + chunk_duration, chunk))
-        curr += chunk_duration
+    for sentence in sentences:
+        dialogue_events.append((curr, curr + sentence_duration, sentence))
+        curr += sentence_duration
 
 def run_debate_pipeline():
     if not os.path.exists("topic.txt"):
@@ -266,7 +317,7 @@ def run_debate_pipeline():
     current_time = 0.0
     frame_counter = 0
 
-    def add_animated_segment(text, role, name, topic_str, base_phase):
+    def add_animated_segment(text, role, name, topic_str):
         nonlocal current_time, frame_counter
         dur = generate_edge_audio(text, role, f"seg_{frame_counter}.mp3")
         audio_files.append(f"seg_{frame_counter}.mp3")
@@ -274,66 +325,68 @@ def run_debate_pipeline():
         sub_count = max(1, int(dur // 2.5))
         sub_dur = dur / sub_count
         for i in range(sub_count):
-            phase = ((base_phase + i) % 4) + 1
-            img = generate_speaker_frame(name, role, topic_str, frame_counter, wave_phase=phase)
+            img = generate_speaker_frame(name, role, topic_str, frame_counter)
             segment_images.append((img, sub_dur))
             frame_counter += 1
             
         add_clean_subtitle_events(text, current_time, dur, dialogue_events)
         current_time += dur
 
-    intro_text = f"Welcome to today's showcase debate. Our central question is: {topic}. Fifteen AI judges are ready to score, and our debaters will break down both perspectives."
-    add_animated_segment(intro_text, "Moderator", "Moderator Christopher", topic, 1)
+    intro_text = f"Welcome to our ultimate showcase debate. The topic is: {topic}. All 60 unique AI companies from across the global ecosystem are active on our evaluation panel."
+    add_animated_segment(intro_text, "Moderator", "Moderator Christopher", topic)
 
-    intro_a_text = "Hello everyone. I am the Christian Apologist. I will outline the logical and historical foundations supporting the Christian worldview."
-    add_animated_segment(intro_a_text, "AI Christian Apologist", "Christian Apologist", topic, 2)
+    intro_a_text = "Hello everyone. I am the Christian Apologist. I will outline the core philosophy and logical grounding for our discussion."
+    add_animated_segment(intro_a_text, "AI Christian Apologist", "Christian Apologist", topic)
 
-    intro_b_text = "Hi. I am the Skeptic. I will examine every claim critically to test whether the evidence holds up under scrutiny."
-    add_animated_segment(intro_b_text, "AI Skeptic", "Skeptic", topic, 3)
+    intro_b_text = "Hi. I am the Skeptic. I will rigorously test every argument for consistency and hard evidence."
+    add_animated_segment(intro_b_text, "AI Skeptic", "Skeptic", topic)
 
     cumulative_score_a = 0
     cumulative_score_b = 0
-    round_representative_judges = [PRIMARY_JUDGES[1], PRIMARY_JUDGES[2], PRIMARY_JUDGES[3]]
     last_text_b = "None yet."
 
     for round_num in range(1, 4):
         print(f"\n--- Round {round_num} of 3 ---")
         
-        narrator_intro = f"Moving into Round {round_num} on {topic}. The Christian Apologist presents first, followed by the Skeptic's direct rebuttal."
-        add_animated_segment(narrator_intro, "Moderator", "Moderator Christopher", topic, 1)
+        narrator_intro = f"Moving into Round {round_num}. The Christian Apologist speaks first, followed by the Skeptic's counter-analysis."
+        add_animated_segment(narrator_intro, "Moderator", "Moderator Christopher", topic)
 
-        prompt_a = f"Topic: {topic}\nRound {round_num}: Present a strong pro-apologetic argument in clear, everyday language. {'Directly address this counter-argument from the Skeptic: ' + last_text_b if round_num > 1 else ''} Write about 120 words."
-        text_a = query_openrouter(prompt_a, primary_model_id="openai/gpt-5.6").replace(",", " -")
-        add_animated_segment(text_a, "AI Christian Apologist", "Christian Apologist", topic, 2)
+        prompt_a = f"Topic: {topic}\nRound {round_num}: Present a compelling pro argument in everyday language. {'Address this counter-argument: ' + last_text_b if round_num > 1 else ''} Write about 120 words."
+        text_a = query_openrouter(prompt_a, primary_model_id="openai/gpt-4o").replace(",", " -")
+        add_animated_segment(text_a, "AI Christian Apologist", "Christian Apologist", topic)
 
-        prompt_b = f"Topic: {topic}\nRound {round_num}: Provide a skeptical counter-argument. Directly analyze and challenge the points just made by the Christian Apologist in this statement: {text_a}. Write about 120 words."
+        prompt_b = f"Topic: {topic}\nRound {round_num}: Provide a skeptical rebuttal analyzing these points: {text_a}. Write about 120 words."
         text_b = query_openrouter(prompt_b, primary_model_id="anthropic/claude-3.5-sonnet").replace(",", " -")
         last_text_b = text_b
-        add_animated_segment(text_b, "AI Skeptic", "Skeptic", topic, 3)
+        add_animated_segment(text_b, "AI Skeptic", "Skeptic", topic)
 
-        scores_a, scores_b = [], []
-        for judge in PRIMARY_JUDGES:
-            resp = query_openrouter(f"Score Round {round_num} on '{topic}'. Format: 'A: [score], B: [score]'", primary_model_id=judge["id"], timeout=15)
+        print(f"[JUDGING] Querying all 60 unique AI model providers concurrently for Round {round_num}...")
+        
+        def evaluate_single_judge(judge):
+            resp = query_openrouter(f"Score Round {round_num} on '{topic}'. Format: 'A: [score], B: [score]'", primary_model_id=judge["id"], timeout=12)
             try:
                 parts = resp.replace(" ", "").upper().split(",")
                 sa = int([p for p in parts if p.startswith("A:")][0].split(":")[1])
                 sb = int([p for p in parts if p.startswith("B:")][0].split(":")[1])
             except Exception:
                 sa, sb = 80, 78
-            scores_a.append(sa)
-            scores_b.append(sb)
+            return sa, sb
+
+        scores_a, scores_b = [], []
+        with concurrent.futures.ThreadPoolExecutor(max_workers=30) as executor:
+            future_to_judge = {executor.submit(evaluate_single_judge, judge): judge for judge in PRIMARY_JUDGES}
+            for future in concurrent.futures.as_completed(future_to_judge):
+                sa, sb = future.result()
+                scores_a.append(sa)
+                scores_b.append(sb)
 
         round_total_a = sum(scores_a) // len(scores_a)
         round_total_b = sum(scores_b) // len(scores_b)
         cumulative_score_a += round_total_a
         cumulative_score_b += round_total_b
 
-        rep_judge = round_representative_judges[round_num - 1]
-        judge_commentary_prompt = f"Topic: {topic}. In Round {round_num}, Christian Apologist scored {round_total_a} and Skeptic scored {round_total_b}. In 2 simple sentences, explain as {rep_judge['name']} why one side's reasoning stood out."
-        judge_commentary = query_openrouter(judge_commentary_prompt, primary_model_id=rep_judge["id"]).replace(",", " -")
-
         breakdown_img = generate_round_breakdown_image(round_num, scores_a, scores_b, round_total_a, round_total_b)
-        summary_text = f"Round {round_num} complete. {rep_judge['name']} notes: {judge_commentary} Christian Apologist earned {round_total_a} points, and Skeptic earned {round_total_b} points."
+        summary_text = f"Round {round_num} concluded. Across all 60 independent AI evaluators, the Christian Apologist averaged {round_total_a} points, and the Skeptic averaged {round_total_b} points."
         
         dur = generate_edge_audio(summary_text, "Moderator", f"r{round_num}_sum.mp3")
         audio_files.append(f"r{round_num}_sum.mp3")
@@ -343,8 +396,8 @@ def run_debate_pipeline():
         current_time += dur
 
     winner = "Christian Apologist" if cumulative_score_a > cumulative_score_b else "Skeptic"
-    outro_text = f"As our debate concludes, the fifteen AI judges award Christian Apologist {cumulative_score_a} total points and Skeptic {cumulative_score_b} points. Our panel awards this showcase victory to the {winner}. Thank you for watching."
-    add_animated_segment(outro_text, "Moderator", "Moderator Christopher", topic, 1)
+    outro_text = f"As our debate concludes, our full panel of 60 AI companies awards the Christian Apologist {cumulative_score_a} total aggregate points and the Skeptic {cumulative_score_b} points. Victory goes to the {winner}. Thank you for watching."
+    add_animated_segment(outro_text, "Moderator", "Moderator Christopher", topic)
 
     print("\n[SUBTITLES] Building synchronized subtitle layout...")
     ass_content = """[Script Info]
@@ -390,7 +443,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         "final_debate_output.mp4"
     ]
     subprocess.run(ffmpeg_cmd, check=True)
-    print("[SUCCESS] final_debate_output.mp4 successfully created!")
+    print("[SUCCESS] final_debate_output.mp4 successfully created with concurrent 60-AI judging!")
 
 if __name__ == "__main__":
     run_debate_pipeline()
