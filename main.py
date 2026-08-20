@@ -8,11 +8,10 @@ from PIL import Image, ImageDraw, ImageFont, ImageFilter
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY")
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
-# Distinct voice profiles for clear differentiation
 VOICES = {
-    "Moderator": "en-US-ChristopherNeural",       # Authoritative deep male voice
-    "Christian Apologist": "en-US-BrianNeural",   # Distinct steady male voice
-    "Skeptic": "en-US-AriaNeural"                 # Distinct expressive female voice
+    "Moderator": "en-US-ChristopherNeural",
+    "Christian Apologist": "en-US-BrianNeural",
+    "Skeptic": "en-US-AriaNeural"
 }
 
 PRIMARY_JUDGES = [
@@ -118,9 +117,9 @@ def apply_spotlight_overlay(img, position="center"):
     overlay = overlay.filter(ImageFilter.GaussianBlur(40))
     return Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
 
-def generate_speaker_frame(speaker_name, role_key, topic):
+def generate_speaker_frame(speaker_name, role_key, topic, frame_index):
     pos = "center"
-    glow_color = "#00FFCC"
+    glow_color = "#FFD700"
     if "Christian Apologist" in role_key:
         pos = "left"
         glow_color = "#00FFCC"
@@ -150,16 +149,13 @@ def generate_speaker_frame(speaker_name, role_key, topic):
     card_y = 750
     draw.rounded_rectangle([card_x, card_y, card_x + 640, card_y + 140], radius=16, fill=(15, 22, 36), outline=glow_color, width=3)
     
-    bar_startX = card_x + 30
-    bar_baseY = card_y + 70
-    bar_heights = [20, 35, 15, 40, 25, 30]
-    for i, bh in enumerate(bar_heights):
-        draw.rectangle([bar_startX + (i * 8), bar_baseY - bh//2, bar_startX + (i * 8) + 5, bar_baseY + bh//2], fill=glow_color)
+    # Pulsing indicator badge showing active status
+    draw.ellipse([card_x + 35, card_y + 55, card_x + 65, card_y + 85], fill=glow_color)
 
     draw.text((card_x + 90, card_y + 30), speaker_name, fill="white", font=font_name)
     draw.text((card_x + 90, card_y + 75), role_key.upper(), fill=glow_color, font=font_role)
 
-    filename = f"speaker_{role_key.replace(' ', '_').lower()}.png"
+    filename = f"speaker_{frame_index}_{role_key.replace(' ', '_').lower()}.png"
     img.save(filename)
     return filename
 
@@ -240,21 +236,24 @@ def run_debate_pipeline():
     segment_images = []
     dialogue_events = []
     current_time = 0.0
+    frame_counter = 0
 
     # 1. Gradual Introduction by Moderator
     intro_text = f"Welcome everyone to today's formal showcase debate. The central question before our panel is: {topic}. Let us meet our debaters who will present their opening positions."
     intro_dur = generate_edge_audio(intro_text, "Moderator", "intro.mp3")
     audio_files.append("intro.mp3")
-    intro_img = generate_speaker_frame("Christopher (Moderator)", "Moderator", topic)
+    intro_img = generate_speaker_frame("Christopher (Moderator)", "Moderator", topic, frame_counter)
+    frame_counter += 1
     segment_images.append((intro_img, intro_dur))
     add_clean_subtitle_events(intro_text, current_time, intro_dur, dialogue_events)
     current_time += intro_dur
 
-    # 2. Short self-introductions from the two AI models
+    # 2. Self-introductions from the two AI models
     intro_a_text = "Greetings. I am Brian, representing the Christian Apologist perspective. I will build a rigorous case defending the truth and coherence of this worldview."
     dur_ia = generate_edge_audio(intro_a_text, "Christian Apologist", "intro_a.mp3")
     audio_files.append("intro_a.mp3")
-    img_ia = generate_speaker_frame("Brian (Apologist AI)", "Christian Apologist", topic)
+    img_ia = generate_speaker_frame("Brian (Apologist AI)", "Christian Apologist", topic, frame_counter)
+    frame_counter += 1
     segment_images.append((img_ia, dur_ia))
     add_clean_subtitle_events(intro_a_text, current_time, dur_ia, dialogue_events)
     current_time += dur_ia
@@ -262,7 +261,8 @@ def run_debate_pipeline():
     intro_b_text = "Hello. I am Aria, representing the Skeptic viewpoint. I will critically examine every claim, demanding rigorous empirical evidence and logical consistency."
     dur_ib = generate_edge_audio(intro_b_text, "Skeptic", "intro_b.mp3")
     audio_files.append("intro_b.mp3")
-    img_ib = generate_speaker_frame("Aria (Skeptic AI)", "Skeptic", topic)
+    img_ib = generate_speaker_frame("Aria (Skeptic AI)", "Skeptic", topic, frame_counter)
+    frame_counter += 1
     segment_images.append((img_ib, dur_ib))
     add_clean_subtitle_events(intro_b_text, current_time, dur_ib, dialogue_events)
     current_time += dur_ib
@@ -270,7 +270,6 @@ def run_debate_pipeline():
     cumulative_score_a = 0
     cumulative_score_b = 0
 
-    # Different representative judge assigned for each round
     round_representative_judges = [
         PRIMARY_JUDGES[1], # Round 1: Claude 3.5 Sonnet
         PRIMARY_JUDGES[2], # Round 2: Gemini Pro Latest
@@ -285,7 +284,8 @@ def run_debate_pipeline():
         text_a = query_openrouter(prompt_a, primary_model="openai/gpt-5.6").replace(",", " -")
         dur_a = generate_edge_audio(text_a, "Christian Apologist", f"round_{round_num}_a.mp3")
         audio_files.append(f"round_{round_num}_a.mp3")
-        img_a = generate_speaker_frame("Brian (Apologist AI)", "Christian Apologist", topic)
+        img_a = generate_speaker_frame("Brian (Apologist AI)", "Christian Apologist", topic, frame_counter)
+        frame_counter += 1
         segment_images.append((img_a, dur_a))
         add_clean_subtitle_events(text_a, current_time, dur_a, dialogue_events)
         current_time += dur_a
@@ -295,12 +295,13 @@ def run_debate_pipeline():
         text_b = query_openrouter(prompt_b, primary_model="anthropic/claude-3.5-sonnet").replace(",", " -")
         dur_b = generate_edge_audio(text_b, "Skeptic", f"round_{round_num}_b.mp3")
         audio_files.append(f"round_{round_num}_b.mp3")
-        img_b = generate_speaker_frame("Aria (Skeptic AI)", "Skeptic", topic)
+        img_b = generate_speaker_frame("Aria (Skeptic AI)", "Skeptic", topic, frame_counter)
+        frame_counter += 1
         segment_images.append((img_b, dur_b))
         add_clean_subtitle_events(text_b, current_time, dur_b, dialogue_events)
         current_time += dur_b
 
-        # Judging scores calculation
+        # Judging scores calculation (Strictly at the end of the round speeches)
         scores_a, scores_b = [], []
         for judge in PRIMARY_JUDGES:
             resp = query_openrouter(f"Score Round {round_num} on '{topic}'. Format: 'A: [score], B: [score]'", primary_model=judge["id"], timeout=15)
@@ -318,7 +319,6 @@ def run_debate_pipeline():
         cumulative_score_a += round_total_a
         cumulative_score_b += round_total_b
 
-        # Pick this round's unique representative judge
         rep_judge = round_representative_judges[round_num - 1]
         judge_commentary_prompt = f"Topic: {topic}. In Round {round_num}, Christian Apologist scored {round_total_a} and Skeptic scored {round_total_b}. In 2 sentences, explain as {rep_judge['name']} why one side's reasoning was more compelling in this round."
         judge_commentary = query_openrouter(judge_commentary_prompt, primary_model=rep_judge["id"]).replace(",", " -")
@@ -336,12 +336,13 @@ def run_debate_pipeline():
     outro_text = f"As our debate draws to a close, let us review the cumulative results. Christian Apologist finished with {cumulative_score_a} total points, and Skeptic finished with {cumulative_score_b} total points. Our panel awards this showcase victory to the {winner}. Thank you for joining us for this deep exploration."
     dur_out = generate_edge_audio(outro_text, "Moderator", "outro.mp3")
     audio_files.append("outro.mp3")
-    outro_img = generate_speaker_frame("Christopher (Moderator)", "Moderator", topic)
+    outro_img = generate_speaker_frame("Christopher (Moderator)", "Moderator", topic, frame_counter)
+    frame_counter += 1
     segment_images.append((outro_img, dur_out))
     add_clean_subtitle_events(outro_text, current_time, dur_out, dialogue_events)
     current_time += dur_out
 
-    print("\n[SUBTITLES] Generating clean middle-screen subtitles...")
+    print("\n[SUBTITLES] Generating clean continuous middle-screen subtitles...")
     ass_content = """[Script Info]
 Title: AI Debate Clean Subtitles
 ScriptType: v4.00+
@@ -350,7 +351,7 @@ PlayResY: 1080
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: CleanSub,DejaVuSans-Bold,42,&H00FFFFFF,&H000000FF,&HFF000000,&H80000000,1,0,0,0,100,100,0,0,1,4,2,5,100,100,0,1
+Style: CleanSub,DejaVuSans-Bold,40,&H00FFFFFF,&H000000FF,&HFF000000,&H80000000,1,0,0,0,100,100,0,0,1,3,2,5,100,100,0,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -361,23 +362,23 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     with open("subtitles.ass", "w", encoding="utf-8") as f:
         f.write(ass_content)
 
-    with open("audio_list.txt", "w") as f:
+    with open("audio_list.txt", "w", encoding="utf-8") as f:
         for audio in audio_files:
             f.write(f"file '{audio}'\n")
 
-    with open("video_list.txt", "w") as f:
+    with open("video_list.txt", "w", encoding="utf-8") as f:
         for img_path, dur in segment_images:
             f.write(f"file '{img_path}'\n")
             f.write(f"duration {dur}\n")
         if segment_images:
             f.write(f"file '{segment_images[-1][0]}'\n")
 
-    print("\n[FFmpeg] Assembling final video package...")
+    print("\n[FFmpeg] Assembling final video package with synchronized timeline...")
     ffmpeg_cmd = [
         "ffmpeg",
         "-f", "concat", "-safe", "0", "-i", "video_list.txt",
         "-f", "concat", "-safe", "0", "-i", "audio_list.txt",
-        "-filter_complex", "[0:v]zoompan=z='min(zoom+0.0012,1.1)':d=125:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1920x1080,subtitles=subtitles.ass[v]",
+        "-filter_complex", "[0:v]zoompan=z='min(zoom+0.001,1.08)':d=125:x='iw/2-(iw/zoom/2)':y='ih/2-(iw/zoom/2)':s=1920x1080,subtitles=subtitles.ass[v]",
         "-map", "[v]",
         "-map", "1:a",
         "-c:v", "libx264",
