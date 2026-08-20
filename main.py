@@ -22,7 +22,6 @@ VOICES = {
     "Panelist 2": "en-US-EmmaMultilingualNeural"
 }
 
-# 60 Distinct AI Companies and Creators available via OpenRouter
 PANEL_JUDGES = [
     {"name": "OpenAI", "id": "openai/gpt-4o"},
     {"name": "Anthropic", "id": "anthropic/claude-3.5-sonnet"},
@@ -88,9 +87,10 @@ PANEL_JUDGES = [
 
 def cleanup_cache():
     print("🧹 Cleaning up old cache files...")
+    # Protected background.png from deletion
     for ext in ['*.mp4', '*.mp3', '*.ass', '*.png', '*_list.txt']:
         for file in glob.glob(ext):
-            if file != 'final_debate_output.mp4':
+            if file not in ['final_debate_output.mp4', 'background.png']:
                 try: os.remove(file)
                 except: pass
     print("✨ Workspace is clean!")
@@ -141,21 +141,16 @@ def generate_segment_ass(text, duration, filename):
         ass_content += f"Dialogue: 0,{format_ass_time(i*chunk_dur)},{format_ass_time((i+1)*chunk_dur)},CleanSub,,0,0,0,,{chunk}\n"
     with open(filename, "w", encoding="utf-8") as f: f.write(ass_content)
 
-def create_background_and_ui(speaker_name, role_label, topic, pos, glow_color, bg_out, ui_out):
+def create_background(pos, glow_color, bg_out):
     script_dir = os.path.dirname(os.path.abspath(__file__))
     background_path = os.path.join(script_dir, "background.png")
-    if not os.path.exists(background_path):
-        background_path = "background.png"
     
     if os.path.exists(background_path):
         try: 
             base_img = Image.open(background_path).convert("RGB").resize((1920, 1080))
-            print(f"Successfully loaded background from: {background_path}")
-        except Exception as e: 
-            print(f"Error opening background image: {e}")
+        except Exception: 
             base_img = Image.new("RGB", (1920, 1080), (12, 16, 32))
     else:
-        print("background.png not found, using procedural grid fallback.")
         base_img = Image.new("RGB", (1920, 1080), (12, 16, 32))
         draw = ImageDraw.Draw(base_img)
         for x in range(0, 1920, 60): draw.line([(x,0), (x,1080)], fill=(20, 26, 45), width=2)
@@ -169,6 +164,7 @@ def create_background_and_ui(speaker_name, role_label, topic, pos, glow_color, b
     img = Image.alpha_composite(base_img.convert("RGBA"), overlay.filter(ImageFilter.GaussianBlur(30))).convert("RGB")
     img.save(bg_out)
 
+def create_ui_overlay(speaker_name, role_label, topic, pos, glow_color, ui_out):
     ui_img = Image.new("RGBA", (1920, 1080), (0, 0, 0, 0))
     draw = ImageDraw.Draw(ui_img)
     try:
@@ -180,7 +176,6 @@ def create_background_and_ui(speaker_name, role_label, topic, pos, glow_color, b
     bbox = draw.textbbox((0, 0), f"TOPIC: {topic}", font=font_title)
     draw.text(((1920 - (bbox[2] - bbox[0])) // 2, 30), f"TOPIC: {topic}", fill="white", font=font_title)
 
-    # Dynamic label card positioning based on speaker side
     if pos == "left":
         card_x = 100
     elif pos == "right":
@@ -196,20 +191,25 @@ def create_background_and_ui(speaker_name, role_label, topic, pos, glow_color, b
     ui_img.save(ui_out)
     return card_x
 
-def render_video_segment(bg_path, ui_path, audio_path, ass_path, output_path, position, glow_color, card_x):
+def render_video_segment(bg_path, ui_path, audio_path, ass_path, output_path, position, glow_color, card_x, zoom_bg=True):
     ff_color = "0x" + glow_color.lstrip("#")
-    pan_x = "0" if position == "left" else ("iw-iw/zoom" if position == "right" else "iw/2-(iw/zoom/2)")
-    pan_y = "ih/2-(ih/zoom/2)"
     
-    # Place audio wave strictly inside the speaker card window
+    # Optional Zoom logic to prevent cropping the 60-model scoreboard screen
+    if zoom_bg:
+        pan_x = "0" if position == "left" else ("iw-iw/zoom" if position == "right" else "iw/2-(iw/zoom/2)")
+        pan_y = "ih/2-(ih/zoom/2)"
+        bg_filter = f"[0:v]scale=1920:1080,zoompan=z='min(zoom+0.0004,1.15)':x='{pan_x}':y='{pan_y}':d=8000:s=1920x1080:fps=30[bg_processed];"
+    else:
+        bg_filter = f"[0:v]scale=1920:1080[bg_processed];"
+
     wave_x = card_x + 380
     wave_y = 875
 
     filter_complex = (
-        f"[0:v]scale=1920:1080,zoompan=z='min(zoom+0.0004,1.15)':x='{pan_x}':y='{pan_y}':d=8000:s=1920x1080:fps=30[zoomed_bg];"
+        f"{bg_filter}"
         f"[1:v]scale=1920:1080[ui];"
         f"[2:a]showwaves=s=180x50:mode=cline:colors={ff_color}[wave];"
-        f"[zoomed_bg][ui]overlay=0:0[bg_with_ui];"
+        f"[bg_processed][ui]overlay=0:0[bg_with_ui];"
         f"[bg_with_ui][wave]overlay={wave_x}:{wave_y},ass={ass_path}[outv]"
     )
     
@@ -223,9 +223,23 @@ def render_video_segment(bg_path, ui_path, audio_path, ass_path, output_path, po
     ]
     subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
 
-def generate_round_breakdown_image(round_num, judge_results, total_a, total_b, img_out):
-    img = Image.new("RGB", (1920, 1080), (12, 16, 32))
+def generate_round_breakdown_image(round_num, judge_results, total_a, total_b, cum_a, cum_b, img_out):
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    background_path = os.path.join(script_dir, "background.png")
+    
+    if os.path.exists(background_path):
+        try:
+            img = Image.open(background_path).convert("RGB").resize((1920, 1080))
+        except:
+            img = Image.new("RGB", (1920, 1080), (12, 16, 32))
+    else:
+        img = Image.new("RGB", (1920, 1080), (12, 16, 32))
+        
+    # Darken background heavily for scoreboard readability
+    overlay = Image.new("RGBA", (1920, 1080), (0, 0, 0, 200))
+    img = Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
     draw = ImageDraw.Draw(img)
+    
     try:
         font_header = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 32)
         font_sub = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 18)
@@ -237,22 +251,22 @@ def generate_round_breakdown_image(round_num, judge_results, total_a, total_b, i
         draw.text(((1920 - (bbox[2] - bbox[0])) // 2, y), text, fill=fill, font=font)
 
     draw_centered(25, f"ROUND {round_num} // 60 DISTINCT COMPANY AI PANEL EVALUATION", font_header, "#FFD700")
-    draw_centered(65, f"AGGREGATE: Apologist ({total_a} PTS) vs Skeptic ({total_b} PTS)", font_sub, "#00FFCC")
+    draw_centered(65, f"ROUND AVERAGE: Apologist {total_a} vs Skeptic {total_b}   ||   CUMULATIVE: Apologist {cum_a} vs Skeptic {cum_b}", font_sub, "#00FFCC")
 
-    side_a_judges = [j for j in judge_results if j["favored"] == "A"]
-    side_b_judges = [j for j in judge_results if j["favored"] == "B"]
-
-    def render_dense_column(judges, start_x, start_y, accent_color):
+    # Render exact halves to prevent dropped models and fix Y padding so it clears the card
+    def render_dense_column(judges_slice, start_x, start_y):
         y = start_y
-        for j in judges[:30]:
-            draw.rounded_rectangle([start_x, y, start_x + 840, y + 22], radius=4, fill=(15, 22, 38), outline=accent_color, width=1)
-            draw.text((start_x + 12, y + 4), j["name"], fill="white", font=font_model)
+        for j in judges_slice:
+            accent = "#00FFCC" if j["favored"] == "A" else "#FF00FF"
+            draw.rounded_rectangle([start_x, y, start_x + 840, y + 20], radius=4, fill=(15, 22, 38, 230), outline=accent, width=1)
+            draw.text((start_x + 12, y + 3), j["name"], fill="white", font=font_model)
             score_text = f"A: {int(j['score_a'])} | B: {int(j['score_b'])}"
-            draw.text((start_x + 720, y + 4), score_text, fill=accent_color, font=font_model)
-            y += 28
+            draw.text((start_x + 720, y + 3), score_text, fill=accent, font=font_model)
+            y += 24
 
-    render_dense_column(side_a_judges, 60, 130, "#00FFCC")
-    render_dense_column(side_b_judges, 1020, 130, "#FF00FF")
+    render_dense_column(judge_results[:30], 40, 110)
+    render_dense_column(judge_results[30:], 1040, 110)
+    
     img.save(img_out)
 
 def run_debate_pipeline():
@@ -279,9 +293,13 @@ def run_debate_pipeline():
         vid_file = f"seg_{frame_counter}.mp4"
 
         dur = generate_edge_audio(text, role, aud_file)
-        card_x = create_background_and_ui(name, role, topic_str, pos, glow, bg_file, ui_file)
+        
+        # Split Background and UI generation correctly
+        create_background(pos, glow, bg_file)
+        card_x = create_ui_overlay(name, role, topic_str, pos, glow, ui_file)
+        
         generate_segment_ass(text, dur, ass_file)
-        render_video_segment(bg_file, ui_file, aud_file, ass_file, vid_file, pos, glow, card_x)
+        render_video_segment(bg_file, ui_file, aud_file, ass_file, vid_file, pos, glow, card_x, zoom_bg=True)
         
         final_segments.append(vid_file)
         frame_counter += 1
@@ -343,12 +361,17 @@ def run_debate_pipeline():
         score_ass = f"score_r{round_num}.ass"
         score_vid = f"score_vid_{round_num}.mp4"
 
-        generate_round_breakdown_image(round_num, judge_results, round_total_a, round_total_b, bg_img)
-        card_x_score = create_background_and_ui("Moderator Christopher", "Moderator", topic, "center", "#FFD700", bg_img, ui_img)
+        # Generate custom scoreboard background
+        generate_round_breakdown_image(round_num, judge_results, round_total_a, round_total_b, cumulative_score_a, cumulative_score_b, bg_img)
+        
+        # Apply UI exclusively (prevents overwriting the scoreboard data)
+        card_x_score = create_ui_overlay("Moderator Christopher", "Moderator", topic, "center", "#FFD700", ui_img)
         
         dur = generate_edge_audio(summary_text, "Moderator", score_aud)
         generate_segment_ass(summary_text, dur, score_ass)
-        render_video_segment(bg_img, ui_img, score_aud, score_ass, score_vid, "center", "#FFD700", card_x_score)
+        
+        # Render segment without zoompan so data isn't cropped
+        render_video_segment(bg_img, ui_img, score_aud, score_ass, score_vid, "center", "#FFD700", card_x_score, zoom_bg=False)
         final_segments.append(score_vid)
 
         # 2. Representative AI Panelists Explain Scoring Rationale
