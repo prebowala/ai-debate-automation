@@ -53,14 +53,30 @@ def query_openrouter(prompt, primary_model, timeout=45):
             continue
     return "A: 75, B: 75"
 
-async def _save_edge_audio(text, voice, filename):
-    communicate = edge_tts.Communicate(text, voice)
-    await communicate.save(filename)
+async def _save_edge_audio(text, voice, filename, retries=3):
+    clean_text = text.replace('"', '').replace('&', 'and').strip()
+    
+    for attempt in range(retries):
+        try:
+            communicate = edge_tts.Communicate(clean_text, voice)
+            await communicate.save(filename)
+            if os.path.exists(filename) and os.path.getsize(filename) > 1000:
+                return
+        except Exception as e:
+            print(f"[WARNING] Edge-TTS attempt {attempt + 1} failed for voice {voice}: {e}")
+            await asyncio.sleep(2)
+            
+    raise Exception(f"Failed to generate Edge-TTS audio for voice {voice} after {retries} attempts.")
 
 def generate_edge_audio(text, role_key, output_filename):
     voice = VOICES.get(role_key, VOICES["Narrator"])
     print(f"[EDGE-TTS] Synthesizing [{role_key}] audio ({len(text.split())} words) -> {output_filename}...")
-    asyncio.run(_save_edge_audio(text, voice, output_filename))
+    
+    try:
+        asyncio.run(_save_edge_audio(text, voice, output_filename))
+    except Exception as e:
+        print(f"[ERROR] {e}. Falling back to default narrator voice...")
+        asyncio.run(_save_edge_audio(text, "en-US-ChristopherNeural", output_filename))
 
     cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", output_filename]
     result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
@@ -78,26 +94,20 @@ def format_ass_time(seconds):
     return f"{hours}:{minutes:02d}:{secs:02d}.{centisecs:02d}"
 
 def get_base_background():
-    # Loads custom background.png if available, otherwise creates fallback canvas
     if os.path.exists("background.png"):
         try:
             return Image.open("background.png").convert("RGB").resize((1920, 1080))
         except Exception:
             pass
-    
-    img = Image.new("RGB", (1920, 1080), (15, 20, 40))
-    return img
+    return Image.new("RGB", (1920, 1080), (15, 20, 40))
 
 def apply_active_lighting_overlay(img, glow_color_hex):
-    # Creates an active spotlight glow effect over the speaker area
     overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay)
     
-    # Draw radial gradient light beam centered behind the speaker card
     center_x, center_y = 960, 340
     radius = 450
     
-    # Parse hex color
     hex_clean = glow_color_hex.lstrip('#')
     rgb_color = tuple(int(hex_clean[i:i+2], 16) for i in (0, 2, 4))
     
@@ -112,7 +122,6 @@ def apply_active_lighting_overlay(img, glow_color_hex):
 def generate_speaker_frame(speaker_name, speaker_role, topic):
     img = get_base_background()
 
-    # Determine theme/glow colors based on role
     border_color = "#00FFCC"
     badge_fill = "#00FFCC"
     glow_color = "#005555"
@@ -144,7 +153,6 @@ def generate_speaker_frame(speaker_name, speaker_role, topic):
     draw_centered(40, "AI FRONTIER SHOWCASE DEBATE", font_title, "white")
     draw_centered(95, f"Topic: {topic}", font_sub, "#00FFCC")
 
-    # Glassmorphism style speaker card box
     draw.rounded_rectangle([460, 260, 1460, 420], radius=16, fill=(15, 22, 36), outline=border_color, width=3)
     draw.ellipse([510, 305, 590, 385], fill=badge_fill)
     draw.text((535, 325), speaker_name[0], fill="black", font=font_badge)
@@ -336,10 +344,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             f.write(f"file '{img_path}'\n")
             f.write(f"duration {dur}\n")
         if segment_images:
-            f.write(f"file '{segment_images[-1][0]}'\n")
+            f.write(f"file '{segment_images[-1][0] }'\n")
 
     print("\n[FFmpeg] Assembling final video package with cinematic zoom & subtitles...")
-    # FFmpeg filter applies a slow cinematic zoom-in (Ken Burns effect) over the background
     ffmpeg_cmd = [
         "ffmpeg",
         "-f", "concat", "-safe", "0", "-i", "video_list.txt",
