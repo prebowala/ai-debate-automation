@@ -42,11 +42,17 @@ FALLBACK_MODELS = [
 ]
 
 def clean_for_speech(text):
-    # Remove markdown symbols (*, **, #, etc.) and clean punctuation
     cleaned = re.sub(r'[*#_`]', '', text)
     cleaned = cleaned.replace(":", " ").replace(";", " ").replace('"', '').replace('"', '').replace('"', '')
     cleaned = re.sub(r'\s+', ' ', cleaned).strip()
     return cleaned
+
+def hex_to_rgba(hex_str, alpha):
+    hex_str = hex_str.lstrip('#')
+    r = int(hex_str[0:2], 16)
+    g = int(hex_str[2:4], 16)
+    b = int(hex_str[4:6], 16)
+    return (r, g, b, alpha)
 
 def query_openrouter(prompt, primary_model_id, timeout=45):
     headers = {
@@ -125,27 +131,21 @@ def generate_speaker_frame(speaker_name, role_label, topic, frame_index, wave_ph
 
     base_img = get_base_background()
     
-    # Dynamic Zoom/Crop framing based on active speaker
     if pos == "left":
-        # Crop and zoom into the left podium
         cropped = base_img.crop((0, 0, 1400, 1080)).resize((1920, 1080), Image.Resampling.LANCZOS)
     elif pos == "right":
-        # Crop and zoom into the right podium
         cropped = base_img.crop((520, 0, 1920, 1080)).resize((1920, 1080), Image.Resampling.LANCZOS)
     else:
         cropped = base_img
 
-    # Apply spotlight overlay on cropped frame
     overlay = Image.new("RGBA", cropped.size, (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay)
     
-    cx, cy = (480, 540) if pos == "left" else (1440, 540) if pos == "right" else (960, 540)
-    if pos != "center":
-        cx = 960  # Center relative to cropped view
-        
+    cx, cy = (960, 540)
     for r in range(600, 50, -50):
         alpha = int(20 * (1.0 - r / 600.0))
-        draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill=(glow_color[1:] if len(glow_color)==7 else "FFD700", alpha))
+        rgba_color = hex_to_rgba(glow_color, alpha)
+        draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill=rgba_color)
         
     overlay = overlay.filter(ImageFilter.GaussianBlur(30))
     img = Image.alpha_composite(cropped.convert("RGBA"), overlay).convert("RGB")
@@ -169,12 +169,10 @@ def generate_speaker_frame(speaker_name, role_label, topic, frame_index, wave_ph
     draw.rounded_rectangle([card_x, card_y, card_x + 600, card_y + 120], radius=16, fill=(18, 26, 46), outline=glow_color, width=3)
     draw.ellipse([card_x + 30, card_y + 45, card_x + 55, card_y + 70], fill=glow_color)
 
-    # Clean non-duplicated labels
     display_role = "PRO-APOLOGIST" if "Christian" in role_label else ("CHALLENGER" if "Skeptic" in role_label else "MODERATOR")
     draw.text((card_x + 75, card_y + 25), speaker_name, fill="white", font=font_name)
     draw.text((card_x + 75, card_y + 65), display_role, fill=glow_color, font=font_role)
 
-    # Animated audio bars simulation based on wave_phase
     bar_start_x = card_x + 460
     bar_base_y = card_y + 60
     
@@ -273,7 +271,6 @@ def run_debate_pipeline():
         dur = generate_edge_audio(text, role, f"seg_{frame_counter}.mp3")
         audio_files.append(f"seg_{frame_counter}.mp3")
         
-        # Split segment into sub-clips to animate the audio wave bars dynamically
         sub_count = max(1, int(dur // 2.5))
         sub_dur = dur / sub_count
         for i in range(sub_count):
@@ -285,11 +282,9 @@ def run_debate_pipeline():
         add_clean_subtitle_events(text, current_time, dur, dialogue_events)
         current_time += dur
 
-    # 1. Moderator Intro
     intro_text = f"Welcome to today's showcase debate. Our central question is: {topic}. Fifteen AI judges are ready to score, and our debaters will break down both perspectives."
     add_animated_segment(intro_text, "Moderator", "Moderator Christopher", topic, 1)
 
-    # 2. Debater Introductions
     intro_a_text = "Hello everyone. I am the Christian Apologist. I will outline the logical and historical foundations supporting the Christian worldview."
     add_animated_segment(intro_a_text, "AI Christian Apologist", "Christian Apologist", topic, 2)
 
@@ -307,12 +302,10 @@ def run_debate_pipeline():
         narrator_intro = f"Moving into Round {round_num} on {topic}. The Christian Apologist presents first, followed by the Skeptic's direct rebuttal."
         add_animated_segment(narrator_intro, "Moderator", "Moderator Christopher", topic, 1)
 
-        # Apologist Speech
         prompt_a = f"Topic: {topic}\nRound {round_num}: Present a strong pro-apologetic argument in clear, everyday language. {'Directly address this counter-argument from the Skeptic: ' + last_text_b if round_num > 1 else ''} Write about 120 words."
         text_a = query_openrouter(prompt_a, primary_model_id="openai/gpt-5.6").replace(",", " -")
         add_animated_segment(text_a, "AI Christian Apologist", "Christian Apologist", topic, 2)
 
-        # Skeptic Speech
         prompt_b = f"Topic: {topic}\nRound {round_num}: Provide a skeptical counter-argument. Directly analyze and challenge the points just made by the Christian Apologist in this statement: {text_a}. Write about 120 words."
         text_b = query_openrouter(prompt_b, primary_model_id="anthropic/claude-3.5-sonnet").replace(",", " -")
         last_text_b = text_b
@@ -397,7 +390,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         "final_debate_output.mp4"
     ]
     subprocess.run(ffmpeg_cmd, check=True)
-    print("[SUCCESS] final_debate_output.mp4 successfully created with dynamic framing and clean subtitles!")
+    print("[SUCCESS] final_debate_output.mp4 successfully created!")
 
 if __name__ == "__main__":
     run_debate_pipeline()
