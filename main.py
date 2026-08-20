@@ -10,38 +10,39 @@ OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 VOICES = {
     "Moderator": "en-US-ChristopherNeural",
-    "Christian Apologist": "en-US-BrianNeural",
-    "Skeptic": "en-US-AriaNeural"
+    "AI Christian Apologist": "en-US-BrianNeural",
+    "AI Skeptic": "en-US-AriaNeural"
 }
 
 PRIMARY_JUDGES = [
-    {"name": "GPT-5.6", "provider": "OpenAI", "id": "openai/gpt-5.6"},
-    {"name": "Claude 3.5 Sonnet", "provider": "Anthropic", "id": "anthropic/claude-3.5-sonnet"},
-    {"name": "Gemini Pro Latest", "provider": "Google", "id": "~google/gemini-pro-latest"},
-    {"name": "DeepSeek Chat", "provider": "DeepSeek", "id": "deepseek/deepseek-chat"},
-    {"name": "Mistral Large", "provider": "Mistral", "id": "mistralai/mistral-large"},
-    {"name": "Llama 3.3 70B", "provider": "Meta", "id": "meta-llama/llama-3-70b-instruct"},
-    {"name": "Command R+", "provider": "Cohere", "id": "cohere/command-r-plus"},
-    {"name": "Grok 4.6", "provider": "xAI", "id": "x-ai/grok-4.6"},
-    {"name": "Qwen 2.5 72B", "provider": "Alibaba", "id": "qwen/qwen-2.5-72b-instruct"},
-    {"name": "Nemotron 3 Ultra", "provider": "NVIDIA", "id": "nvidia/llama-3.1-nemotron-70b-instruct"}
+    {"name": "GPT", "provider": "OpenAI", "id": "openai/gpt-5.6"},
+    {"name": "Claude Sonnet", "provider": "Anthropic", "id": "anthropic/claude-3.5-sonnet"},
+    {"name": "Gemini", "provider": "Google", "id": "~google/gemini-pro-latest"},
+    {"name": "DeepSeek", "provider": "DeepSeek", "id": "deepseek/deepseek-chat"},
+    {"name": "Mistral", "provider": "Mistral", "id": "mistralai/mistral-large"},
+    {"name": "Llama", "provider": "Meta", "id": "meta-llama/llama-3-70b-instruct"},
+    {"name": "Command R", "provider": "Cohere", "id": "cohere/command-r-plus"},
+    {"name": "Grok", "provider": "xAI", "id": "x-ai/grok-4.6"},
+    {"name": "Qwen", "provider": "Alibaba", "id": "qwen/qwen-2.5-72b-instruct"},
+    {"name": "Nemotron", "provider": "NVIDIA", "id": "nvidia/llama-3.1-nemotron-70b-instruct"}
 ]
 
 FALLBACK_MODELS = [
-    "google/gemini-flash-1.5",
-    "deepseek/deepseek-chat",
-    "openai/gpt-4o-mini"
+    {"name": "Gemini Flash", "id": "google/gemini-flash-1.5"},
+    {"name": "DeepSeek", "id": "deepseek/deepseek-chat"},
+    {"name": "GPT Mini", "id": "openai/gpt-4o-mini"}
 ]
 
-def query_openrouter(prompt, primary_model, timeout=45):
+def query_openrouter(prompt, primary_model_id, timeout=45):
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
         "Content-Type": "application/json"
     }
-    models_to_try = [primary_model] + FALLBACK_MODELS
-    for model in models_to_try:
+    # Try primary model ID first, then fallbacks
+    model_ids_to_try = [primary_model_id] + [f["id"] for f in FALLBACK_MODELS]
+    for model_id in model_ids_to_try:
         payload = {
-            "model": model,
+            "model": model_id,
             "messages": [{"role": "user", "content": prompt}],
             "temperature": 0.7
         }
@@ -120,10 +121,10 @@ def apply_spotlight_overlay(img, position="center"):
 def generate_speaker_frame(speaker_name, role_key, topic, frame_index):
     pos = "center"
     glow_color = "#FFD700"
-    if "Christian Apologist" in role_key:
+    if "AI Christian Apologist" in role_key:
         pos = "left"
         glow_color = "#00FFCC"
-    elif "Skeptic" in role_key:
+    elif "AI Skeptic" in role_key:
         pos = "right"
         glow_color = "#FF00FF"
 
@@ -149,7 +150,6 @@ def generate_speaker_frame(speaker_name, role_key, topic, frame_index):
     card_y = 750
     draw.rounded_rectangle([card_x, card_y, card_x + 640, card_y + 140], radius=16, fill=(15, 22, 36), outline=glow_color, width=3)
     
-    # Pulsing indicator badge showing active status
     draw.ellipse([card_x + 35, card_y + 55, card_x + 65, card_y + 85], fill=glow_color)
 
     draw.text((card_x + 90, card_y + 30), speaker_name, fill="white", font=font_name)
@@ -180,10 +180,10 @@ def generate_round_breakdown_image(round_num, scores_a, scores_b, total_a, total
         draw.text(((1920 - w) // 2, y), text, fill=fill, font=font)
 
     draw_centered(40, f"ROUND {round_num} JUDGING BREAKDOWN", font_header, "#FFD700")
-    draw_centered(90, f"SCORE: Christian Apologist ({total_a} PTS) vs Skeptic ({total_b} PTS)", font_sub, "white")
+    draw_centered(90, f"SCORE: AI Christian Apologist ({total_a} PTS) vs AI Skeptic ({total_b} PTS)", font_sub, "white")
 
-    draw.text((220, 155), "CHRISTIAN APOLOGIST SCORES", fill="#00FFCC", font=font_col)
-    draw.text((1120, 155), "SKEPTIC SCORES", fill="#FF00FF", font=font_col)
+    draw.text((220, 155), "AI CHRISTIAN APOLOGIST SCORES", fill="#00FFCC", font=font_col)
+    draw.text((1120, 155), "AI SKEPTIC SCORES", fill="#FF00FF", font=font_col)
 
     col_a_judges = [(j, s) for j, s in zip(PRIMARY_JUDGES[:5], scores_a[:5])]
     col_b_judges = [(j, s) for j, s in zip(PRIMARY_JUDGES[5:], scores_b[5:])]
@@ -238,30 +238,30 @@ def run_debate_pipeline():
     current_time = 0.0
     frame_counter = 0
 
-    # 1. Gradual Introduction by Moderator
+    # 1. Moderator Introduction
     intro_text = f"Welcome everyone to today's formal showcase debate. The central question before our panel is: {topic}. Let us meet our debaters who will present their opening positions."
     intro_dur = generate_edge_audio(intro_text, "Moderator", "intro.mp3")
     audio_files.append("intro.mp3")
-    intro_img = generate_speaker_frame("Christopher (Moderator)", "Moderator", topic, frame_counter)
+    intro_img = generate_speaker_frame("Moderator Christopher", "Moderator", topic, frame_counter)
     frame_counter += 1
     segment_images.append((intro_img, intro_dur))
     add_clean_subtitle_events(intro_text, current_time, intro_dur, dialogue_events)
     current_time += intro_dur
 
-    # 2. Self-introductions from the two AI models
-    intro_a_text = "Greetings. I am Brian, representing the Christian Apologist perspective. I will build a rigorous case defending the truth and coherence of this worldview."
-    dur_ia = generate_edge_audio(intro_a_text, "Christian Apologist", "intro_a.mp3")
+    # 2. AI Debater Self-Introductions
+    intro_a_text = "Greetings. I am the AI Christian Apologist. I will build a rigorous case defending the truth and coherence of this worldview."
+    dur_ia = generate_edge_audio(intro_a_text, "AI Christian Apologist", "intro_a.mp3")
     audio_files.append("intro_a.mp3")
-    img_ia = generate_speaker_frame("Brian (Apologist AI)", "Christian Apologist", topic, frame_counter)
+    img_ia = generate_speaker_frame("AI Christian Apologist", "AI Christian Apologist", topic, frame_counter)
     frame_counter += 1
     segment_images.append((img_ia, dur_ia))
     add_clean_subtitle_events(intro_a_text, current_time, dur_ia, dialogue_events)
     current_time += dur_ia
 
-    intro_b_text = "Hello. I am Aria, representing the Skeptic viewpoint. I will critically examine every claim, demanding rigorous empirical evidence and logical consistency."
-    dur_ib = generate_edge_audio(intro_b_text, "Skeptic", "intro_b.mp3")
+    intro_b_text = "Hello. I am the AI Skeptic. I will critically examine every claim, demanding rigorous empirical evidence and logical consistency."
+    dur_ib = generate_edge_audio(intro_b_text, "AI Skeptic", "intro_b.mp3")
     audio_files.append("intro_b.mp3")
-    img_ib = generate_speaker_frame("Aria (Skeptic AI)", "Skeptic", topic, frame_counter)
+    img_ib = generate_speaker_frame("AI Skeptic", "AI Skeptic", topic, frame_counter)
     frame_counter += 1
     segment_images.append((img_ib, dur_ib))
     add_clean_subtitle_events(intro_b_text, current_time, dur_ib, dialogue_events)
@@ -271,31 +271,31 @@ def run_debate_pipeline():
     cumulative_score_b = 0
 
     round_representative_judges = [
-        PRIMARY_JUDGES[1], # Round 1: Claude 3.5 Sonnet
-        PRIMARY_JUDGES[2], # Round 2: Gemini Pro Latest
-        PRIMARY_JUDGES[3]  # Round 3: DeepSeek Chat
+        PRIMARY_JUDGES[1], # Round 1: Claude Sonnet
+        PRIMARY_JUDGES[2], # Round 2: Gemini
+        PRIMARY_JUDGES[3]  # Round 3: DeepSeek
     ]
 
     for round_num in range(1, 4):
         print(f"\n--- Round {round_num} of 3 ---")
         
-        # Christian Apologist Speech
+        # AI Christian Apologist Speech
         prompt_a = f"Topic: {topic}\nRound {round_num}: Present a thorough pro-apologetic argument with deep reasoning. Write approximately 150 words."
-        text_a = query_openrouter(prompt_a, primary_model="openai/gpt-5.6").replace(",", " -")
-        dur_a = generate_edge_audio(text_a, "Christian Apologist", f"round_{round_num}_a.mp3")
+        text_a = query_openrouter(prompt_a, primary_model_id="openai/gpt-5.6").replace(",", " -")
+        dur_a = generate_edge_audio(text_a, "AI Christian Apologist", f"round_{round_num}_a.mp3")
         audio_files.append(f"round_{round_num}_a.mp3")
-        img_a = generate_speaker_frame("Brian (Apologist AI)", "Christian Apologist", topic, frame_counter)
+        img_a = generate_speaker_frame("AI Christian Apologist", "AI Christian Apologist", topic, frame_counter)
         frame_counter += 1
         segment_images.append((img_a, dur_a))
         add_clean_subtitle_events(text_a, current_time, dur_a, dialogue_events)
         current_time += dur_a
 
-        # Skeptic Speech
+        # AI Skeptic Speech
         prompt_b = f"Topic: {topic}\nRound {round_num}: Provide a thorough counter-argument from a Skeptical perspective directly challenging the apologist position. Write approximately 150 words."
-        text_b = query_openrouter(prompt_b, primary_model="anthropic/claude-3.5-sonnet").replace(",", " -")
-        dur_b = generate_edge_audio(text_b, "Skeptic", f"round_{round_num}_b.mp3")
+        text_b = query_openrouter(prompt_b, primary_model_id="anthropic/claude-3.5-sonnet").replace(",", " -")
+        dur_b = generate_edge_audio(text_b, "AI Skeptic", f"round_{round_num}_b.mp3")
         audio_files.append(f"round_{round_num}_b.mp3")
-        img_b = generate_speaker_frame("Aria (Skeptic AI)", "Skeptic", topic, frame_counter)
+        img_b = generate_speaker_frame("AI Skeptic", "AI Skeptic", topic, frame_counter)
         frame_counter += 1
         segment_images.append((img_b, dur_b))
         add_clean_subtitle_events(text_b, current_time, dur_b, dialogue_events)
@@ -304,7 +304,7 @@ def run_debate_pipeline():
         # Judging scores calculation (Strictly at the end of the round speeches)
         scores_a, scores_b = [], []
         for judge in PRIMARY_JUDGES:
-            resp = query_openrouter(f"Score Round {round_num} on '{topic}'. Format: 'A: [score], B: [score]'", primary_model=judge["id"], timeout=15)
+            resp = query_openrouter(f"Score Round {round_num} on '{topic}'. Format: 'A: [score], B: [score]'", primary_model_id=judge["id"], timeout=15)
             try:
                 parts = resp.replace(" ", "").upper().split(",")
                 sa = int([p for p in parts if p.startswith("A:")][0].split(":")[1])
@@ -320,23 +320,23 @@ def run_debate_pipeline():
         cumulative_score_b += round_total_b
 
         rep_judge = round_representative_judges[round_num - 1]
-        judge_commentary_prompt = f"Topic: {topic}. In Round {round_num}, Christian Apologist scored {round_total_a} and Skeptic scored {round_total_b}. In 2 sentences, explain as {rep_judge['name']} why one side's reasoning was more compelling in this round."
-        judge_commentary = query_openrouter(judge_commentary_prompt, primary_model=rep_judge["id"]).replace(",", " -")
+        judge_commentary_prompt = f"Topic: {topic}. In Round {round_num}, AI Christian Apologist scored {round_total_a} and AI Skeptic scored {round_total_b}. In 2 sentences, explain as {rep_judge['name']} why one side's reasoning was more compelling in this round."
+        judge_commentary = query_openrouter(judge_commentary_prompt, primary_model_id=rep_judge["id"]).replace(",", " -")
 
         breakdown_img = generate_round_breakdown_image(round_num, scores_a, scores_b, round_total_a, round_total_b)
-        summary_text = f"Round {round_num} has concluded. {rep_judge['name']} notes: {judge_commentary} Christian Apologist earned {round_total_a} points, while Skeptic earned {round_total_b} points."
+        summary_text = f"Round {round_num} has concluded. {rep_judge['name']} notes: {judge_commentary} AI Christian Apologist earned {round_total_a} points, while AI Skeptic earned {round_total_b} points."
         dur_sum = generate_edge_audio(summary_text, "Moderator", f"round_{round_num}_sum.mp3")
         audio_files.append(f"round_{round_num}_sum.mp3")
         segment_images.append((breakdown_img, dur_sum))
         add_clean_subtitle_events(summary_text, current_time, dur_sum, dialogue_events)
         current_time += dur_sum
 
-    # 3. Gradual Outro / Conclusion
-    winner = "Christian Apologist" if cumulative_score_a > cumulative_score_b else "Skeptic"
-    outro_text = f"As our debate draws to a close, let us review the cumulative results. Christian Apologist finished with {cumulative_score_a} total points, and Skeptic finished with {cumulative_score_b} total points. Our panel awards this showcase victory to the {winner}. Thank you for joining us for this deep exploration."
+    # 3. Outro / Conclusion
+    winner = "AI Christian Apologist" if cumulative_score_a > cumulative_score_b else "AI Skeptic"
+    outro_text = f"As our debate draws to a close, let us review the cumulative results. AI Christian Apologist finished with {cumulative_score_a} total points, and AI Skeptic finished with {cumulative_score_b} total points. Our panel awards this showcase victory to the {winner}. Thank you for joining us for this deep exploration."
     dur_out = generate_edge_audio(outro_text, "Moderator", "outro.mp3")
     audio_files.append("outro.mp3")
-    outro_img = generate_speaker_frame("Christopher (Moderator)", "Moderator", topic, frame_counter)
+    outro_img = generate_speaker_frame("Moderator Christopher", "Moderator", topic, frame_counter)
     frame_counter += 1
     segment_images.append((outro_img, dur_out))
     add_clean_subtitle_events(outro_text, current_time, dur_out, dialogue_events)
