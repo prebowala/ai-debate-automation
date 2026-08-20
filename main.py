@@ -2,6 +2,7 @@ import os
 import asyncio
 import requests
 import subprocess
+import re
 import edge_tts
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
@@ -35,6 +36,12 @@ FALLBACK_MODELS = [
     {"name": "GPT Mini", "id": "openai/gpt-4o-mini"}
 ]
 
+def clean_for_speech(text):
+    # Removes punctuation characters like colons, semicolons, quotes that TTS reads out loud
+    cleaned = text.replace(":", " ").replace(";", " ").replace('"', '').replace('"', '').replace('"', '')
+    cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+    return cleaned
+
 def query_openrouter(prompt, primary_model_id, timeout=45):
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
@@ -56,10 +63,10 @@ def query_openrouter(prompt, primary_model_id, timeout=45):
     return "Analysis complete. Scores evaluated."
 
 async def _save_edge_audio(text, voice, filename, retries=3):
-    clean_text = text.replace('"', '').replace('&', 'and').strip()
+    speech_text = clean_for_speech(text).replace('&', 'and')
     for attempt in range(retries):
         try:
-            communicate = edge_tts.Communicate(clean_text, voice)
+            communicate = edge_tts.Communicate(speech_text, voice)
             await communicate.save(filename)
             if os.path.exists(filename) and os.path.getsize(filename) > 1000:
                 return
@@ -70,7 +77,7 @@ async def _save_edge_audio(text, voice, filename, retries=3):
 
 def generate_edge_audio(text, role_key, output_filename):
     voice = VOICES.get(role_key, VOICES["Moderator"])
-    print(f"[EDGE-TTS] Synthesizing [{role_key}] audio ({len(text.split())} words) -> {output_filename}...")
+    print(f"[EDGE-TTS] Synthesizing [{role_key}] audio -> {output_filename}...")
     try:
         asyncio.run(_save_edge_audio(text, voice, output_filename))
     except Exception as e:
@@ -111,21 +118,22 @@ def apply_spotlight_overlay(img, position="center"):
     else:
         center_x, center_y = 960, 540
         
-    radius = 650
+    radius = 700
     for r in range(radius, 0, -20):
-        alpha = int(22 * (1.0 - r / radius))
-        draw.ellipse([center_x - r, center_y - r, center_x + r, center_y + r], fill=(0, 255, 204, alpha) if position=="left" else (255, 0, 255, alpha) if position=="right" else (255, 215, 0, alpha))
+        alpha = int(30 * (1.0 - r / radius))
+        color = (0, 255, 204, alpha) if position == "left" else (255, 0, 255, alpha) if position == "right" else (255, 215, 0, alpha)
+        draw.ellipse([center_x - r, center_y - r, center_x + r, center_y + r], fill=color)
         
     overlay = overlay.filter(ImageFilter.GaussianBlur(40))
     return Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
 
-def generate_speaker_frame(speaker_name, role_key, topic, frame_index, wave_phase=1):
+def generate_speaker_frame(speaker_name, role_label, topic, frame_index, wave_phase=1):
     pos = "center"
     glow_color = "#FFD700"
-    if "AI Christian Apologist" in role_key:
+    if "Christian Apologist" in role_label:
         pos = "left"
         glow_color = "#00FFCC"
-    elif "AI Skeptic" in role_key:
+    elif "Skeptic" in role_label:
         pos = "right"
         glow_color = "#FF00FF"
 
@@ -135,8 +143,8 @@ def generate_speaker_frame(speaker_name, role_key, topic, frame_index, wave_phas
 
     try:
         font_title = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 32)
-        font_name = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 28)
-        font_role = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 20)
+        font_name = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 26)
+        font_role = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 18)
     except IOError:
         font_title = font_name = font_role = ImageFont.load_default()
 
@@ -153,18 +161,26 @@ def generate_speaker_frame(speaker_name, role_key, topic, frame_index, wave_phas
     
     draw.ellipse([card_x + 35, card_y + 55, card_x + 65, card_y + 85], fill=glow_color)
 
+    # Clean single-line text printing to avoid duplicates
     draw.text((card_x + 90, card_y + 30), speaker_name, fill="white", font=font_name)
-    draw.text((card_x + 90, card_y + 75), role_key.upper(), fill=glow_color, font=font_role)
+    draw.text((card_x + 90, card_y + 75), role_label.upper(), fill=glow_color, font=font_role)
 
-    # Draw Audio Equalizer Bars next to the card name
-    bar_start_x = card_x + 520
+    # Pulsating Sine/Cosine Equalizer Wave Simulation
+    bar_start_x = card_x + 510
     bar_base_y = card_y + 70
-    heights = [12, 24, 18, 30] if wave_phase == 1 else [22, 14, 28, 16] if wave_phase == 2 else [18, 30, 12, 22]
-    for i, h in enumerate(heights):
-        bx = bar_start_x + (i * 14)
-        draw.rounded_rectangle([bx, bar_base_y - h, bx + 8, bar_base_y + h], radius=3, fill=glow_color)
+    
+    if wave_phase == 1:
+        heights = [8, 22, 34, 18, 12]
+    elif wave_phase == 2:
+        heights = [28, 14, 8, 26, 32]
+    else:
+        heights = [16, 30, 20, 10, 24]
 
-    filename = f"speaker_{frame_index}_{role_key.replace(' ', '_').lower()}.png"
+    for i, h in enumerate(heights):
+        bx = bar_start_x + (i * 12)
+        draw.rounded_rectangle([bx, bar_base_y - h, bx + 6, bar_base_y + h], radius=2, fill=glow_color)
+
+    filename = f"speaker_{frame_index}.png"
     img.save(filename)
     return filename
 
@@ -189,10 +205,10 @@ def generate_round_breakdown_image(round_num, scores_a, scores_b, total_a, total
         draw.text(((1920 - w) // 2, y), text, fill=fill, font=font)
 
     draw_centered(40, f"ROUND {round_num} JUDGING BREAKDOWN", font_header, "#FFD700")
-    draw_centered(90, f"SCORE: AI Christian Apologist ({total_a} PTS) vs AI Skeptic ({total_b} PTS)", font_sub, "white")
+    draw_centered(90, f"SCORE: Christian Apologist ({total_a} PTS) vs Skeptic ({total_b} PTS)", font_sub, "white")
 
-    draw.text((220, 155), "AI CHRISTIAN APOLOGIST SCORES", fill="#00FFCC", font=font_col)
-    draw.text((1120, 155), "AI SKEPTIC SCORES", fill="#FF00FF", font=font_col)
+    draw.text((220, 155), "CHRISTIAN APOLOGIST SCORES", fill="#00FFCC", font=font_col)
+    draw.text((1120, 155), "SKEPTIC SCORES", fill="#FF00FF", font=font_col)
 
     col_a_judges = [(j, s) for j, s in zip(PRIMARY_JUDGES[:5], scores_a[:5])]
     col_b_judges = [(j, s) for j, s in zip(PRIMARY_JUDGES[5:], scores_b[5:])]
@@ -221,12 +237,10 @@ def add_clean_subtitle_events(text, start_time, duration, dialogue_events):
     words = text.split()
     if not words:
         return
-    
     chunk_size = 10
     chunks = [" ".join(words[i:i + chunk_size]) for i in range(0, len(words), chunk_size)]
     chunk_duration = duration / len(chunks)
     curr = start_time
-    
     for chunk in chunks:
         dialogue_events.append((curr, curr + chunk_duration, chunk))
         curr += chunk_duration
@@ -248,88 +262,94 @@ def run_debate_pipeline():
     frame_counter = 0
 
     # 1. Moderator Introduction
-    intro_text = f"Welcome everyone to today's formal showcase debate. The central question before our panel is: {topic}. Let us meet our debaters who will present their opening positions."
-    intro_dur = generate_edge_audio(intro_text, "Moderator", "intro.mp3")
+    intro_text = f"Welcome everyone to today's formal showcase debate. Our central question is: {topic}. We have an expert panel of AI judges ready to score, and two debaters who will break down both sides in clear, everyday terms."
+    dur = generate_edge_audio(intro_text, "Moderator", "intro.mp3")
     audio_files.append("intro.mp3")
-    intro_img = generate_speaker_frame("Moderator Christopher", "Moderator", topic, frame_counter, wave_phase=1)
+    img = generate_speaker_frame("Moderator Christopher", "Moderator", topic, frame_counter, wave_phase=1)
     frame_counter += 1
-    segment_images.append((intro_img, intro_dur))
-    add_clean_subtitle_events(intro_text, current_time, intro_dur, dialogue_events)
-    current_time += intro_dur
+    segment_images.append((img, dur))
+    add_clean_subtitle_events(intro_text, current_time, dur, dialogue_events)
+    current_time += dur
 
-    # 2. AI Debater Self-Introductions & Methodology
-    intro_a_text = "Greetings. I am the AI Christian Apologist. Throughout this debate, I will present reasoned arguments defending the coherence, historical reliability, and philosophical foundation of the Christian worldview."
-    dur_ia = generate_edge_audio(intro_a_text, "AI Christian Apologist", "intro_a.mp3")
+    # 2. AI Debater Introductions
+    intro_a_text = "Hello everyone. I am the Christian Apologist. In this debate, I will explain the logical and historical reasons supporting the Christian worldview using clear, everyday examples."
+    dur = generate_edge_audio(intro_a_text, "AI Christian Apologist", "intro_a.mp3")
     audio_files.append("intro_a.mp3")
-    img_ia = generate_speaker_frame("AI Christian Apologist", "AI Christian Apologist", topic, frame_counter, wave_phase=2)
+    img = generate_speaker_frame("Christian Apologist", "AI Christian Apologist", topic, frame_counter, wave_phase=2)
     frame_counter += 1
-    segment_images.append((img_ia, dur_ia))
-    add_clean_subtitle_events(intro_a_text, current_time, dur_ia, dialogue_events)
-    current_time += dur_ia
+    segment_images.append((img, dur))
+    add_clean_subtitle_events(intro_a_text, current_time, dur, dialogue_events)
+    current_time += dur
 
-    intro_b_text = "Hello. I am the AI Skeptic. My role in this debate is to critically examine every claim, demand rigorous empirical evidence, and highlight logical contradictions in the apologist position."
-    dur_ib = generate_edge_audio(intro_b_text, "AI Skeptic", "intro_b.mp3")
+    intro_b_text = "Hi. I am the Skeptic. My goal is to look closely at every claim, ask tough questions, and check if the evidence truly adds up for everyday people."
+    dur = generate_edge_audio(intro_b_text, "AI Skeptic", "intro_b.mp3")
     audio_files.append("intro_b.mp3")
-    img_ib = generate_speaker_frame("AI Skeptic", "AI Skeptic", topic, frame_counter, wave_phase=3)
+    img = generate_speaker_frame("Skeptic", "AI Skeptic", topic, frame_counter, wave_phase=3)
     frame_counter += 1
-    segment_images.append((img_ib, dur_ib))
-    add_clean_subtitle_events(intro_b_text, current_time, dur_ib, dialogue_events)
-    current_time += dur_ib
+    segment_images.append((img, dur))
+    add_clean_subtitle_events(intro_b_text, current_time, dur, dialogue_events)
+    current_time += dur
 
-    # 3. AI Judge Introductions (GPT & Claude Sonnet)
-    judge1_intro = "Hello, I am GPT, serving on the judging panel. I will be evaluating each round based on logical structure, clarity, and overall strength of argument."
-    dur_j1 = generate_edge_audio(judge1_intro, "GPT", "judge1_intro.mp3")
-    audio_files.append("judge1_intro.mp3")
-    img_j1 = generate_speaker_frame("GPT", "AI Judge - OpenAI", topic, frame_counter, wave_phase=1)
+    # 3. AI Judge Introductions
+    judge1_text = "I am GPT, serving on the judging panel. I will be looking closely at how clear, structured, and reasonable each argument is."
+    dur = generate_edge_audio(judge1_text, "GPT", "judge1.mp3")
+    audio_files.append("judge1.mp3")
+    img = generate_speaker_frame("GPT", "AI Judge - OpenAI", topic, frame_counter, wave_phase=1)
     frame_counter += 1
-    segment_images.append((img_j1, dur_j1))
-    add_clean_subtitle_events(judge1_intro, current_time, dur_j1, dialogue_events)
-    current_time += dur_j1
+    segment_images.append((img, dur))
+    add_clean_subtitle_events(judge1_text, current_time, dur, dialogue_events)
+    current_time += dur
 
-    judge2_intro = "And I am Claude Sonnet, also on the judging panel. I will be closely analyzing the factual support, nuance, and persuasiveness of both debaters."
-    dur_j2 = generate_edge_audio(judge2_intro, "Claude Sonnet", "judge2_intro.mp3")
-    audio_files.append("judge2_intro.mp3")
-    img_j2 = generate_speaker_frame("Claude Sonnet", "AI Judge - Anthropic", topic, frame_counter, wave_phase=2)
+    judge2_text = "And I am Claude Sonnet, also on the panel. I will evaluate the strength of the evidence and how well each debater defends their position."
+    dur = generate_edge_audio(judge2_text, "Claude Sonnet", "judge2.mp3")
+    audio_files.append("judge2.mp3")
+    img = generate_speaker_frame("Claude Sonnet", "AI Judge - Anthropic", topic, frame_counter, wave_phase=2)
     frame_counter += 1
-    segment_images.append((img_j2, dur_j2))
-    add_clean_subtitle_events(judge2_intro, current_time, dur_j2, dialogue_events)
-    current_time += dur_j2
+    segment_images.append((img, dur))
+    add_clean_subtitle_events(judge2_text, current_time, dur, dialogue_events)
+    current_time += dur
 
     cumulative_score_a = 0
     cumulative_score_b = 0
 
-    round_representative_judges = [
-        PRIMARY_JUDGES[1], # Round 1: Claude Sonnet
-        PRIMARY_JUDGES[2], # Round 2: Gemini
-        PRIMARY_JUDGES[3]  # Round 3: DeepSeek
-    ]
+    round_representative_judges = [PRIMARY_JUDGES[1], PRIMARY_JUDGES[2], PRIMARY_JUDGES[3]]
 
     for round_num in range(1, 4):
         print(f"\n--- Round {round_num} of 3 ---")
         
-        # AI Christian Apologist Speech
-        prompt_a = f"Topic: {topic}\nRound {round_num}: Present a thorough pro-apologetic argument with deep reasoning. Write approximately 150 words."
+        # Narrator Round Intro
+        narrator_intro = f"We are now moving into Round {round_num}. The Christian Apologist will present their core case first, followed directly by the Skeptic's response."
+        dur = generate_edge_audio(narrator_intro, "Moderator", f"r{round_num}_intro.mp3")
+        audio_files.append(f"r{round_num}_intro.mp3")
+        img = generate_speaker_frame("Moderator Christopher", "Moderator", topic, frame_counter, wave_phase=1)
+        frame_counter += 1
+        segment_images.append((img, dur))
+        add_clean_subtitle_events(narrator_intro, current_time, dur, dialogue_events)
+        current_time += dur
+
+        # Apologist Speech (Simplified everyday language)
+        prompt_a = f"Topic: {topic}\nRound {round_num}: Present a pro-apologetic argument using simple, everyday language that anyone can understand without overly complex jargon. Write about 130 words."
         text_a = query_openrouter(prompt_a, primary_model_id="openai/gpt-5.6").replace(",", " -")
-        dur_a = generate_edge_audio(text_a, "AI Christian Apologist", f"round_{round_num}_a.mp3")
+        dur = generate_edge_audio(text_a, "AI Christian Apologist", f"round_{round_num}_a.mp3")
         audio_files.append(f"round_{round_num}_a.mp3")
-        img_a = generate_speaker_frame("AI Christian Apologist", "AI Christian Apologist", topic, frame_counter, wave_phase=1)
+        img = generate_speaker_frame("Christian Apologist", "AI Christian Apologist", topic, frame_counter, wave_phase=2)
         frame_counter += 1
-        segment_images.append((img_a, dur_a))
-        add_clean_subtitle_events(text_a, current_time, dur_a, dialogue_events)
-        current_time += dur_a
+        segment_images.append((img, dur))
+        add_clean_subtitle_events(text_a, current_time, dur, dialogue_events)
+        current_time += dur
 
-        # AI Skeptic Speech
-        prompt_b = f"Topic: {topic}\nRound {round_num}: Provide a thorough counter-argument from a Skeptical perspective directly challenging the apologist position. Write approximately 150 words."
+        # Skeptic Speech (Simplified everyday language)
+        prompt_b = f"Topic: {topic}\nRound {round_num}: Provide a counter-argument from a Skeptical perspective challenging the apologist position using simple, everyday language. Write about 130 words."
         text_b = query_openrouter(prompt_b, primary_model_id="anthropic/claude-3.5-sonnet").replace(",", " -")
-        dur_b = generate_edge_audio(text_b, "AI Skeptic", f"round_{round_num}_b.mp3")
+        dur = generate_edge_audio(text_b, "AI Skeptic", f"round_{round_num}_b.mp3")
         audio_files.append(f"round_{round_num}_b.mp3")
-        img_b = generate_speaker_frame("AI Skeptic", "AI Skeptic", topic, frame_counter, wave_phase=2)
+        img = generate_speaker_frame("Skeptic", "AI Skeptic", topic, frame_counter, wave_phase=3)
         frame_counter += 1
-        segment_images.append((img_b, dur_b))
-        add_clean_subtitle_events(text_b, current_time, dur_b, dialogue_events)
-        current_time += dur_b
+        segment_images.append((img, dur))
+        add_clean_subtitle_events(text_b, current_time, dur, dialogue_events)
+        current_time += dur
 
-        # Judging scores calculation (Executed strictly after both speeches finish)
+        # Strict End-of-Round Judging
         scores_a, scores_b = [], []
         for judge in PRIMARY_JUDGES:
             resp = query_openrouter(f"Score Round {round_num} on '{topic}'. Format: 'A: [score], B: [score]'", primary_model_id=judge["id"], timeout=15)
@@ -348,31 +368,31 @@ def run_debate_pipeline():
         cumulative_score_b += round_total_b
 
         rep_judge = round_representative_judges[round_num - 1]
-        judge_commentary_prompt = f"Topic: {topic}. In Round {round_num}, AI Christian Apologist scored {round_total_a} and AI Skeptic scored {round_total_b}. In 2 sentences, explain as {rep_judge['name']} why one side's reasoning was more compelling in this round."
+        judge_commentary_prompt = f"Topic: {topic}. In Round {round_num}, Christian Apologist scored {round_total_a} and Skeptic scored {round_total_b}. In 2 simple sentences, explain as {rep_judge['name']} why one side's reasoning stood out."
         judge_commentary = query_openrouter(judge_commentary_prompt, primary_model_id=rep_judge["id"]).replace(",", " -")
 
         breakdown_img = generate_round_breakdown_image(round_num, scores_a, scores_b, round_total_a, round_total_b)
-        summary_text = f"Round {round_num} has concluded. {rep_judge['name']} notes: {judge_commentary} AI Christian Apologist earned {round_total_a} points, while AI Skeptic earned {round_total_b} points."
-        dur_sum = generate_edge_audio(summary_text, "Moderator", f"round_{round_num}_sum.mp3")
+        summary_text = f"Round {round_num} is now complete. {rep_judge['name']} notes: {judge_commentary} Christian Apologist earned {round_total_a} points, and Skeptic earned {round_total_b} points."
+        dur = generate_edge_audio(summary_text, "Moderator", f"round_{round_num}_sum.mp3")
         audio_files.append(f"round_{round_num}_sum.mp3")
-        segment_images.append((breakdown_img, dur_sum))
-        add_clean_subtitle_events(summary_text, current_time, dur_sum, dialogue_events)
-        current_time += dur_sum
+        segment_images.append((breakdown_img, dur))
+        add_clean_subtitle_events(summary_text, current_time, dur, dialogue_events)
+        current_time += dur
 
-    # 4. Outro / Conclusion
-    winner = "AI Christian Apologist" if cumulative_score_a > cumulative_score_b else "AI Skeptic"
-    outro_text = f"As our debate draws to a close, let us review the cumulative results. AI Christian Apologist finished with {cumulative_score_a} total points, and AI Skeptic finished with {cumulative_score_b} total points. Our panel awards this showcase victory to the {winner}. Thank you for joining us for this deep exploration."
-    dur_out = generate_edge_audio(outro_text, "Moderator", "outro.mp3")
+    # 4. Outro
+    winner = "Christian Apologist" if cumulative_score_a > cumulative_score_b else "Skeptic"
+    outro_text = f"As our debate concludes, let us review the final scores. Christian Apologist finished with {cumulative_score_a} total points, and Skeptic finished with {cumulative_score_b} points. Our panel awards this showcase victory to the {winner}. Thank you for watching."
+    dur = generate_edge_audio(outro_text, "Moderator", "outro.mp3")
     audio_files.append("outro.mp3")
-    outro_img = generate_speaker_frame("Moderator Christopher", "Moderator", topic, frame_counter, wave_phase=1)
+    img = generate_speaker_frame("Moderator Christopher", "Moderator", topic, frame_counter, wave_phase=1)
     frame_counter += 1
-    segment_images.append((outro_img, dur_out))
-    add_clean_subtitle_events(outro_text, current_time, dur_out, dialogue_events)
-    current_time += dur_out
+    segment_images.append((img, dur))
+    add_clean_subtitle_events(outro_text, current_time, dur, dialogue_events)
+    current_time += dur
 
-    print("\n[SUBTITLES] Generating synchronized continuous subtitles...")
+    print("\n[SUBTITLES] Building subtitle configuration...")
     ass_content = """[Script Info]
-Title: AI Debate Clean Subtitles
+Title: AI Debate Subtitles
 ScriptType: v4.00+
 PlayResX: 1920
 PlayResY: 1080
@@ -401,7 +421,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         if segment_images:
             f.write(f"file '{segment_images[-1][0]}'\n")
 
-    print("\n[FFmpeg] Assembling final video package with stable visual tracks...")
+    print("\n[FFmpeg] Rendering final video package...")
     ffmpeg_cmd = [
         "ffmpeg",
         "-f", "concat", "-safe", "0", "-i", "video_list.txt",
@@ -414,7 +434,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         "final_debate_output.mp4"
     ]
     subprocess.run(ffmpeg_cmd, check=True)
-    print("[SUCCESS] final_debate_output.mp4 successfully created with judge introductions included!")
+    print("[SUCCESS] final_debate_output.mp4 successfully created!")
 
 if __name__ == "__main__":
     run_debate_pipeline()
