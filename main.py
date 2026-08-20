@@ -8,10 +8,11 @@ from PIL import Image, ImageDraw, ImageFont, ImageFilter
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY")
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
+# Distinct voice profiles for clear differentiation
 VOICES = {
-    "Narrator": "en-US-ChristopherNeural",
-    "DebaterA": "en-US-AriaNeural",
-    "DebaterB": "en-US-RyanNeural"
+    "Moderator": "en-US-ChristopherNeural",       # Authoritative deep male voice
+    "Christian Apologist": "en-US-BrianNeural",   # Distinct steady male voice
+    "Skeptic": "en-US-AriaNeural"                 # Distinct expressive female voice
 }
 
 PRIMARY_JUDGES = [
@@ -51,11 +52,10 @@ def query_openrouter(prompt, primary_model, timeout=45):
                 return response.json()["choices"][0]["message"]["content"].strip()
         except Exception:
             continue
-    return "A: 75, B: 75"
+    return "Analysis complete. Scores evaluated."
 
 async def _save_edge_audio(text, voice, filename, retries=3):
     clean_text = text.replace('"', '').replace('&', 'and').strip()
-    
     for attempt in range(retries):
         try:
             communicate = edge_tts.Communicate(clean_text, voice)
@@ -65,17 +65,15 @@ async def _save_edge_audio(text, voice, filename, retries=3):
         except Exception as e:
             print(f"[WARNING] Edge-TTS attempt {attempt + 1} failed for voice {voice}: {e}")
             await asyncio.sleep(2)
-            
     raise Exception(f"Failed to generate Edge-TTS audio for voice {voice} after {retries} attempts.")
 
 def generate_edge_audio(text, role_key, output_filename):
-    voice = VOICES.get(role_key, VOICES["Narrator"])
+    voice = VOICES.get(role_key, VOICES["Moderator"])
     print(f"[EDGE-TTS] Synthesizing [{role_key}] audio ({len(text.split())} words) -> {output_filename}...")
-    
     try:
         asyncio.run(_save_edge_audio(text, voice, output_filename))
     except Exception as e:
-        print(f"[ERROR] {e}. Falling back to default narrator voice...")
+        print(f"[ERROR] {e}. Falling back to default moderator voice...")
         asyncio.run(_save_edge_audio(text, "en-US-ChristopherNeural", output_filename))
 
     cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", output_filename]
@@ -101,81 +99,82 @@ def get_base_background():
             pass
     return Image.new("RGB", (1920, 1080), (15, 20, 40))
 
-def apply_active_lighting_overlay(img, glow_color_hex):
+def apply_spotlight_overlay(img, position="center"):
     overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay)
     
-    center_x, center_y = 960, 340
-    radius = 450
-    
-    hex_clean = glow_color_hex.lstrip('#')
-    rgb_color = tuple(int(hex_clean[i:i+2], 16) for i in (0, 2, 4))
-    
-    for r in range(radius, 0, -15):
-        alpha = int(18 * (1.0 - r / radius))
-        draw.ellipse([center_x - r, center_y - r, center_x + r, center_y + r], fill=(rgb_color[0], rgb_color[1], rgb_color[2], alpha))
+    if position == "left":
+        center_x, center_y = 520, 540
+    elif position == "right":
+        center_x, center_y = 1400, 540
+    else:
+        center_x, center_y = 960, 540
         
-    overlay = overlay.filter(ImageFilter.GaussianBlur(30))
-    base_rgba = img.convert("RGBA")
-    return Image.alpha_composite(base_rgba, overlay).convert("RGB")
+    radius = 650
+    for r in range(radius, 0, -20):
+        alpha = int(22 * (1.0 - r / radius))
+        draw.ellipse([center_x - r, center_y - r, center_x + r, center_y + r], fill=(0, 255, 204, alpha) if position=="left" else (255, 0, 255, alpha) if position=="right" else (255, 215, 0, alpha))
+        
+    overlay = overlay.filter(ImageFilter.GaussianBlur(40))
+    return Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
 
-def generate_speaker_frame(speaker_name, speaker_role, topic):
+def generate_speaker_frame(speaker_name, role_key, topic):
+    pos = "center"
+    glow_color = "#00FFCC"
+    if "Christian Apologist" in role_key:
+        pos = "left"
+        glow_color = "#00FFCC"
+    elif "Skeptic" in role_key:
+        pos = "right"
+        glow_color = "#FF00FF"
+
     img = get_base_background()
-
-    border_color = "#00FFCC"
-    badge_fill = "#00FFCC"
-    glow_color = "#005555"
-    
-    if "Debater A" in speaker_role:
-        border_color = "#FFFF00"
-        badge_fill = "#FFFF00"
-        glow_color = "#555500"
-    elif "Debater B" in speaker_role:
-        border_color = "#FF00FF"
-        badge_fill = "#FF00FF"
-        glow_color = "#550055"
-
-    img = apply_active_lighting_overlay(img, glow_color)
+    img = apply_spotlight_overlay(img, pos)
     draw = ImageDraw.Draw(img)
 
     try:
-        font_title = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 34)
-        font_badge = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 28)
-        font_sub = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 20)
+        font_title = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 32)
+        font_name = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 28)
+        font_role = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 20)
     except IOError:
-        font_title = font_badge = font_sub = ImageFont.load_default()
+        font_title = font_name = font_role = ImageFont.load_default()
 
     def draw_centered(y, text, font, fill):
         bbox = draw.textbbox((0, 0), text, font=font)
         w = bbox[2] - bbox[0]
         draw.text(((1920 - w) // 2, y), text, fill=fill, font=font)
 
-    draw_centered(40, "AI FRONTIER SHOWCASE DEBATE", font_title, "white")
-    draw_centered(95, f"Topic: {topic}", font_sub, "#00FFCC")
+    draw_centered(40, f"TOPIC: {topic}", font_title, "white")
 
-    draw.rounded_rectangle([460, 260, 1460, 420], radius=16, fill=(15, 22, 36), outline=border_color, width=3)
-    draw.ellipse([510, 305, 590, 385], fill=badge_fill)
-    draw.text((535, 325), speaker_name[0], fill="black", font=font_badge)
+    card_x = 200 if pos == "left" else 1080 if pos == "right" else 560
+    card_y = 750
+    draw.rounded_rectangle([card_x, card_y, card_x + 640, card_y + 140], radius=16, fill=(15, 22, 36), outline=glow_color, width=3)
     
-    draw.text((630, 312), f"ACTIVE SPEAKER: {speaker_role.upper()}", fill="white", font=font_badge)
-    draw.text((630, 355), f"Model / Persona: {speaker_name}", fill="#8A99AD", font=font_sub)
+    bar_startX = card_x + 30
+    bar_baseY = card_y + 70
+    bar_heights = [20, 35, 15, 40, 25, 30]
+    for i, bh in enumerate(bar_heights):
+        draw.rectangle([bar_startX + (i * 8), bar_baseY - bh//2, bar_startX + (i * 8) + 5, bar_baseY + bh//2], fill=glow_color)
 
-    filename = f"speaker_{speaker_role.replace(' ', '_').lower()}.png"
+    draw.text((card_x + 90, card_y + 30), speaker_name, fill="white", font=font_name)
+    draw.text((card_x + 90, card_y + 75), role_key.upper(), fill=glow_color, font=font_role)
+
+    filename = f"speaker_{role_key.replace(' ', '_').lower()}.png"
     img.save(filename)
     return filename
 
 def generate_round_breakdown_image(round_num, scores_a, scores_b, total_a, total_b):
     img = get_base_background()
-    img = apply_active_lighting_overlay(img, "#443300")
+    img = apply_spotlight_overlay(img, "center")
     draw = ImageDraw.Draw(img)
 
     try:
         font_header = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 36)
         font_sub = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 22)
         font_col = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 18)
-        font_model = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 20)
+        font_model = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 18)
         font_meta = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 14)
-        font_score = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 22)
+        font_score = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 20)
     except IOError:
         font_header = font_sub = font_col = font_model = font_meta = font_score = ImageFont.load_default()
 
@@ -185,10 +184,10 @@ def generate_round_breakdown_image(round_num, scores_a, scores_b, total_a, total
         draw.text(((1920 - w) // 2, y), text, fill=fill, font=font)
 
     draw_centered(40, f"ROUND {round_num} JUDGING BREAKDOWN", font_header, "#FFD700")
-    draw_centered(90, f"TOTAL: Debater A ({total_a} PTS) vs Debater B ({total_b} PTS)", font_sub, "white")
+    draw_centered(90, f"SCORE: Christian Apologist ({total_a} PTS) vs Skeptic ({total_b} PTS)", font_sub, "white")
 
-    draw.text((220, 155), "FAVORING DEBATER A", fill="#00FFCC", font=font_col)
-    draw.text((1120, 155), "FAVORING DEBATER B", fill="#FF00FF", font=font_col)
+    draw.text((220, 155), "CHRISTIAN APOLOGIST SCORES", fill="#00FFCC", font=font_col)
+    draw.text((1120, 155), "SKEPTIC SCORES", fill="#FF00FF", font=font_col)
 
     col_a_judges = [(j, s) for j, s in zip(PRIMARY_JUDGES[:5], scores_a[:5])]
     col_b_judges = [(j, s) for j, s in zip(PRIMARY_JUDGES[5:], scores_b[5:])]
@@ -196,20 +195,16 @@ def generate_round_breakdown_image(round_num, scores_a, scores_b, total_a, total
     y_start = 195
     for (judge, score) in col_a_judges:
         draw.rounded_rectangle([200, y_start, 920, y_start + 70], radius=8, fill=(15, 22, 36), outline=(50, 70, 100), width=2)
-        draw.ellipse([220, y_start + 15, 260, y_start + 55], fill="#00FFCC")
-        draw.text((232, y_start + 25), "AI", fill="black", font=font_meta)
-        draw.text((280, y_start + 15), judge["name"], fill="white", font=font_model)
-        draw.text((280, y_start + 38), judge["provider"], fill="#8A99AD", font=font_meta)
+        draw.text((230, y_start + 14), judge["name"], fill="white", font=font_model)
+        draw.text((230, y_start + 38), judge["provider"], fill="#8A99AD", font=font_meta)
         draw.text((830, y_start + 22), f"{score} pts", fill="#00FFCC", font=font_score)
         y_start += 82
 
     y_start = 195
     for (judge, score) in col_b_judges:
         draw.rounded_rectangle([1100, y_start, 1820, y_start + 70], radius=8, fill=(15, 22, 36), outline=(50, 70, 100), width=2)
-        draw.ellipse([1120, y_start + 15, 1160, y_start + 55], fill="#FF00FF")
-        draw.text((1132, y_start + 25), "AI", fill="black", font=font_meta)
-        draw.text((1180, y_start + 15), judge["name"], fill="white", font=font_model)
-        draw.text((1180, y_start + 38), judge["provider"], fill="#8A99AD", font=font_meta)
+        draw.text((1130, y_start + 14), judge["name"], fill="white", font=font_model)
+        draw.text((1130, y_start + 38), judge["provider"], fill="#8A99AD", font=font_meta)
         draw.text((1730, y_start + 22), f"{score} pts", fill="#FF00FF", font=font_score)
         y_start += 82
 
@@ -217,21 +212,18 @@ def generate_round_breakdown_image(round_num, scores_a, scores_b, total_a, total
     img.save(filename)
     return filename
 
-def add_chunked_dialogue_events(text, start_time, duration, dialogue_events):
+def add_clean_subtitle_events(text, start_time, duration, dialogue_events):
     words = text.split()
     if not words:
         return
     
-    chunk_size = 7
+    chunk_size = 12
     chunks = [" ".join(words[i:i + chunk_size]) for i in range(0, len(words), chunk_size)]
     chunk_duration = duration / len(chunks)
     curr = start_time
     
     for chunk in chunks:
-        c_words = chunk.split()
-        word_dur_cs = int((chunk_duration / len(c_words)) * 100) if c_words else 50
-        formatted_chunk = "".join([f"{w} {{\\k{word_dur_cs}}}" for w in c_words])
-        dialogue_events.append((curr, curr + chunk_duration, formatted_chunk))
+        dialogue_events.append((curr, curr + chunk_duration, chunk))
         curr += chunk_duration
 
 def run_debate_pipeline():
@@ -249,38 +241,66 @@ def run_debate_pipeline():
     dialogue_events = []
     current_time = 0.0
 
-    intro_text = f"Welcome to the AI Frontier Showcase. Today's central question: {topic}. Across three rigorous rounds, our ten-model independent panel will analyze every argument in depth. Let the debate begin."
-    intro_dur = generate_edge_audio(intro_text, "Narrator", "intro.mp3")
+    # 1. Gradual Introduction by Moderator
+    intro_text = f"Welcome everyone to today's formal showcase debate. The central question before our panel is: {topic}. Let us meet our debaters who will present their opening positions."
+    intro_dur = generate_edge_audio(intro_text, "Moderator", "intro.mp3")
     audio_files.append("intro.mp3")
-    intro_img = generate_speaker_frame("Christopher (Narrator)", "Narrator", topic)
+    intro_img = generate_speaker_frame("Christopher (Moderator)", "Moderator", topic)
     segment_images.append((intro_img, intro_dur))
-    add_chunked_dialogue_events(intro_text, current_time, intro_dur, dialogue_events)
+    add_clean_subtitle_events(intro_text, current_time, intro_dur, dialogue_events)
     current_time += intro_dur
+
+    # 2. Short self-introductions from the two AI models
+    intro_a_text = "Greetings. I am Brian, representing the Christian Apologist perspective. I will build a rigorous case defending the truth and coherence of this worldview."
+    dur_ia = generate_edge_audio(intro_a_text, "Christian Apologist", "intro_a.mp3")
+    audio_files.append("intro_a.mp3")
+    img_ia = generate_speaker_frame("Brian (Apologist AI)", "Christian Apologist", topic)
+    segment_images.append((img_ia, dur_ia))
+    add_clean_subtitle_events(intro_a_text, current_time, dur_ia, dialogue_events)
+    current_time += dur_ia
+
+    intro_b_text = "Hello. I am Aria, representing the Skeptic viewpoint. I will critically examine every claim, demanding rigorous empirical evidence and logical consistency."
+    dur_ib = generate_edge_audio(intro_b_text, "Skeptic", "intro_b.mp3")
+    audio_files.append("intro_b.mp3")
+    img_ib = generate_speaker_frame("Aria (Skeptic AI)", "Skeptic", topic)
+    segment_images.append((img_ib, dur_ib))
+    add_clean_subtitle_events(intro_b_text, current_time, dur_ib, dialogue_events)
+    current_time += dur_ib
 
     cumulative_score_a = 0
     cumulative_score_b = 0
 
+    # Different representative judge assigned for each round
+    round_representative_judges = [
+        PRIMARY_JUDGES[1], # Round 1: Claude 3.5 Sonnet
+        PRIMARY_JUDGES[2], # Round 2: Gemini Pro Latest
+        PRIMARY_JUDGES[3]  # Round 3: DeepSeek Chat
+    ]
+
     for round_num in range(1, 4):
-        print(f"\n--- Round {round_num} of 3 (Extended) ---")
+        print(f"\n--- Round {round_num} of 3 ---")
         
-        prompt_a = f"Topic: {topic}\nRound {round_num}: Provide a thorough pro argument for Debater A with deep reasoning, evidence, and structure. Write approximately 180 words."
+        # Christian Apologist Speech
+        prompt_a = f"Topic: {topic}\nRound {round_num}: Present a thorough pro-apologetic argument with deep reasoning. Write approximately 150 words."
         text_a = query_openrouter(prompt_a, primary_model="openai/gpt-5.6").replace(",", " -")
-        dur_a = generate_edge_audio(text_a, "DebaterA", f"round_{round_num}_a.mp3")
+        dur_a = generate_edge_audio(text_a, "Christian Apologist", f"round_{round_num}_a.mp3")
         audio_files.append(f"round_{round_num}_a.mp3")
-        img_a = generate_speaker_frame("GPT-5.6 (Pro Team)", f"Debater A (Round {round_num})", topic)
+        img_a = generate_speaker_frame("Brian (Apologist AI)", "Christian Apologist", topic)
         segment_images.append((img_a, dur_a))
-        add_chunked_dialogue_events(text_a, current_time, dur_a, dialogue_events)
+        add_clean_subtitle_events(text_a, current_time, dur_a, dialogue_events)
         current_time += dur_a
 
-        prompt_b = f"Topic: {topic}\nRound {round_num}: Provide a thorough con argument for Debater B directly countering Debater A with deep reasoning. Write approximately 180 words."
+        # Skeptic Speech
+        prompt_b = f"Topic: {topic}\nRound {round_num}: Provide a thorough counter-argument from a Skeptical perspective directly challenging the apologist position. Write approximately 150 words."
         text_b = query_openrouter(prompt_b, primary_model="anthropic/claude-3.5-sonnet").replace(",", " -")
-        dur_b = generate_edge_audio(text_b, "DebaterB", f"round_{round_num}_b.mp3")
+        dur_b = generate_edge_audio(text_b, "Skeptic", f"round_{round_num}_b.mp3")
         audio_files.append(f"round_{round_num}_b.mp3")
-        img_b = generate_speaker_frame("Claude 3.5 Sonnet (Con Team)", f"Debater B (Round {round_num})", topic)
+        img_b = generate_speaker_frame("Aria (Skeptic AI)", "Skeptic", topic)
         segment_images.append((img_b, dur_b))
-        add_chunked_dialogue_events(text_b, current_time, dur_b, dialogue_events)
+        add_clean_subtitle_events(text_b, current_time, dur_b, dialogue_events)
         current_time += dur_b
 
+        # Judging scores calculation
         scores_a, scores_b = [], []
         for judge in PRIMARY_JUDGES:
             resp = query_openrouter(f"Score Round {round_num} on '{topic}'. Format: 'A: [score], B: [score]'", primary_model=judge["id"], timeout=15)
@@ -298,39 +318,45 @@ def run_debate_pipeline():
         cumulative_score_a += round_total_a
         cumulative_score_b += round_total_b
 
+        # Pick this round's unique representative judge
+        rep_judge = round_representative_judges[round_num - 1]
+        judge_commentary_prompt = f"Topic: {topic}. In Round {round_num}, Christian Apologist scored {round_total_a} and Skeptic scored {round_total_b}. In 2 sentences, explain as {rep_judge['name']} why one side's reasoning was more compelling in this round."
+        judge_commentary = query_openrouter(judge_commentary_prompt, primary_model=rep_judge["id"]).replace(",", " -")
+
         breakdown_img = generate_round_breakdown_image(round_num, scores_a, scores_b, round_total_a, round_total_b)
-        summary_text = f"Round {round_num} concluded. Our ten AI judges evaluated both positions. Debater A scored {round_total_a} points, and Debater B scored {round_total_b} points."
-        dur_sum = generate_edge_audio(summary_text, "Narrator", f"round_{round_num}_sum.mp3")
+        summary_text = f"Round {round_num} has concluded. {rep_judge['name']} notes: {judge_commentary} Christian Apologist earned {round_total_a} points, while Skeptic earned {round_total_b} points."
+        dur_sum = generate_edge_audio(summary_text, "Moderator", f"round_{round_num}_sum.mp3")
         audio_files.append(f"round_{round_num}_sum.mp3")
         segment_images.append((breakdown_img, dur_sum))
-        add_chunked_dialogue_events(summary_text, current_time, dur_sum, dialogue_events)
+        add_clean_subtitle_events(summary_text, current_time, dur_sum, dialogue_events)
         current_time += dur_sum
 
-    winner = "Debater A" if cumulative_score_a > cumulative_score_b else "Debater B"
-    outro_text = f"The debate has concluded. Final cumulative scores: Debater A earned {cumulative_score_a} points, and Debater B earned {cumulative_score_b} points. The winner of this showcase is {winner}. Thank you for watching."
-    dur_out = generate_edge_audio(outro_text, "Narrator", "outro.mp3")
+    # 3. Gradual Outro / Conclusion
+    winner = "Christian Apologist" if cumulative_score_a > cumulative_score_b else "Skeptic"
+    outro_text = f"As our debate draws to a close, let us review the cumulative results. Christian Apologist finished with {cumulative_score_a} total points, and Skeptic finished with {cumulative_score_b} total points. Our panel awards this showcase victory to the {winner}. Thank you for joining us for this deep exploration."
+    dur_out = generate_edge_audio(outro_text, "Moderator", "outro.mp3")
     audio_files.append("outro.mp3")
-    outro_img = generate_speaker_frame("Christopher (Narrator)", "Outro", topic)
+    outro_img = generate_speaker_frame("Christopher (Moderator)", "Moderator", topic)
     segment_images.append((outro_img, dur_out))
-    add_chunked_dialogue_events(outro_text, current_time, dur_out, dialogue_events)
+    add_clean_subtitle_events(outro_text, current_time, dur_out, dialogue_events)
     current_time += dur_out
 
-    print("\n[SUBTITLES] Generating chunked word-flow subtitles...")
+    print("\n[SUBTITLES] Generating clean middle-screen subtitles...")
     ass_content = """[Script Info]
-Title: AI Debate Word-Flow Subtitles
+Title: AI Debate Clean Subtitles
 ScriptType: v4.00+
 PlayResX: 1920
 PlayResY: 1080
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: WordFlow,DejaVuSans-Bold,36,&H0000FFFF,&H000000FF,&HFF000000,&H80000000,1,0,0,0,100,100,0,0,1,3,1,2,100,100,100,1
+Style: CleanSub,DejaVuSans-Bold,42,&H00FFFFFF,&H000000FF,&HFF000000,&H80000000,1,0,0,0,100,100,0,0,1,4,2,5,100,100,0,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
     for start, end, text in dialogue_events:
-        ass_content += f"Dialogue: 0,{format_ass_time(start)},{format_ass_time(end)},WordFlow,,0,0,0,,{text}\n"
+        ass_content += f"Dialogue: 0,{format_ass_time(start)},{format_ass_time(end)},CleanSub,,0,0,0,,{text}\n"
 
     with open("subtitles.ass", "w", encoding="utf-8") as f:
         f.write(ass_content)
@@ -344,14 +370,14 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             f.write(f"file '{img_path}'\n")
             f.write(f"duration {dur}\n")
         if segment_images:
-            f.write(f"file '{segment_images[-1][0] }'\n")
+            f.write(f"file '{segment_images[-1][0]}'\n")
 
-    print("\n[FFmpeg] Assembling final video package with cinematic zoom & subtitles...")
+    print("\n[FFmpeg] Assembling final video package...")
     ffmpeg_cmd = [
         "ffmpeg",
         "-f", "concat", "-safe", "0", "-i", "video_list.txt",
         "-f", "concat", "-safe", "0", "-i", "audio_list.txt",
-        "-filter_complex", "[0:v]zoompan=z='min(zoom+0.0015,1.15)':d=125:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1920x1080,subtitles=subtitles.ass[v]",
+        "-filter_complex", "[0:v]zoompan=z='min(zoom+0.0012,1.1)':d=125:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1920x1080,subtitles=subtitles.ass[v]",
         "-map", "[v]",
         "-map", "1:a",
         "-c:v", "libx264",
