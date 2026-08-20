@@ -15,7 +15,7 @@ OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY")
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 VOICES = {
-    "Moderator": "en-US-ChristopherNeural",
+    "Moderator": "en-US-GuyNeural", 
     "AI Christian Apologist": "en-US-BrianMultilingualNeural",
     "AI Skeptic": "en-US-AvaMultilingualNeural",
     "Panelist 1": "en-US-AndrewMultilingualNeural",
@@ -87,7 +87,6 @@ PANEL_JUDGES = [
 
 def cleanup_cache():
     print("🧹 Cleaning up old cache files...")
-    # Protected background.png from deletion
     for ext in ['*.mp4', '*.mp3', '*.ass', '*.png', '*_list.txt']:
         for file in glob.glob(ext):
             if file not in ['final_debate_output.mp4', 'background.png']:
@@ -116,30 +115,75 @@ def query_openrouter(prompt, primary_model_id, timeout=45):
     except Exception: pass
     return "The evidence leads us to a fascinating conclusion."
 
-async def _save_edge_audio(text, voice, filename):
-    communicate = edge_tts.Communicate(clean_for_speech(text).replace('&', 'and'), voice)
-    await communicate.save(filename)
-
-def generate_edge_audio(text, role_key, output_filename):
-    voice = VOICES.get(role_key, VOICES["Moderator"])
-    try: asyncio.run(_save_edge_audio(text, voice, output_filename))
-    except Exception: asyncio.run(_save_edge_audio(text, "en-US-ChristopherNeural", output_filename))
-    result = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", output_filename], stdout=subprocess.PIPE, text=True)
-    return float(result.stdout.strip())
+async def _generate_audio_and_words(text, voice, audio_filename):
+    communicate = edge_tts.Communicate(text, voice)
+    audio_data = b""
+    words = []
+    async for chunk in communicate.stream():
+        if chunk["type"] == "audio":
+            audio_data += chunk["data"]
+        elif chunk["type"] == "WordBoundary":
+            words.append({
+                "text": chunk["text"],
+                "start": chunk["offset"] / 10_000_000,
+                "duration": chunk["duration"] / 10_000_000,
+                "end": (chunk["offset"] + chunk["duration"]) / 10_000_000
+            })
+    with open(audio_filename, "wb") as f:
+        f.write(audio_data)
+    return words
 
 def format_ass_time(seconds):
-    hours, remainder = divmod(seconds, 3600)
-    minutes, secs = divmod(remainder, 60)
-    return f"{int(hours)}:{int(minutes):02d}:{int(secs):02d}.{int((seconds - int(seconds)) * 100):02d}"
+    hours = int(seconds // 3600)
+    minutes = int((seconds % 3600) // 60)
+    secs = seconds % 60
+    return f"{hours}:{minutes:02d}:{secs:05.2f}"
 
-def generate_segment_ass(text, duration, filename):
-    words = clean_for_speech(text).split()
-    chunks = [" ".join(words[i:i + 5]) for i in range(0, len(words), 5)]
-    ass_content = "[Script Info]\nScriptType: v4.00+\nPlayResX: 1920\nPlayResY: 1080\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: CleanSub,DejaVuSans-Bold,38,&H00FFFFFF,&H0000FFFF,&HFF000000,&H80000000,1,0,0,0,100,100,0,0,1,3,2,5,100,100,60,1\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
-    chunk_dur = duration / max(1, len(chunks))
-    for i, chunk in enumerate(chunks):
-        ass_content += f"Dialogue: 0,{format_ass_time(i*chunk_dur)},{format_ass_time((i+1)*chunk_dur)},CleanSub,,0,0,0,,{chunk}\n"
-    with open(filename, "w", encoding="utf-8") as f: f.write(ass_content)
+def generate_karaoke_ass(words, ass_filename):
+    ass_header = """[Script Info]
+ScriptType: v4.00+
+PlayResX: 1920
+PlayResY: 1080
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Karaoke,DejaVuSans-Bold,48,&H0000FFFF,&H00FFFFFF,&H00000000,&H80000000,1,0,0,0,100,100,0,0,1,4,3,5,100,100,60,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+"""
+    lines = []
+    chunk_size = 7 
+    for i in range(0, len(words), chunk_size):
+        chunk = words[i:i+chunk_size]
+        if not chunk: continue
+        chunk_start = chunk[0]['start']
+        chunk_end = chunk[-1]['end']
+        
+        dialogue_text = ""
+        last_time = chunk_start
+        for w in chunk:
+            delay = w['start'] - last_time
+            if delay > 0.05: 
+                dialogue_text += f"{{\\K{int(delay * 100)}}}"
+            
+            dur_cs = max(1, int(w['duration'] * 100)) 
+            dialogue_text += f"{{\\K{dur_cs}}}{w['text']} "
+            last_time = w['end']
+            
+        lines.append(f"Dialogue: 0,{format_ass_time(chunk_start)},{format_ass_time(chunk_end + 0.3)},Karaoke,,0,0,0,,{dialogue_text.strip()}")
+
+    with open(ass_filename, "w", encoding="utf-8") as f:
+        f.write(ass_header + "\n".join(lines) + "\n")
+
+def generate_edge_audio_and_subs(text, role_key, output_audio, output_ass):
+    voice = VOICES.get(role_key, VOICES["Moderator"])
+    safe_text = clean_for_speech(text).replace('&', 'and')
+    try:
+        words = asyncio.run(_generate_audio_and_words(safe_text, voice, output_audio))
+    except Exception:
+        words = asyncio.run(_generate_audio_and_words(safe_text, "en-US-GuyNeural", output_audio))
+    generate_karaoke_ass(words, output_ass)
 
 def create_background(pos, glow_color, bg_out):
     script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -194,11 +238,11 @@ def create_ui_overlay(speaker_name, role_label, topic, pos, glow_color, ui_out):
 def render_video_segment(bg_path, ui_path, audio_path, ass_path, output_path, position, glow_color, card_x, zoom_bg=True):
     ff_color = "0x" + glow_color.lstrip("#")
     
-    # Optional Zoom logic to prevent cropping the 60-model scoreboard screen
     if zoom_bg:
-        pan_x = "0" if position == "left" else ("iw-iw/zoom" if position == "right" else "iw/2-(iw/zoom/2)")
-        pan_y = "ih/2-(ih/zoom/2)"
-        bg_filter = f"[0:v]scale=1920:1080,zoompan=z='min(zoom+0.0004,1.15)':x='{pan_x}':y='{pan_y}':d=8000:s=1920x1080:fps=30[bg_processed];"
+        # FIXED: Explicit math formatting prevents FFmpeg parsing errors on the right pan
+        pan_x = "0" if position == "left" else ("iw-(iw/zoom)" if position == "right" else "(iw-(iw/zoom))/2")
+        pan_y = "(ih-(ih/zoom))/2"
+        bg_filter = f"[0:v]scale=1920:1080,zoompan=z='min(zoom+0.0007,1.15)':x='{pan_x}':y='{pan_y}':d=8000:s=1920x1080:fps=30[bg_processed];"
     else:
         bg_filter = f"[0:v]scale=1920:1080[bg_processed];"
 
@@ -235,15 +279,14 @@ def generate_round_breakdown_image(round_num, judge_results, total_a, total_b, c
     else:
         img = Image.new("RGB", (1920, 1080), (12, 16, 32))
         
-    # Darken background heavily for scoreboard readability
-    overlay = Image.new("RGBA", (1920, 1080), (0, 0, 0, 200))
+    overlay = Image.new("RGBA", (1920, 1080), (0, 0, 0, 215))
     img = Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
     draw = ImageDraw.Draw(img)
     
     try:
         font_header = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 32)
         font_sub = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 18)
-        font_model = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 12)
+        font_model = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 14)
     except: font_header = font_sub = font_model = ImageFont.load_default()
 
     def draw_centered(y, text, font, fill):
@@ -251,22 +294,28 @@ def generate_round_breakdown_image(round_num, judge_results, total_a, total_b, c
         draw.text(((1920 - (bbox[2] - bbox[0])) // 2, y), text, fill=fill, font=font)
 
     draw_centered(25, f"ROUND {round_num} // 60 DISTINCT COMPANY AI PANEL EVALUATION", font_header, "#FFD700")
-    draw_centered(65, f"ROUND AVERAGE: Apologist {total_a} vs Skeptic {total_b}   ||   CUMULATIVE: Apologist {cum_a} vs Skeptic {cum_b}", font_sub, "#00FFCC")
+    draw_centered(65, f"ROUND AVERAGE: Apologist {total_a} vs Skeptic {total_b}   ||   CUMULATIVE: Apologist {cum_a} vs Skeptic {cum_b}", font_sub, "#FFFFFF")
 
-    # Render exact halves to prevent dropped models and fix Y padding so it clears the card
-    def render_dense_column(judges_slice, start_x, start_y):
-        y = start_y
-        for j in judges_slice:
-            accent = "#00FFCC" if j["favored"] == "A" else "#FF00FF"
-            draw.rounded_rectangle([start_x, y, start_x + 840, y + 20], radius=4, fill=(15, 22, 38, 230), outline=accent, width=1)
-            draw.text((start_x + 12, y + 3), j["name"], fill="white", font=font_model)
-            score_text = f"A: {int(j['score_a'])} | B: {int(j['score_b'])}"
-            draw.text((start_x + 720, y + 3), score_text, fill=accent, font=font_model)
-            y += 24
+    # Group judges by side
+    favored_a = [j["name"] for j in judge_results if j["favored"] == "A"]
+    favored_b = [j["name"] for j in judge_results if j["favored"] == "B"]
 
-    render_dense_column(judge_results[:30], 40, 110)
-    render_dense_column(judge_results[30:], 1040, 110)
-    
+    draw.text((150, 130), f"VOTED FOR APOLOGIST ({len(favored_a)})", fill="#00FFCC", font=font_sub)
+    draw.text((1050, 130), f"VOTED FOR SKEPTIC ({len(favored_b)})", fill="#FF00FF", font=font_sub)
+
+    # Clean rendering grid to prevent clutter
+    def render_clean_list(names, start_x, start_y, accent):
+        x_col = start_x
+        y_col = start_y
+        for i, name in enumerate(names):
+            draw.text((x_col, y_col), f"• {name}", fill=accent, font=font_model)
+            y_col += 28
+            if (i + 1) % 18 == 0:  # Start a new sub-column after 18 names
+                y_col = start_y
+                x_col += 240
+
+    render_clean_list(favored_a, 150, 180, "#00FFCC")
+    render_clean_list(favored_b, 1050, 180, "#FF00FF")
     img.save(img_out)
 
 def run_debate_pipeline():
@@ -292,35 +341,29 @@ def run_debate_pipeline():
         ass_file = f"ass_{frame_counter}.ass"
         vid_file = f"seg_{frame_counter}.mp4"
 
-        dur = generate_edge_audio(text, role, aud_file)
-        
-        # Split Background and UI generation correctly
+        generate_edge_audio_and_subs(text, role, aud_file, ass_file)
         create_background(pos, glow, bg_file)
         card_x = create_ui_overlay(name, role, topic_str, pos, glow, ui_file)
-        
-        generate_segment_ass(text, dur, ass_file)
         render_video_segment(bg_file, ui_file, aud_file, ass_file, vid_file, pos, glow, card_x, zoom_bg=True)
         
         final_segments.append(vid_file)
         frame_counter += 1
 
-    add_video_segment(f"Welcome to our showcase debate. The topic is: {topic}.", "Moderator", "Moderator Christopher", topic)
-    add_video_segment("Hello. I am the Christian Apologist. I will outline the logical grounding.", "AI Christian Apologist", "Christian Apologist", topic)
+    add_video_segment(f"Welcome to our showcase debate. The topic is: {topic}.", "Moderator", "Moderator", topic)
+    add_video_segment("Hello. I am the Christian Apologist. I will outline the logical grounding.", "AI Christian Apologist", "Apologist", topic)
     add_video_segment("Hi. I am the Skeptic. I will test every claim for hard evidence.", "AI Skeptic", "Skeptic", topic)
-    add_video_segment("Our 60-company multi-vendor AI panel is ready. Representatives GPT and Claude will explain the rules.", "Panelist 1", "Moderator Christopher", topic)
-    add_video_segment("As OpenAI, we ensure balanced cross-industry judging across all rounds.", "Panelist 1", "Panelist GPT", topic)
-    add_video_segment("And as Anthropic, we verify structural logical consistency across the board.", "Panelist 2", "Panelist Claude", topic)
+    add_video_segment("Our 60-company multi-vendor AI panel will judge these rounds blindly.", "Moderator", "Moderator", topic)
 
     cumulative_score_a, cumulative_score_b, last_text_b = 0, 0, "None yet."
 
     for round_num in range(1, 4):
-        add_video_segment(f"Moving into Round {round_num}. The Christian Apologist speaks first.", "Moderator", "Moderator Christopher", topic)
+        add_video_segment(f"Moving into Round {round_num}. The Apologist speaks first.", "Moderator", "Moderator", topic)
 
         prompt_a = f"Topic: {topic}\nRound {round_num}: Present a compelling pro argument in everyday language. {'Address this counter: ' + last_text_b if round_num > 1 else ''}"
         text_a = query_openrouter(prompt_a, "openai/gpt-4o")
-        add_video_segment(text_a, "AI Christian Apologist", "Christian Apologist", topic)
+        add_video_segment(text_a, "AI Christian Apologist", "Apologist", topic)
 
-        prompt_b = f"Topic: {topic}\nRound {round_num}: Provide a skeptical rebuttal analyzing the following: {text_a}"
+        prompt_b = f"Topic: {topic}\nRound {round_num}: You are the AI Skeptic. Provide a forceful, multi-paragraph rebuttal directly countering the Apologist's claims: {text_a}"
         text_b = query_openrouter(prompt_b, "anthropic/claude-3.5-sonnet")
         last_text_b = text_b
         add_video_segment(text_b, "AI Skeptic", "Skeptic", topic)
@@ -341,7 +384,7 @@ def run_debate_pipeline():
                 sa, sb = float(random.randint(75, 92)), float(random.randint(75, 92))
             
             favored = "A" if sa >= sb else "B"
-            return {"name": judge["name"], "score_a": sa, "score_b": sb, "favored": favored}
+            return {"name": judge["name"], "id": judge["id"], "score_a": sa, "score_b": sb, "favored": favored}
 
         judge_results = []
         with concurrent.futures.ThreadPoolExecutor(max_workers=15) as executor:
@@ -353,7 +396,6 @@ def run_debate_pipeline():
         cumulative_score_a += round_total_a
         cumulative_score_b += round_total_b
 
-        # 1. Show Score Breakdown Image
         summary_text = f"Round {round_num} concluded. Apologist averaged {round_total_a}, Skeptic averaged {round_total_b}."
         bg_img = f"score_bg_r{round_num}.png"
         ui_img = f"score_ui_r{round_num}.png"
@@ -361,31 +403,32 @@ def run_debate_pipeline():
         score_ass = f"score_r{round_num}.ass"
         score_vid = f"score_vid_{round_num}.mp4"
 
-        # Generate custom scoreboard background
         generate_round_breakdown_image(round_num, judge_results, round_total_a, round_total_b, cumulative_score_a, cumulative_score_b, bg_img)
+        card_x_score = create_ui_overlay("Moderator", "Moderator", topic, "center", "#FFD700", ui_img)
         
-        # Apply UI exclusively (prevents overwriting the scoreboard data)
-        card_x_score = create_ui_overlay("Moderator Christopher", "Moderator", topic, "center", "#FFD700", ui_img)
+        generate_edge_audio_and_subs(summary_text, "Moderator", score_aud, score_ass)
         
-        dur = generate_edge_audio(summary_text, "Moderator", score_aud)
-        generate_segment_ass(summary_text, dur, score_ass)
-        
-        # Render segment without zoompan so data isn't cropped
         render_video_segment(bg_img, ui_img, score_aud, score_ass, score_vid, "center", "#FFD700", card_x_score, zoom_bg=False)
         final_segments.append(score_vid)
 
-        # 2. Representative AI Panelists Explain Scoring Rationale
-        commentary_prompt_1 = f"As OpenAI on the 60-company judge panel, explain briefly why Side A scored {round_total_a} and Side B scored {round_total_b} in Round {round_num}."
-        commentary_text_1 = query_openrouter(commentary_prompt_1, "openai/gpt-4o")
-        add_video_segment(commentary_text_1, "Panelist 1", "Panelist GPT", topic)
+        # Dynamic Representative Selection
+        rep_a_pool = [j for j in judge_results if j["favored"] == "A"]
+        rep_b_pool = [j for j in judge_results if j["favored"] == "B"]
+        
+        rep_a = random.choice(rep_a_pool) if rep_a_pool else judge_results[0]
+        rep_b = random.choice(rep_b_pool) if rep_b_pool else judge_results[1]
 
-        commentary_prompt_2 = f"As Anthropic on the 60-company judge panel, add your perspective on these round scores."
-        commentary_text_2 = query_openrouter(commentary_prompt_2, "anthropic/claude-3.5-sonnet")
-        add_video_segment(commentary_text_2, "Panelist 2", "Panelist Claude", topic)
+        commentary_prompt_1 = f"Topic: {topic}\nYou are {rep_a['name']} on a 60-company AI judging panel. In Round {round_num}, you gave the Apologist {int(rep_a['score_a'])} points, officially voting in favor of them. Speak directly in the first person. Briefly explain your specific rationale for why you believed the pro argument was stronger."
+        commentary_text_1 = query_openrouter(commentary_prompt_1, rep_a['id'])
+        add_video_segment(commentary_text_1, "Panelist 1", f"Judge: {rep_a['name']}", topic)
 
-    winner = "Christian Apologist" if cumulative_score_a > cumulative_score_b else "Skeptic"
-    outro_text = f"Our 60-company AI panel awards Christian Apologist {cumulative_score_a} total points and Skeptic {cumulative_score_b} points. Victory goes to the {winner}."
-    add_video_segment(outro_text, "Moderator", "Moderator Christopher", topic)
+        commentary_prompt_2 = f"Topic: {topic}\nYou are {rep_b['name']} on a 60-company AI judging panel. In Round {round_num}, you gave the Skeptic {int(rep_b['score_b'])} points, officially voting in favor of them. Speak directly in the first person. Add your perspective on why you chose the rebuttal."
+        commentary_text_2 = query_openrouter(commentary_prompt_2, rep_b['id'])
+        add_video_segment(commentary_text_2, "Panelist 2", f"Judge: {rep_b['name']}", topic)
+
+    winner = "Apologist" if cumulative_score_a > cumulative_score_b else "Skeptic"
+    outro_text = f"Our 60-company AI panel awards the Apologist {cumulative_score_a} total points and the Skeptic {cumulative_score_b} points. Victory goes to the {winner}."
+    add_video_segment(outro_text, "Moderator", "Moderator", topic)
 
     with open("concat_list.txt", "w", encoding="utf-8") as f:
         for seg in final_segments: f.write(f"file '{seg}'\n")
