@@ -22,34 +22,22 @@ VOICES = {
     "Panelist 2": "en-US-EmmaMultilingualNeural"
 }
 
-# Full 60 Model Panel 
 PANEL_JUDGES = [
-    # OpenAI & Anthropic
     {"name": "GPT-4o", "id": "openai/gpt-4o"}, {"name": "GPT-4 Turbo", "id": "openai/gpt-4-turbo"}, {"name": "GPT-4o Mini", "id": "openai/gpt-4o-mini"},
     {"name": "Claude 3.5 Sonnet", "id": "anthropic/claude-3.5-sonnet"}, {"name": "Claude 3 Opus", "id": "anthropic/claude-3-opus"}, {"name": "Claude 3 Haiku", "id": "anthropic/claude-3-haiku"},
-    # Google
     {"name": "Gemini 1.5 Pro", "id": "google/gemini-pro-1.5"}, {"name": "Gemini 1.5 Flash", "id": "google/gemini-flash-1.5"}, {"name": "Gemma 2 27B", "id": "google/gemma-2-27b-it"}, {"name": "Gemma 2 9B", "id": "google/gemma-2-9b-it"},
-    # Meta
     {"name": "Llama 3.1 405B", "id": "meta-llama/llama-3.1-405b-instruct"}, {"name": "Llama 3.1 70B", "id": "meta-llama/llama-3.1-70b-instruct"}, {"name": "Llama 3.1 8B", "id": "meta-llama/llama-3.1-8b-instruct"}, {"name": "Llama 3 70B", "id": "meta-llama/llama-3-70b-instruct"},
-    # Mistral
     {"name": "Mistral Large", "id": "mistralai/mistral-large"}, {"name": "Mistral Nemo", "id": "mistralai/mistral-nemo"}, {"name": "Mixtral 8x22B", "id": "mistralai/mixtral-8x22b-instruct"}, {"name": "Mixtral 8x7B", "id": "mistralai/mixtral-8x7b-instruct"},
-    # Cohere & xAI
     {"name": "Command R+", "id": "cohere/command-r-plus"}, {"name": "Command R", "id": "cohere/command-r"}, {"name": "Command", "id": "cohere/command"},
     {"name": "Grok 2", "id": "x-ai/grok-2"}, {"name": "Grok 2 Mini", "id": "x-ai/grok-2-mini"},
-    # DeepSeek & Qwen
     {"name": "DeepSeek Coder", "id": "deepseek/deepseek-coder"}, {"name": "DeepSeek Chat", "id": "deepseek/deepseek-chat"},
     {"name": "Qwen 2.5 72B", "id": "qwen/qwen-2.5-72b-instruct"}, {"name": "Qwen 2 72B", "id": "qwen/qwen-2-72b-instruct"}, {"name": "Qwen 2 7B", "id": "qwen/qwen-2-7b-instruct"}, {"name": "Qwen 1.5 110B", "id": "qwen/qwen-1.5-110b-chat"},
-    # Microsoft & Amazon
     {"name": "Phi 3 Medium", "id": "microsoft/phi-3-medium-128k-instruct"}, {"name": "Phi 3 Mini", "id": "microsoft/phi-3-mini-128k-instruct"}, {"name": "WizardLM 2", "id": "microsoft/wizardlm-2-8x22b"},
     {"name": "Nova Pro", "id": "amazon/nova-pro-v1"}, {"name": "Nova Lite", "id": "amazon/nova-lite-v1"},
-    # Perplexity & Databricks
     {"name": "Sonar Pro", "id": "perplexity/sonar-pro"}, {"name": "Sonar", "id": "perplexity/sonar"}, {"name": "DBRX Instruct", "id": "databricks/dbrx-instruct"},
-    # Nous, AllenAI, & OpenChat
     {"name": "Hermes 3 405B", "id": "nousresearch/hermes-3-llama-3.1-405b"}, {"name": "Hermes 2 Pro", "id": "nousresearch/hermes-2-pro-llama-3-8b"}, {"name": "Capybara 34B", "id": "nousresearch/nous-capybara-34b"},
     {"name": "OLMo 7B", "id": "allenai/olmo-7b-instruct"}, {"name": "OpenChat 3.5", "id": "openchat/openchat-7b"},
-    # 01-ai, Phind, & AI21
     {"name": "Yi Large", "id": "01-ai/yi-large"}, {"name": "Yi 34B", "id": "01-ai/yi-34b-chat"}, {"name": "Phind Model", "id": "phind/phind-model"}, {"name": "Jamba 1.5 Large", "id": "ai21/jamba-1-5-large"},
-    # Extended open-source models to hit 60
     {"name": "Zephyr 7B", "id": "huggingfaceh4/zephyr-7b-beta"}, {"name": "Snorkel Mistral", "id": "snorkelai/snorkel-mistral-pairrm-dpo"}, {"name": "MythoMax L2", "id": "gryphe/mythomax-l2-13b"},
     {"name": "Toppy M 7B", "id": "undi95/toppy-m-7b"}, {"name": "Remm Spark", "id": "undi95/remm-spark-104b-bpw4"}, {"name": "Dolphin 2.9", "id": "cognitivecomputations/dolphin-llama-3-70b"},
     {"name": "Dolphin Mixtral", "id": "cognitivecomputations/dolphin-mixtral-8x7b"}, {"name": "StripedHyena", "id": "togethercomputer/stripedhyena-nous-7b"}, {"name": "Llama 3 Instruct", "id": "meta-llama/llama-3-8b-instruct"},
@@ -113,19 +101,15 @@ def generate_segment_ass(text, duration, filename):
     with open(filename, "w", encoding="utf-8") as f: f.write(ass_content)
 
 def create_background_and_ui(speaker_name, role_label, topic, pos, glow_color, bg_out, ui_out):
-    """Separates the background (for zooming) from the UI (which stays frozen)"""
-    # 1. GENERATE BACKGROUND (Grid fallback if no image)
     if os.path.exists("background.png"):
         try: base_img = Image.open("background.png").convert("RGB").resize((1920, 1080))
         except: base_img = Image.new("RGB", (1920, 1080), (12, 16, 32))
     else:
-        # Procedural grid so the camera zoom is always highly visible
         base_img = Image.new("RGB", (1920, 1080), (12, 16, 32))
         draw = ImageDraw.Draw(base_img)
         for x in range(0, 1920, 60): draw.line([(x,0), (x,1080)], fill=(20, 26, 45), width=2)
         for y in range(0, 1080, 60): draw.line([(0,y), (1920,y)], fill=(20, 26, 45), width=2)
     
-    # Ambient glow on background
     overlay = Image.new("RGBA", base_img.size, (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay)
     cx = 400 if pos == "left" else (1520 if pos == "right" else 960)
@@ -134,7 +118,6 @@ def create_background_and_ui(speaker_name, role_label, topic, pos, glow_color, b
     img = Image.alpha_composite(base_img.convert("RGBA"), overlay.filter(ImageFilter.GaussianBlur(30))).convert("RGB")
     img.save(bg_out)
 
-    # 2. GENERATE FROZEN UI OVERLAY (Transparent)
     ui_img = Image.new("RGBA", (1920, 1080), (0, 0, 0, 0))
     draw = ImageDraw.Draw(ui_img)
     try:
@@ -143,11 +126,9 @@ def create_background_and_ui(speaker_name, role_label, topic, pos, glow_color, b
         font_role = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 16)
     except: font_title = font_name = font_role = ImageFont.load_default()
 
-    # Topic
     bbox = draw.textbbox((0, 0), f"TOPIC: {topic}", font=font_title)
     draw.text(((1920 - (bbox[2] - bbox[0])) // 2, 30), f"TOPIC: {topic}", fill="white", font=font_title)
 
-    # Name Card
     card_x, card_y = 120, 840
     draw.rounded_rectangle([card_x, card_y, card_x + 600, card_y + 120], radius=16, fill=(18, 26, 46, 230), outline=glow_color, width=3)
     draw.ellipse([card_x + 30, card_y + 45, card_x + 55, card_y + 70], fill=glow_color)
@@ -156,7 +137,6 @@ def create_background_and_ui(speaker_name, role_label, topic, pos, glow_color, b
     ui_img.save(ui_out)
 
 def render_video_segment(bg_path, ui_path, audio_path, ass_path, output_path, position, glow_color):
-    """The Layered Sandwich: Zoom BG -> Anchor UI -> Anchor Wave -> Burn Subs"""
     ff_color = "0x" + glow_color.lstrip("#")
     pan_x = "0" if position == "left" else ("iw-iw/zoom" if position == "right" else "iw/2-(iw/zoom/2)")
     pan_y = "ih/2-(ih/zoom/2)"
@@ -180,7 +160,6 @@ def render_video_segment(bg_path, ui_path, audio_path, ass_path, output_path, po
     subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
 
 def generate_round_breakdown_image(round_num, judge_results, total_a, total_b, img_out):
-    """Generates a dense grid layout capable of displaying 60 judges legibly"""
     img = Image.new("RGB", (1920, 1080), (12, 16, 32))
     draw = ImageDraw.Draw(img)
     try:
@@ -200,9 +179,8 @@ def generate_round_breakdown_image(round_num, judge_results, total_a, total_b, i
     side_b_judges = [j for j in judge_results if j["favored"] == "B"]
 
     def render_dense_column(judges, start_x, start_y, accent_color):
-        # 30 items per side requires tight spacing (26px per row)
         y = start_y
-        for j in judges[:30]: # Cap at 30 visually per column to prevent screen overflow
+        for j in judges[:30]:
             draw.rounded_rectangle([start_x, y, start_x + 840, y + 22], radius=4, fill=(15, 22, 38), outline=accent_color, width=1)
             draw.text((start_x + 12, y + 4), j["name"], fill="white", font=font_model)
             score_text = f"A: {int(j['score_a'])} | B: {int(j['score_b'])}"
@@ -244,7 +222,6 @@ def run_debate_pipeline():
         final_segments.append(vid_file)
         frame_counter += 1
 
-    # Intro Sequence (Includes Panelist Intros)
     add_video_segment(f"Welcome to our showcase debate. The topic is: {topic}.", "Moderator", "Moderator Christopher", topic)
     add_video_segment("Hello. I am the Christian Apologist. I will outline the logical grounding.", "AI Christian Apologist", "Christian Apologist", topic)
     add_video_segment("Hi. I am the Skeptic. I will test every claim for hard evidence.", "AI Skeptic", "Skeptic", topic)
@@ -285,7 +262,6 @@ def run_debate_pipeline():
             return {"name": judge["name"], "score_a": sa, "score_b": sb, "favored": favored}
 
         judge_results = []
-        # Batch requests slightly to avoid heavy API rate limiting from firing 60 models at once
         with concurrent.futures.ThreadPoolExecutor(max_workers=15) as executor:
             for future in concurrent.futures.as_completed([executor.submit(evaluate_single_judge, j) for j in PANEL_JUDGES]):
                 judge_results.append(future.result())
@@ -302,9 +278,7 @@ def run_debate_pipeline():
         score_ass = f"score_r{round_num}.ass"
         score_vid = f"score_vid_{round_num}.mp4"
 
-        # Generate the dense 60-judge grid layout
         generate_round_breakdown_image(round_num, judge_results, round_total_a, round_total_b, bg_img)
-        # Create a blank transparent UI so FFmpeg still processes the same filter chain
         Image.new("RGBA", (1920, 1080), (0,0,0,0)).save(ui_img) 
         
         dur = generate_edge_audio(summary_text, "Moderator", score_aud)
