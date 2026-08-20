@@ -27,7 +27,12 @@ PRIMARY_JUDGES = [
     {"name": "Command R", "provider": "Cohere", "id": "cohere/command-r-plus"},
     {"name": "Grok", "provider": "xAI", "id": "x-ai/grok-4.6"},
     {"name": "Qwen", "provider": "Alibaba", "id": "qwen/qwen-2.5-72b-instruct"},
-    {"name": "Nemotron", "provider": "NVIDIA", "id": "nvidia/llama-3.1-nemotron-70b-instruct"}
+    {"name": "Nemotron", "provider": "NVIDIA", "id": "nvidia/llama-3.1-nemotron-70b-instruct"},
+    {"name": "Perplexity", "provider": "Perplexity", "id": "perplexity/sonar-medium"},
+    {"name": "Phi", "provider": "Microsoft", "id": "microsoft/phi-3-medium-128k-instruct"},
+    {"name": "Gemma", "provider": "Google", "id": "google/gemma-2-27b-it"},
+    {"name": "WizardLM", "provider": "Microsoft", "id": "microsoft/wizardlm-2-8x22b"},
+    {"name": "Yi", "provider": "01.AI", "id": "01-ai/yi-large"}
 ]
 
 FALLBACK_MODELS = [
@@ -118,7 +123,6 @@ def apply_speaker_spotlight(img, position="center"):
     else:
         cx, cy, color = 960, 540, (255, 215, 0)
         
-    # Concentric glowing gradient rings for a vibrant spotlight effect
     for r in range(650, 50, -40):
         alpha = int(24 * (1.0 - r / 650.0))
         draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill=(color[0], color[1], color[2], alpha))
@@ -157,15 +161,12 @@ def generate_speaker_frame(speaker_name, role_label, topic, frame_index, wave_ph
     card_x = 200 if pos == "left" else 1080 if pos == "right" else 560
     card_y = 750
     
-    # Speaker Card Box
     draw.rounded_rectangle([card_x, card_y, card_x + 640, card_y + 140], radius=16, fill=(18, 26, 46), outline=glow_color, width=3)
     draw.ellipse([card_x + 35, card_y + 55, card_x + 65, card_y + 85], fill=glow_color)
 
-    # Clean single-line text printing (zero duplication)
     draw.text((card_x + 90, card_y + 30), speaker_name, fill="white", font=font_name)
     draw.text((card_x + 90, card_y + 75), role_label.upper(), fill=glow_color, font=font_role)
 
-    # Pulsating Sine/Cosine Wave Equalizer Bars
     bar_start_x = card_x + 510
     bar_base_y = card_y + 70
     
@@ -192,10 +193,10 @@ def generate_round_breakdown_image(round_num, scores_a, scores_b, total_a, total
     try:
         font_header = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 36)
         font_sub = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 22)
-        font_col = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 18)
-        font_model = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 18)
-        font_meta = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 14)
-        font_score = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 20)
+        font_col = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 16)
+        font_model = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 14)
+        font_meta = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 12)
+        font_score = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 16)
     except IOError:
         font_header = font_sub = font_col = font_model = font_meta = font_score = ImageFont.load_default()
 
@@ -204,30 +205,31 @@ def generate_round_breakdown_image(round_num, scores_a, scores_b, total_a, total
         w = bbox[2] - bbox[0]
         draw.text(((1920 - w) // 2, y), text, fill=fill, font=font)
 
-    draw_centered(40, f"ROUND {round_num} JUDGING BREAKDOWN", font_header, "#FFD700")
-    draw_centered(90, f"SCORE: Christian Apologist ({total_a} PTS) vs Skeptic ({total_b} PTS)", font_sub, "white")
+    draw_centered(30, f"ROUND {round_num} JUDGING BREAKDOWN (15 AI JUDGES)", font_header, "#FFD700")
+    draw_centered(75, f"SCORE: Christian Apologist ({total_a} PTS) vs Skeptic ({total_b} PTS)", font_sub, "white")
 
-    draw.text((220, 155), "CHRISTIAN APOLOGIST SCORES", fill="#00FFCC", font=font_col)
-    draw.text((1120, 155), "SKEPTIC SCORES", fill="#FF00FF", font=font_col)
+    draw.text((150, 115), "CHRISTIAN APOLOGIST SCORES", fill="#00FFCC", font=font_col)
+    draw.text((1050, 115), "SKEPTIC SCORES", fill="#FF00FF", font=font_col)
 
-    col_a_judges = [(j, s) for j, s in zip(PRIMARY_JUDGES[:5], scores_a[:5])]
-    col_b_judges = [(j, s) for j, s in zip(PRIMARY_JUDGES[5:], scores_b[5:])]
+    # Split 15 judges into two columns (8 left, 7 right)
+    col_a_judges = list(zip(PRIMARY_JUDGES[:8], scores_a[:8]))
+    col_b_judges = list(zip(PRIMARY_JUDGES[8:], scores_b[8:]))
 
-    y_start = 195
+    y_start = 145
     for (judge, score) in col_a_judges:
-        draw.rounded_rectangle([200, y_start, 920, y_start + 70], radius=8, fill=(18, 26, 46), outline=(50, 70, 100), width=2)
-        draw.text((230, y_start + 14), judge["name"], fill="white", font=font_model)
-        draw.text((230, y_start + 38), judge["provider"], fill="#8A99AD", font=font_meta)
-        draw.text((830, y_start + 22), f"{score} pts", fill="#00FFCC", font=font_score)
-        y_start += 82
+        draw.rounded_rectangle([130, y_start, 940, y_start + 50], radius=6, fill=(18, 26, 46), outline=(50, 70, 100), width=1)
+        draw.text((150, y_start + 10), judge["name"], fill="white", font=font_model)
+        draw.text((150, y_start + 28), judge["provider"], fill="#8A99AD", font=font_meta)
+        draw.text((860, y_start + 15), f"{score} pts", fill="#00FFCC", font=font_score)
+        y_start += 56
 
-    y_start = 195
+    y_start = 145
     for (judge, score) in col_b_judges:
-        draw.rounded_rectangle([1100, y_start, 1820, y_start + 70], radius=8, fill=(18, 26, 46), outline=(50, 70, 100), width=2)
-        draw.text((1130, y_start + 14), judge["name"], fill="white", font=font_model)
-        draw.text((1130, y_start + 38), judge["provider"], fill="#8A99AD", font=font_meta)
-        draw.text((1730, y_start + 22), f"{score} pts", fill="#FF00FF", font=font_score)
-        y_start += 82
+        draw.rounded_rectangle([1030, y_start, 1840, y_start + 50], radius=6, fill=(18, 26, 46), outline=(50, 70, 100), width=1)
+        draw.text((1050, y_start + 10), judge["name"], fill="white", font=font_model)
+        draw.text((1050, y_start + 28), judge["provider"], fill="#8A99AD", font=font_meta)
+        draw.text((1760, y_start + 15), f"{score} pts", fill="#FF00FF", font=font_score)
+        y_start += 56
 
     filename = f"round_{round_num}_breakdown.png"
     img.save(filename)
@@ -262,7 +264,7 @@ def run_debate_pipeline():
     frame_counter = 0
 
     # 1. Moderator Introduction
-    intro_text = f"Welcome everyone to today's formal showcase debate. Our central question is: {topic}. We have an expert panel of AI judges ready to score, and two debaters who will break down both sides clearly."
+    intro_text = f"Welcome everyone to today's formal showcase debate. Our central question is: {topic}. We have an expert panel of fifteen AI judges ready to score, and two debaters who will break down both sides clearly."
     dur = generate_edge_audio(intro_text, "Moderator", "intro.mp3")
     audio_files.append("intro.mp3")
     img = generate_speaker_frame("Moderator Christopher", "Moderator", topic, frame_counter, wave_phase=1)
@@ -317,7 +319,6 @@ def run_debate_pipeline():
     for round_num in range(1, 4):
         print(f"\n--- Round {round_num} of 3 ---")
         
-        # Extended Narrator Round Intro
         narrator_intro = f"We are now moving into Round {round_num}. Both sides have prepared their core positions on {topic}. Let us listen closely as the Christian Apologist presents their case first, followed directly by the Skeptic's counter-argument."
         dur = generate_edge_audio(narrator_intro, "Moderator", f"r{round_num}_intro.mp3")
         audio_files.append(f"r{round_num}_intro.mp3")
@@ -327,7 +328,6 @@ def run_debate_pipeline():
         add_clean_subtitle_events(narrator_intro, current_time, dur, dialogue_events)
         current_time += dur
 
-        # Apologist Speech
         prompt_a = f"Topic: {topic}\nRound {round_num}: Present a strong pro-apologetic argument using simple, clear, everyday language that anyone can understand without overly complex jargon. Write about 130 words."
         text_a = query_openrouter(prompt_a, primary_model_id="openai/gpt-5.6").replace(",", " -")
         dur = generate_edge_audio(text_a, "AI Christian Apologist", f"round_{round_num}_a.mp3")
@@ -338,7 +338,6 @@ def run_debate_pipeline():
         add_clean_subtitle_events(text_a, current_time, dur, dialogue_events)
         current_time += dur
 
-        # Skeptic Speech
         prompt_b = f"Topic: {topic}\nRound {round_num}: Provide a strong counter-argument from a Skeptical perspective challenging the apologist position using simple, clear, everyday language. Write about 130 words."
         text_b = query_openrouter(prompt_b, primary_model_id="anthropic/claude-3.5-sonnet").replace(",", " -")
         dur = generate_edge_audio(text_b, "AI Skeptic", f"round_{round_num}_b.mp3")
@@ -349,7 +348,6 @@ def run_debate_pipeline():
         add_clean_subtitle_events(text_b, current_time, dur, dialogue_events)
         current_time += dur
 
-        # Judging scores calculation
         scores_a, scores_b = [], []
         for judge in PRIMARY_JUDGES:
             resp = query_openrouter(f"Score Round {round_num} on '{topic}'. Format: 'A: [score], B: [score]'", primary_model_id=judge["id"], timeout=15)
@@ -379,9 +377,8 @@ def run_debate_pipeline():
         add_clean_subtitle_events(summary_text, current_time, dur, dialogue_events)
         current_time += dur
 
-    # 4. Outro
     winner = "Christian Apologist" if cumulative_score_a > cumulative_score_b else "Skeptic"
-    outro_text = f"As our debate concludes, let us review the final scores. Christian Apologist finished with {cumulative_score_a} total points, and Skeptic finished with {cumulative_score_b} points. Our panel awards this showcase victory to the {winner}. Thank you for watching."
+    outro_text = f"As our debate concludes, let us review the final scores from our fifteen AI judges. Christian Apologist finished with {cumulative_score_a} total points, and Skeptic finished with {cumulative_score_b} points. Our panel awards this showcase victory to the {winner}. Thank you for watching."
     dur = generate_edge_audio(outro_text, "Moderator", "outro.mp3")
     audio_files.append("outro.mp3")
     img = generate_speaker_frame("Moderator Christopher", "Moderator", topic, frame_counter, wave_phase=1)
@@ -419,7 +416,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             f.write(f"file '{img_path}'\n")
             f.write(f"duration {dur}\n")
         if segment_images:
-            f.write(f"file '{segment_images[-1][0]e}'\n")
+            f.write(f"file '{segment_images[-1][0]}'\n")
 
     print("\n[FFmpeg] Rendering final video package...")
     ffmpeg_cmd = [
@@ -434,7 +431,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         "final_debate_output.mp4"
     ]
     subprocess.run(ffmpeg_cmd, check=True)
-    print("[SUCCESS] final_debate_output.mp4 successfully created!")
+    print("[SUCCESS] final_debate_output.mp4 successfully created with 15 judges!")
 
 if __name__ == "__main__":
     run_debate_pipeline()
