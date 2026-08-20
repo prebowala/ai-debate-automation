@@ -1,40 +1,38 @@
-name: Build AI Debate Video
+name: Generate Long-Form AI Debate Video
 
 on:
-  workflow_dispatch:
+  workflow_dispatch:  # Allows manual triggering
 
 jobs:
-  build:
+  build_video:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
+    - name: Checkout Repository
+      uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.10'
-          cache: 'pip'
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
 
-      - name: Install System Dependencies (FFmpeg)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg
+    - name: Install System Dependencies (FFmpeg & Fonts)
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y ffmpeg fonts-dejavu
 
-      - name: Install Python Requirements
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
+    - name: Install Python Requirements
+      run: |
+        python -m pip install --upgrade pip
+        pip install requests pillow edge-tts
 
-      - name: Run Debate Generation Pipeline
-        env:
-          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-        run: |
-          python main.py
+    - name: Run Debate Video Pipeline
+      env:
+        OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      run: python main.py
 
-      - name: Upload Generated Video Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: final-debate-video
-          path: final_debate_output.mp4
+    - name: Upload Final Video Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: Final_Debate_Video
+        path: final_debate_output.mp4
