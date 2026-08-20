@@ -15,10 +15,10 @@ OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY")
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 VOICES = {
-    "Moderator": "en-US-GuyNeural", 
+    "Moderator": "en-US-AndrewMultilingualNeural", 
     "AI Christian Apologist": "en-US-BrianMultilingualNeural",
     "AI Skeptic": "en-US-AvaMultilingualNeural",
-    "Panelist 1": "en-US-AndrewMultilingualNeural",
+    "Panelist 1": "en-US-GuyNeural",
     "Panelist 2": "en-US-EmmaMultilingualNeural"
 }
 
@@ -105,15 +105,18 @@ def hex_to_rgba(hex_str, alpha):
 
 def query_openrouter(prompt, primary_model_id, timeout=45):
     headers = {"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"}
-    try:
-        response = requests.post(
-            OPENROUTER_URL, headers=headers, 
-            json={"model": primary_model_id, "messages": [{"role": "user", "content": prompt}], "temperature": 0.5}, 
-            timeout=timeout
-        )
-        if response.status_code == 200: return response.json()["choices"][0]["message"]["content"].strip()
-    except Exception: pass
-    return "The evidence leads us to a fascinating conclusion."
+    for _ in range(2):
+        try:
+            response = requests.post(
+                OPENROUTER_URL, headers=headers, 
+                json={"model": primary_model_id, "messages": [{"role": "user", "content": prompt}], "temperature": 0.6}, 
+                timeout=timeout
+            )
+            if response.status_code == 200:
+                content = response.json()["choices"][0]["message"]["content"].strip()
+                if len(content) > 20: return content
+        except Exception: pass
+    return "The core analysis reveals critical foundational assumptions that require closer inspection."
 
 async def _generate_audio_and_words(text, voice, audio_filename):
     communicate = edge_tts.Communicate(text, voice)
@@ -147,13 +150,13 @@ PlayResY: 1080
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Karaoke,DejaVuSans-Bold,48,&H0000FFFF,&H00FFFFFF,&H00000000,&H80000000,1,0,0,0,100,100,0,0,1,4,3,5,100,100,60,1
+Style: Karaoke,DejaVuSans-Bold,44,&H0000FFFF,&H00FFFFFF,&H00000000,&H80000000,1,0,0,0,100,100,0,0,1,3,2,2,100,100,80,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
     lines = []
-    chunk_size = 7 
+    chunk_size = 6
     for i in range(0, len(words), chunk_size):
         chunk = words[i:i+chunk_size]
         if not chunk: continue
@@ -166,12 +169,11 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             delay = w['start'] - last_time
             if delay > 0.05: 
                 dialogue_text += f"{{\\K{int(delay * 100)}}}"
-            
             dur_cs = max(1, int(w['duration'] * 100)) 
             dialogue_text += f"{{\\K{dur_cs}}}{w['text']} "
             last_time = w['end']
             
-        lines.append(f"Dialogue: 0,{format_ass_time(chunk_start)},{format_ass_time(chunk_end + 0.3)},Karaoke,,0,0,0,,{dialogue_text.strip()}")
+        lines.append(f"Dialogue: 0,{format_ass_time(chunk_start)},{format_ass_time(chunk_end + 0.4)},Karaoke,,0,0,0,,{dialogue_text.strip()}")
 
     with open(ass_filename, "w", encoding="utf-8") as f:
         f.write(ass_header + "\n".join(lines) + "\n")
@@ -182,7 +184,7 @@ def generate_edge_audio_and_subs(text, role_key, output_audio, output_ass):
     try:
         words = asyncio.run(_generate_audio_and_words(safe_text, voice, output_audio))
     except Exception:
-        words = asyncio.run(_generate_audio_and_words(safe_text, "en-US-GuyNeural", output_audio))
+        words = asyncio.run(_generate_audio_and_words(safe_text, "en-US-AndrewMultilingualNeural", output_audio))
     generate_karaoke_ass(words, output_ass)
 
 def create_background(pos, glow_color, bg_out):
@@ -212,20 +214,17 @@ def create_ui_overlay(speaker_name, role_label, topic, pos, glow_color, ui_out):
     ui_img = Image.new("RGBA", (1920, 1080), (0, 0, 0, 0))
     draw = ImageDraw.Draw(ui_img)
     try:
-        font_title = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 28)
+        font_title = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 26)
         font_name = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 24)
         font_role = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 16)
     except: font_title = font_name = font_role = ImageFont.load_default()
 
     bbox = draw.textbbox((0, 0), f"TOPIC: {topic}", font=font_title)
-    draw.text(((1920 - (bbox[2] - bbox[0])) // 2, 30), f"TOPIC: {topic}", fill="white", font=font_title)
+    draw.text(((1920 - (bbox[2] - bbox[0])) // 2, 25), f"TOPIC: {topic}", fill="white", font=font_title)
 
-    if pos == "left":
-        card_x = 100
-    elif pos == "right":
-        card_x = 1220
-    else:
-        card_x = (1920 - 600) // 2
+    if pos == "left": card_x = 100
+    elif pos == "right": card_x = 1220
+    else: card_x = (1920 - 600) // 2
 
     card_y = 840
     draw.rounded_rectangle([card_x, card_y, card_x + 600, card_y + 120], radius=16, fill=(18, 26, 46, 230), outline=glow_color, width=3)
@@ -239,7 +238,6 @@ def render_video_segment(bg_path, ui_path, audio_path, ass_path, output_path, po
     ff_color = "0x" + glow_color.lstrip("#")
     
     if zoom_bg:
-        # FIXED: Explicit math formatting prevents FFmpeg parsing errors on the right pan
         pan_x = "0" if position == "left" else ("iw-(iw/zoom)" if position == "right" else "(iw-(iw/zoom))/2")
         pan_y = "(ih-(ih/zoom))/2"
         bg_filter = f"[0:v]scale=1920:1080,zoompan=z='min(zoom+0.0007,1.15)':x='{pan_x}':y='{pan_y}':d=8000:s=1920x1080:fps=30[bg_processed];"
@@ -272,50 +270,46 @@ def generate_round_breakdown_image(round_num, judge_results, total_a, total_b, c
     background_path = os.path.join(script_dir, "background.png")
     
     if os.path.exists(background_path):
-        try:
-            img = Image.open(background_path).convert("RGB").resize((1920, 1080))
-        except:
-            img = Image.new("RGB", (1920, 1080), (12, 16, 32))
+        try: img = Image.open(background_path).convert("RGB").resize((1920, 1080))
+        except: img = Image.new("RGB", (1920, 1080), (12, 16, 32))
     else:
         img = Image.new("RGB", (1920, 1080), (12, 16, 32))
         
-    overlay = Image.new("RGBA", (1920, 1080), (0, 0, 0, 215))
+    overlay = Image.new("RGBA", (1920, 1080), (0, 0, 0, 220))
     img = Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
     draw = ImageDraw.Draw(img)
     
     try:
-        font_header = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 32)
-        font_sub = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 18)
-        font_model = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 14)
+        font_header = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 28)
+        font_sub = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 16)
+        font_model = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 13)
     except: font_header = font_sub = font_model = ImageFont.load_default()
 
     def draw_centered(y, text, font, fill):
         bbox = draw.textbbox((0, 0), text, font=font)
         draw.text(((1920 - (bbox[2] - bbox[0])) // 2, y), text, fill=fill, font=font)
 
-    draw_centered(25, f"ROUND {round_num} // 60 DISTINCT COMPANY AI PANEL EVALUATION", font_header, "#FFD700")
-    draw_centered(65, f"ROUND AVERAGE: Apologist {total_a} vs Skeptic {total_b}   ||   CUMULATIVE: Apologist {cum_a} vs Skeptic {cum_b}", font_sub, "#FFFFFF")
+    draw_centered(75, f"ROUND {round_num} SCOREBOARD // 60-AI PANEL EVALUATION", font_header, "#FFD700")
+    draw_centered(115, f"Round Average: Apologist {total_a} vs Skeptic {total_b}   |   Cumulative: Apologist {cum_a} vs Skeptic {cum_b}", font_sub, "#FFFFFF")
 
-    # Group judges by side
     favored_a = [j["name"] for j in judge_results if j["favored"] == "A"]
     favored_b = [j["name"] for j in judge_results if j["favored"] == "B"]
 
-    draw.text((150, 130), f"VOTED FOR APOLOGIST ({len(favored_a)})", fill="#00FFCC", font=font_sub)
-    draw.text((1050, 130), f"VOTED FOR SKEPTIC ({len(favored_b)})", fill="#FF00FF", font=font_sub)
+    draw.text((150, 165), f"VOTED APOLOGIST ({len(favored_a)})", fill="#00FFCC", font=font_sub)
+    draw.text((1050, 165), f"VOTED SKEPTIC ({len(favored_b)})", fill="#FF00FF", font=font_sub)
 
-    # Clean rendering grid to prevent clutter
     def render_clean_list(names, start_x, start_y, accent):
         x_col = start_x
         y_col = start_y
         for i, name in enumerate(names):
             draw.text((x_col, y_col), f"• {name}", fill=accent, font=font_model)
-            y_col += 28
-            if (i + 1) % 18 == 0:  # Start a new sub-column after 18 names
+            y_col += 24
+            if (i + 1) % 18 == 0:
                 y_col = start_y
                 x_col += 240
 
-    render_clean_list(favored_a, 150, 180, "#00FFCC")
-    render_clean_list(favored_b, 1050, 180, "#FF00FF")
+    render_clean_list(favored_a, 150, 205, "#00FFCC")
+    render_clean_list(favored_b, 1050, 205, "#FF00FF")
     img.save(img_out)
 
 def run_debate_pipeline():
@@ -350,20 +344,24 @@ def run_debate_pipeline():
         frame_counter += 1
 
     add_video_segment(f"Welcome to our showcase debate. The topic is: {topic}.", "Moderator", "Moderator", topic)
-    add_video_segment("Hello. I am the Christian Apologist. I will outline the logical grounding.", "AI Christian Apologist", "Apologist", topic)
-    add_video_segment("Hi. I am the Skeptic. I will test every claim for hard evidence.", "AI Skeptic", "Skeptic", topic)
-    add_video_segment("Our 60-company multi-vendor AI panel will judge these rounds blindly.", "Moderator", "Moderator", topic)
+    
+    # RESTORED: AI Preamble Introductions
+    add_video_segment("As OpenAI representing the panel, I look forward to a rigorous, multi-model evaluation of this foundational topic.", "Panelist 1", "Panelist GPT", topic)
+    add_video_segment("And as Anthropic, we are ready to test the structural integrity and logical consistency of every claim presented today.", "Panelist 2", "Panelist Claude", topic)
+
+    add_video_segment("Hello. I am the Christian Apologist. I will outline the core arguments for design.", "AI Christian Apologist", "Apologist", topic)
+    add_video_segment("And I am the Skeptic. I will demonstrate why those assumptions collapse under scrutiny.", "AI Skeptic", "Skeptic", topic)
 
     cumulative_score_a, cumulative_score_b, last_text_b = 0, 0, "None yet."
 
     for round_num in range(1, 4):
-        add_video_segment(f"Moving into Round {round_num}. The Apologist speaks first.", "Moderator", "Moderator", topic)
+        add_video_segment(f"Moving into Round {round_num}. The Apologist takes the floor.", "Moderator", "Moderator", topic)
 
-        prompt_a = f"Topic: {topic}\nRound {round_num}: Present a compelling pro argument in everyday language. {'Address this counter: ' + last_text_b if round_num > 1 else ''}"
+        prompt_a = f"Topic: {topic}\nRound {round_num}: Present a compelling, detailed pro argument. {'Directly address this counterpoint: ' + last_text_b if round_num > 1 else ''}"
         text_a = query_openrouter(prompt_a, "openai/gpt-4o")
         add_video_segment(text_a, "AI Christian Apologist", "Apologist", topic)
 
-        prompt_b = f"Topic: {topic}\nRound {round_num}: You are the AI Skeptic. Provide a forceful, multi-paragraph rebuttal directly countering the Apologist's claims: {text_a}"
+        prompt_b = f"Topic: {topic}\nRound {round_num}: You are the AI Skeptic. Provide a forceful, multi-paragraph rebuttal attacking the Apologist's logic point-by-point: {text_a}"
         text_b = query_openrouter(prompt_b, "anthropic/claude-3.5-sonnet")
         last_text_b = text_b
         add_video_segment(text_b, "AI Skeptic", "Skeptic", topic)
@@ -405,24 +403,21 @@ def run_debate_pipeline():
 
         generate_round_breakdown_image(round_num, judge_results, round_total_a, round_total_b, cumulative_score_a, cumulative_score_b, bg_img)
         card_x_score = create_ui_overlay("Moderator", "Moderator", topic, "center", "#FFD700", ui_img)
-        
         generate_edge_audio_and_subs(summary_text, "Moderator", score_aud, score_ass)
-        
         render_video_segment(bg_img, ui_img, score_aud, score_ass, score_vid, "center", "#FFD700", card_x_score, zoom_bg=False)
         final_segments.append(score_vid)
 
-        # Dynamic Representative Selection
         rep_a_pool = [j for j in judge_results if j["favored"] == "A"]
         rep_b_pool = [j for j in judge_results if j["favored"] == "B"]
         
         rep_a = random.choice(rep_a_pool) if rep_a_pool else judge_results[0]
         rep_b = random.choice(rep_b_pool) if rep_b_pool else judge_results[1]
 
-        commentary_prompt_1 = f"Topic: {topic}\nYou are {rep_a['name']} on a 60-company AI judging panel. In Round {round_num}, you gave the Apologist {int(rep_a['score_a'])} points, officially voting in favor of them. Speak directly in the first person. Briefly explain your specific rationale for why you believed the pro argument was stronger."
+        commentary_prompt_1 = f"Topic: {topic}\nYou are {rep_a['name']} on the AI panel. In Round {round_num}, you favored the Apologist with {int(rep_a['score_a'])} points. In 2 to 3 sentences max (~15 seconds spoken), state why you chose their argument."
         commentary_text_1 = query_openrouter(commentary_prompt_1, rep_a['id'])
         add_video_segment(commentary_text_1, "Panelist 1", f"Judge: {rep_a['name']}", topic)
 
-        commentary_prompt_2 = f"Topic: {topic}\nYou are {rep_b['name']} on a 60-company AI judging panel. In Round {round_num}, you gave the Skeptic {int(rep_b['score_b'])} points, officially voting in favor of them. Speak directly in the first person. Add your perspective on why you chose the rebuttal."
+        commentary_prompt_2 = f"Topic: {topic}\nYou are {rep_b['name']} on the AI panel. In Round {round_num}, you favored the Skeptic with {int(rep_b['score_b'])} points. In 2 to 3 sentences max (~15 seconds spoken), state why you chose their rebuttal."
         commentary_text_2 = query_openrouter(commentary_prompt_2, rep_b['id'])
         add_video_segment(commentary_text_2, "Panelist 2", f"Judge: {rep_b['name']}", topic)
 
