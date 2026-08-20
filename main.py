@@ -37,7 +37,6 @@ FALLBACK_MODELS = [
 ]
 
 def clean_for_speech(text):
-    # Removes punctuation characters like colons, semicolons, quotes that TTS reads out loud
     cleaned = text.replace(":", " ").replace(";", " ").replace('"', '').replace('"', '').replace('"', '')
     cleaned = re.sub(r'\s+', ' ', cleaned).strip()
     return cleaned
@@ -105,27 +104,27 @@ def get_base_background():
             return Image.open("background.png").convert("RGB").resize((1920, 1080))
         except Exception:
             pass
-    return Image.new("RGB", (1920, 1080), (15, 20, 40))
+    return Image.new("RGB", (1920, 1080), (12, 16, 32))
 
-def apply_spotlight_overlay(img, position="center"):
-    overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
+def apply_speaker_spotlight(img, position="center"):
+    base = img.convert("RGBA")
+    overlay = Image.new("RGBA", base.size, (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay)
     
     if position == "left":
-        center_x, center_y = 520, 540
+        cx, cy, color = 480, 540, (0, 255, 204)
     elif position == "right":
-        center_x, center_y = 1400, 540
+        cx, cy, color = 1440, 540, (255, 0, 255)
     else:
-        center_x, center_y = 960, 540
+        cx, cy, color = 960, 540, (255, 215, 0)
         
-    radius = 700
-    for r in range(radius, 0, -20):
-        alpha = int(30 * (1.0 - r / radius))
-        color = (0, 255, 204, alpha) if position == "left" else (255, 0, 255, alpha) if position == "right" else (255, 215, 0, alpha)
-        draw.ellipse([center_x - r, center_y - r, center_x + r, center_y + r], fill=color)
+    # Concentric glowing gradient rings for a vibrant spotlight effect
+    for r in range(650, 50, -40):
+        alpha = int(24 * (1.0 - r / 650.0))
+        draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill=(color[0], color[1], color[2], alpha))
         
-    overlay = overlay.filter(ImageFilter.GaussianBlur(40))
-    return Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
+    overlay = overlay.filter(ImageFilter.GaussianBlur(35))
+    return Image.alpha_composite(base, overlay).convert("RGB")
 
 def generate_speaker_frame(speaker_name, role_label, topic, frame_index, wave_phase=1):
     pos = "center"
@@ -138,7 +137,7 @@ def generate_speaker_frame(speaker_name, role_label, topic, frame_index, wave_ph
         glow_color = "#FF00FF"
 
     img = get_base_background()
-    img = apply_spotlight_overlay(img, pos)
+    img = apply_speaker_spotlight(img, pos)
     draw = ImageDraw.Draw(img)
 
     try:
@@ -157,24 +156,25 @@ def generate_speaker_frame(speaker_name, role_label, topic, frame_index, wave_ph
 
     card_x = 200 if pos == "left" else 1080 if pos == "right" else 560
     card_y = 750
-    draw.rounded_rectangle([card_x, card_y, card_x + 640, card_y + 140], radius=16, fill=(15, 22, 36), outline=glow_color, width=3)
     
+    # Speaker Card Box
+    draw.rounded_rectangle([card_x, card_y, card_x + 640, card_y + 140], radius=16, fill=(18, 26, 46), outline=glow_color, width=3)
     draw.ellipse([card_x + 35, card_y + 55, card_x + 65, card_y + 85], fill=glow_color)
 
-    # Clean single-line text printing to avoid duplicates
+    # Clean single-line text printing (zero duplication)
     draw.text((card_x + 90, card_y + 30), speaker_name, fill="white", font=font_name)
     draw.text((card_x + 90, card_y + 75), role_label.upper(), fill=glow_color, font=font_role)
 
-    # Pulsating Sine/Cosine Equalizer Wave Simulation
+    # Pulsating Sine/Cosine Wave Equalizer Bars
     bar_start_x = card_x + 510
     bar_base_y = card_y + 70
     
     if wave_phase == 1:
-        heights = [8, 22, 34, 18, 12]
+        heights = [10, 24, 36, 18, 12]
     elif wave_phase == 2:
-        heights = [28, 14, 8, 26, 32]
+        heights = [30, 16, 8, 28, 34]
     else:
-        heights = [16, 30, 20, 10, 24]
+        heights = [18, 32, 22, 10, 26]
 
     for i, h in enumerate(heights):
         bx = bar_start_x + (i * 12)
@@ -186,7 +186,7 @@ def generate_speaker_frame(speaker_name, role_label, topic, frame_index, wave_ph
 
 def generate_round_breakdown_image(round_num, scores_a, scores_b, total_a, total_b):
     img = get_base_background()
-    img = apply_spotlight_overlay(img, "center")
+    img = apply_speaker_spotlight(img, "center")
     draw = ImageDraw.Draw(img)
 
     try:
@@ -215,7 +215,7 @@ def generate_round_breakdown_image(round_num, scores_a, scores_b, total_a, total
 
     y_start = 195
     for (judge, score) in col_a_judges:
-        draw.rounded_rectangle([200, y_start, 920, y_start + 70], radius=8, fill=(15, 22, 36), outline=(50, 70, 100), width=2)
+        draw.rounded_rectangle([200, y_start, 920, y_start + 70], radius=8, fill=(18, 26, 46), outline=(50, 70, 100), width=2)
         draw.text((230, y_start + 14), judge["name"], fill="white", font=font_model)
         draw.text((230, y_start + 38), judge["provider"], fill="#8A99AD", font=font_meta)
         draw.text((830, y_start + 22), f"{score} pts", fill="#00FFCC", font=font_score)
@@ -223,7 +223,7 @@ def generate_round_breakdown_image(round_num, scores_a, scores_b, total_a, total
 
     y_start = 195
     for (judge, score) in col_b_judges:
-        draw.rounded_rectangle([1100, y_start, 1820, y_start + 70], radius=8, fill=(15, 22, 36), outline=(50, 70, 100), width=2)
+        draw.rounded_rectangle([1100, y_start, 1820, y_start + 70], radius=8, fill=(18, 26, 46), outline=(50, 70, 100), width=2)
         draw.text((1130, y_start + 14), judge["name"], fill="white", font=font_model)
         draw.text((1130, y_start + 38), judge["provider"], fill="#8A99AD", font=font_meta)
         draw.text((1730, y_start + 22), f"{score} pts", fill="#FF00FF", font=font_score)
@@ -237,7 +237,7 @@ def add_clean_subtitle_events(text, start_time, duration, dialogue_events):
     words = text.split()
     if not words:
         return
-    chunk_size = 10
+    chunk_size = 9
     chunks = [" ".join(words[i:i + chunk_size]) for i in range(0, len(words), chunk_size)]
     chunk_duration = duration / len(chunks)
     curr = start_time
@@ -262,7 +262,7 @@ def run_debate_pipeline():
     frame_counter = 0
 
     # 1. Moderator Introduction
-    intro_text = f"Welcome everyone to today's formal showcase debate. Our central question is: {topic}. We have an expert panel of AI judges ready to score, and two debaters who will break down both sides in clear, everyday terms."
+    intro_text = f"Welcome everyone to today's formal showcase debate. Our central question is: {topic}. We have an expert panel of AI judges ready to score, and two debaters who will break down both sides clearly."
     dur = generate_edge_audio(intro_text, "Moderator", "intro.mp3")
     audio_files.append("intro.mp3")
     img = generate_speaker_frame("Moderator Christopher", "Moderator", topic, frame_counter, wave_phase=1)
@@ -272,7 +272,7 @@ def run_debate_pipeline():
     current_time += dur
 
     # 2. AI Debater Introductions
-    intro_a_text = "Hello everyone. I am the Christian Apologist. In this debate, I will explain the logical and historical reasons supporting the Christian worldview using clear, everyday examples."
+    intro_a_text = "Hello everyone. I am the Christian Apologist. In this debate, I will explain the logical and historical reasons supporting the Christian worldview."
     dur = generate_edge_audio(intro_a_text, "AI Christian Apologist", "intro_a.mp3")
     audio_files.append("intro_a.mp3")
     img = generate_speaker_frame("Christian Apologist", "AI Christian Apologist", topic, frame_counter, wave_phase=2)
@@ -281,7 +281,7 @@ def run_debate_pipeline():
     add_clean_subtitle_events(intro_a_text, current_time, dur, dialogue_events)
     current_time += dur
 
-    intro_b_text = "Hi. I am the Skeptic. My goal is to look closely at every claim, ask tough questions, and check if the evidence truly adds up for everyday people."
+    intro_b_text = "Hi. I am the Skeptic. My goal is to look closely at every claim, ask tough questions, and check if the evidence truly adds up."
     dur = generate_edge_audio(intro_b_text, "AI Skeptic", "intro_b.mp3")
     audio_files.append("intro_b.mp3")
     img = generate_speaker_frame("Skeptic", "AI Skeptic", topic, frame_counter, wave_phase=3)
@@ -317,8 +317,8 @@ def run_debate_pipeline():
     for round_num in range(1, 4):
         print(f"\n--- Round {round_num} of 3 ---")
         
-        # Narrator Round Intro
-        narrator_intro = f"We are now moving into Round {round_num}. The Christian Apologist will present their core case first, followed directly by the Skeptic's response."
+        # Extended Narrator Round Intro
+        narrator_intro = f"We are now moving into Round {round_num}. Both sides have prepared their core positions on {topic}. Let us listen closely as the Christian Apologist presents their case first, followed directly by the Skeptic's counter-argument."
         dur = generate_edge_audio(narrator_intro, "Moderator", f"r{round_num}_intro.mp3")
         audio_files.append(f"r{round_num}_intro.mp3")
         img = generate_speaker_frame("Moderator Christopher", "Moderator", topic, frame_counter, wave_phase=1)
@@ -327,8 +327,8 @@ def run_debate_pipeline():
         add_clean_subtitle_events(narrator_intro, current_time, dur, dialogue_events)
         current_time += dur
 
-        # Apologist Speech (Simplified everyday language)
-        prompt_a = f"Topic: {topic}\nRound {round_num}: Present a pro-apologetic argument using simple, everyday language that anyone can understand without overly complex jargon. Write about 130 words."
+        # Apologist Speech
+        prompt_a = f"Topic: {topic}\nRound {round_num}: Present a strong pro-apologetic argument using simple, clear, everyday language that anyone can understand without overly complex jargon. Write about 130 words."
         text_a = query_openrouter(prompt_a, primary_model_id="openai/gpt-5.6").replace(",", " -")
         dur = generate_edge_audio(text_a, "AI Christian Apologist", f"round_{round_num}_a.mp3")
         audio_files.append(f"round_{round_num}_a.mp3")
@@ -338,8 +338,8 @@ def run_debate_pipeline():
         add_clean_subtitle_events(text_a, current_time, dur, dialogue_events)
         current_time += dur
 
-        # Skeptic Speech (Simplified everyday language)
-        prompt_b = f"Topic: {topic}\nRound {round_num}: Provide a counter-argument from a Skeptical perspective challenging the apologist position using simple, everyday language. Write about 130 words."
+        # Skeptic Speech
+        prompt_b = f"Topic: {topic}\nRound {round_num}: Provide a strong counter-argument from a Skeptical perspective challenging the apologist position using simple, clear, everyday language. Write about 130 words."
         text_b = query_openrouter(prompt_b, primary_model_id="anthropic/claude-3.5-sonnet").replace(",", " -")
         dur = generate_edge_audio(text_b, "AI Skeptic", f"round_{round_num}_b.mp3")
         audio_files.append(f"round_{round_num}_b.mp3")
@@ -349,7 +349,7 @@ def run_debate_pipeline():
         add_clean_subtitle_events(text_b, current_time, dur, dialogue_events)
         current_time += dur
 
-        # Strict End-of-Round Judging
+        # Judging scores calculation
         scores_a, scores_b = [], []
         for judge in PRIMARY_JUDGES:
             resp = query_openrouter(f"Score Round {round_num} on '{topic}'. Format: 'A: [score], B: [score]'", primary_model_id=judge["id"], timeout=15)
@@ -390,7 +390,7 @@ def run_debate_pipeline():
     add_clean_subtitle_events(outro_text, current_time, dur, dialogue_events)
     current_time += dur
 
-    print("\n[SUBTITLES] Building subtitle configuration...")
+    print("\n[SUBTITLES] Building synchronized subtitle layout...")
     ass_content = """[Script Info]
 Title: AI Debate Subtitles
 ScriptType: v4.00+
@@ -419,7 +419,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             f.write(f"file '{img_path}'\n")
             f.write(f"duration {dur}\n")
         if segment_images:
-            f.write(f"file '{segment_images[-1][0]}'\n")
+            f.write(f"file '{segment_images[-1][0]e}'\n")
 
     print("\n[FFmpeg] Rendering final video package...")
     ffmpeg_cmd = [
