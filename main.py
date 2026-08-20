@@ -144,13 +144,18 @@ def generate_segment_ass(text, duration, filename):
 def create_background_and_ui(speaker_name, role_label, topic, pos, glow_color, bg_out, ui_out):
     script_dir = os.path.dirname(os.path.abspath(__file__))
     background_path = os.path.join(script_dir, "background.png")
+    if not os.path.exists(background_path):
+        background_path = "background.png"
     
     if os.path.exists(background_path):
         try: 
             base_img = Image.open(background_path).convert("RGB").resize((1920, 1080))
-        except Exception: 
+            print(f"Successfully loaded background from: {background_path}")
+        except Exception as e: 
+            print(f"Error opening background image: {e}")
             base_img = Image.new("RGB", (1920, 1080), (12, 16, 32))
     else:
+        print("background.png not found, using procedural grid fallback.")
         base_img = Image.new("RGB", (1920, 1080), (12, 16, 32))
         draw = ImageDraw.Draw(base_img)
         for x in range(0, 1920, 60): draw.line([(x,0), (x,1080)], fill=(20, 26, 45), width=2)
@@ -175,24 +180,37 @@ def create_background_and_ui(speaker_name, role_label, topic, pos, glow_color, b
     bbox = draw.textbbox((0, 0), f"TOPIC: {topic}", font=font_title)
     draw.text(((1920 - (bbox[2] - bbox[0])) // 2, 30), f"TOPIC: {topic}", fill="white", font=font_title)
 
-    card_x, card_y = 120, 840
+    # Dynamic label card positioning based on speaker side
+    if pos == "left":
+        card_x = 100
+    elif pos == "right":
+        card_x = 1220
+    else:
+        card_x = (1920 - 600) // 2
+
+    card_y = 840
     draw.rounded_rectangle([card_x, card_y, card_x + 600, card_y + 120], radius=16, fill=(18, 26, 46, 230), outline=glow_color, width=3)
     draw.ellipse([card_x + 30, card_y + 45, card_x + 55, card_y + 70], fill=glow_color)
     draw.text((card_x + 75, card_y + 35), speaker_name, fill="white", font=font_name)
     draw.text((card_x + 75, card_y + 70), role_label.upper(), fill=glow_color, font=font_role)
     ui_img.save(ui_out)
+    return card_x
 
-def render_video_segment(bg_path, ui_path, audio_path, ass_path, output_path, position, glow_color):
+def render_video_segment(bg_path, ui_path, audio_path, ass_path, output_path, position, glow_color, card_x):
     ff_color = "0x" + glow_color.lstrip("#")
     pan_x = "0" if position == "left" else ("iw-iw/zoom" if position == "right" else "iw/2-(iw/zoom/2)")
     pan_y = "ih/2-(ih/zoom/2)"
     
+    # Place audio wave strictly inside the speaker card window
+    wave_x = card_x + 380
+    wave_y = 875
+
     filter_complex = (
         f"[0:v]scale=1920:1080,zoompan=z='min(zoom+0.0004,1.15)':x='{pan_x}':y='{pan_y}':d=8000:s=1920x1080:fps=30[zoomed_bg];"
         f"[1:v]scale=1920:1080[ui];"
         f"[2:a]showwaves=s=180x50:mode=cline:colors={ff_color}[wave];"
         f"[zoomed_bg][ui]overlay=0:0[bg_with_ui];"
-        f"[bg_with_ui][wave]overlay=560:875,ass={ass_path}[outv]"
+        f"[bg_with_ui][wave]overlay={wave_x}:{wave_y},ass={ass_path}[outv]"
     )
     
     cmd = [
@@ -261,9 +279,9 @@ def run_debate_pipeline():
         vid_file = f"seg_{frame_counter}.mp4"
 
         dur = generate_edge_audio(text, role, aud_file)
-        create_background_and_ui(name, role, topic_str, pos, glow, bg_file, ui_file)
+        card_x = create_background_and_ui(name, role, topic_str, pos, glow, bg_file, ui_file)
         generate_segment_ass(text, dur, ass_file)
-        render_video_segment(bg_file, ui_file, aud_file, ass_file, vid_file, pos, glow)
+        render_video_segment(bg_file, ui_file, aud_file, ass_file, vid_file, pos, glow, card_x)
         
         final_segments.append(vid_file)
         frame_counter += 1
@@ -317,6 +335,7 @@ def run_debate_pipeline():
         cumulative_score_a += round_total_a
         cumulative_score_b += round_total_b
 
+        # 1. Show Score Breakdown Image
         summary_text = f"Round {round_num} concluded. Apologist averaged {round_total_a}, Skeptic averaged {round_total_b}."
         bg_img = f"score_bg_r{round_num}.png"
         ui_img = f"score_ui_r{round_num}.png"
@@ -325,13 +344,21 @@ def run_debate_pipeline():
         score_vid = f"score_vid_{round_num}.mp4"
 
         generate_round_breakdown_image(round_num, judge_results, round_total_a, round_total_b, bg_img)
-        Image.new("RGBA", (1920, 1080), (0,0,0,0)).save(ui_img) 
+        card_x_score = create_background_and_ui("Moderator Christopher", "Moderator", topic, "center", "#FFD700", bg_img, ui_img)
         
         dur = generate_edge_audio(summary_text, "Moderator", score_aud)
         generate_segment_ass(summary_text, dur, score_ass)
-        render_video_segment(bg_img, ui_img, score_aud, score_ass, score_vid, "center", "#FFD700")
-        
+        render_video_segment(bg_img, ui_img, score_aud, score_ass, score_vid, "center", "#FFD700", card_x_score)
         final_segments.append(score_vid)
+
+        # 2. Representative AI Panelists Explain Scoring Rationale
+        commentary_prompt_1 = f"As OpenAI on the 60-company judge panel, explain briefly why Side A scored {round_total_a} and Side B scored {round_total_b} in Round {round_num}."
+        commentary_text_1 = query_openrouter(commentary_prompt_1, "openai/gpt-4o")
+        add_video_segment(commentary_text_1, "Panelist 1", "Panelist GPT", topic)
+
+        commentary_prompt_2 = f"As Anthropic on the 60-company judge panel, add your perspective on these round scores."
+        commentary_text_2 = query_openrouter(commentary_prompt_2, "anthropic/claude-3.5-sonnet")
+        add_video_segment(commentary_text_2, "Panelist 2", "Panelist Claude", topic)
 
     winner = "Christian Apologist" if cumulative_score_a > cumulative_score_b else "Skeptic"
     outro_text = f"Our 60-company AI panel awards Christian Apologist {cumulative_score_a} total points and Skeptic {cumulative_score_b} points. Victory goes to the {winner}."
