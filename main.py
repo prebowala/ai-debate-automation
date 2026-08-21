@@ -26,16 +26,16 @@ OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
 
 OUTPUT_FILE = "final_debate_output.mp4"
 
-# ------------------------------------------------------------
+# ============================================================
 # JUDGING
-# ------------------------------------------------------------
+# ============================================================
 
 MAX_JUDGES = 30
 JUDGE_WORKERS = 10
 
-# ------------------------------------------------------------
+# ============================================================
 # DEBATE
-# ------------------------------------------------------------
+# ============================================================
 
 ROUNDS = 3
 
@@ -45,9 +45,9 @@ MAX_APOLOGIST_WORDS = 500
 MIN_SKEPTIC_WORDS = 450
 MAX_SKEPTIC_WORDS = 750
 
-# ------------------------------------------------------------
+# ============================================================
 # TIMEOUTS
-# ------------------------------------------------------------
+# ============================================================
 
 MODEL_DISCOVERY_TIMEOUT = 20
 MODEL_REQUEST_TIMEOUT = 60
@@ -436,7 +436,6 @@ def choose_primary_models(
     for model in preference:
 
         if model in available:
-
             found.append(model)
 
     if len(found) >= 2:
@@ -795,7 +794,6 @@ Return ONLY the complete spoken rebuttal.
 
         return retry
 
-    # Try another model.
     for fallback in FALLBACK_MODELS:
 
         if fallback == model:
@@ -823,7 +821,6 @@ Return ONLY the complete spoken rebuttal.
 
             return fallback_response
 
-    # Last-resort fallback.
     return (
         "The difficulty with this argument is that it moves from "
         "the fact that we have a question about the universe to "
@@ -928,10 +925,7 @@ Do not include commentary.
     )
 
     if not response:
-
-        return neutral_judge(
-            model
-        )
+        return neutral_judge(model)
 
     try:
 
@@ -942,55 +936,34 @@ Do not include commentary.
         )
 
         if not match:
-
-            return neutral_judge(
-                model
-            )
+            return neutral_judge(model)
 
         data = json.loads(
             match.group(0)
         )
 
         a_argument = clamp_score(
-            data.get(
-                "A_argument",
-                50,
-            )
+            data.get("A_argument", 50)
         )
 
         a_rebuttal = clamp_score(
-            data.get(
-                "A_rebuttal",
-                50,
-            )
+            data.get("A_rebuttal", 50)
         )
 
         a_clarity = clamp_score(
-            data.get(
-                "A_clarity",
-                50,
-            )
+            data.get("A_clarity", 50)
         )
 
         b_argument = clamp_score(
-            data.get(
-                "B_argument",
-                50,
-            )
+            data.get("B_argument", 50)
         )
 
         b_rebuttal = clamp_score(
-            data.get(
-                "B_rebuttal",
-                50,
-            )
+            data.get("B_rebuttal", 50)
         )
 
         b_clarity = clamp_score(
-            data.get(
-                "B_clarity",
-                50,
-            )
+            data.get("B_clarity", 50)
         )
 
         a_total = (
@@ -1006,24 +979,17 @@ Do not include commentary.
         ) / 3
 
         return {
-
             "model": model,
 
             "A_argument": a_argument,
             "A_rebuttal": a_rebuttal,
             "A_clarity": a_clarity,
-            "A_total": round(
-                a_total,
-                2,
-            ),
+            "A_total": round(a_total, 2),
 
             "B_argument": b_argument,
             "B_rebuttal": b_rebuttal,
             "B_clarity": b_clarity,
-            "B_total": round(
-                b_total,
-                2,
-            ),
+            "B_total": round(b_total, 2),
 
             "winner": (
                 "A"
@@ -1034,9 +1000,7 @@ Do not include commentary.
 
     except Exception:
 
-        return neutral_judge(
-            model
-        )
+        return neutral_judge(model)
 
 
 def evaluate_round(
@@ -1088,9 +1052,7 @@ def evaluate_round(
 
                 result = future.result()
 
-                results.append(
-                    result
-                )
+                results.append(result)
 
                 completed += 1
 
@@ -1119,17 +1081,18 @@ def evaluate_round(
     return results
 
 
-def calculate_round_average(
-    results
-):
+def calculate_round_average(results):
+
+    if not results:
+        return 50.0, 50.0
 
     a = sum(
-        r["A_total"]
+        float(r.get("A_total", 50))
         for r in results
     ) / len(results)
 
     b = sum(
-        r["B_total"]
+        float(r.get("B_total", 50))
         for r in results
     ) / len(results)
 
@@ -1207,9 +1170,7 @@ def generate_audio(
         VOICES["Moderator"],
     )
 
-    clean_text = clean_for_speech(
-        text
-    )
+    clean_text = clean_for_speech(text)
 
     try:
 
@@ -1293,11 +1254,6 @@ def generate_subtitles(
     filename,
 ):
 
-    # --------------------------------------------------------
-    # Larger blocks deliberately remain on screen.
-    # Only the active word changes colour.
-    # --------------------------------------------------------
-
     header = r"""[Script Info]
 ScriptType: v4.00+
 PlayResX: 1920
@@ -1307,7 +1263,7 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: DebateSub,DejaVu Sans,44,&H00FFFFFF,&H00FFFF00,&H00000000,&HCC000000,1,0,0,0,100,100,0,0,1,3,1,5,260,260,180,1
+Style: DebateSub,DejaVu Sans,44,&H00FFFFFF,&H0000FFFF,&H00000000,&HCC000000,1,0,0,0,100,100,0,0,1,3,1,5,260,260,180,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -1325,7 +1281,10 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
         return
 
+    # Larger blocks reduce the visual distraction caused by
+    # tiny word-boundary timing differences.
     chunk_size = 16
+
     chunks = []
 
     for i in range(
@@ -1345,21 +1304,13 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
     for chunk in chunks:
 
-        paragraph_start = (
-            chunk[0]["start"]
-        )
-
         paragraph_end = (
             chunk[-1]["end"] + 0.15
         )
 
-        for index, active in enumerate(
-            chunk
-        ):
+        for index, active in enumerate(chunk):
 
-            start = active[
-                "start"
-            ]
+            start = active["start"]
 
             if index + 1 < len(chunk):
 
@@ -1402,15 +1353,11 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             events.append(
                 "Dialogue: 0,"
                 +
-                format_ass_time(
-                    start
-                )
+                format_ass_time(start)
                 +
                 ","
                 +
-                format_ass_time(
-                    end
-                )
+                format_ass_time(end)
                 +
                 ",DebateSub,,0,0,0,,"
                 +
@@ -1451,20 +1398,14 @@ def create_background(
         "background.png",
     )
 
-    if os.path.exists(
-        background
-    ):
+    if os.path.exists(background):
 
         try:
 
             image = (
-                Image.open(
-                    background
-                )
+                Image.open(background)
                 .convert("RGB")
-                .resize(
-                    (1920, 1080)
-                )
+                .resize((1920, 1080))
             )
 
         except Exception:
@@ -1483,15 +1424,9 @@ def create_background(
             (12, 16, 32),
         )
 
-        draw = ImageDraw.Draw(
-            image
-        )
+        draw = ImageDraw.Draw(image)
 
-        for x in range(
-            0,
-            1920,
-            60,
-        ):
+        for x in range(0, 1920, 60):
 
             draw.line(
                 [(x, 0), (x, 1080)],
@@ -1499,11 +1434,7 @@ def create_background(
                 width=2,
             )
 
-        for y in range(
-            0,
-            1080,
-            60,
-        ):
+        for y in range(0, 1080, 60):
 
             draw.line(
                 [(0, y), (1920, y)],
@@ -1517,9 +1448,7 @@ def create_background(
         (0, 0, 0, 0),
     )
 
-    draw = ImageDraw.Draw(
-        overlay
-    )
+    draw = ImageDraw.Draw(overlay)
 
     if position == "left":
         cx = 400
@@ -1556,9 +1485,7 @@ def create_background(
         )
 
     overlay = overlay.filter(
-        ImageFilter.GaussianBlur(
-            30
-        )
+        ImageFilter.GaussianBlur(30)
     )
 
     result = Image.alpha_composite(
@@ -1588,9 +1515,7 @@ def create_ui_overlay(
         (0, 0, 0, 0),
     )
 
-    draw = ImageDraw.Draw(
-        image
-    )
+    draw = ImageDraw.Draw(image)
 
     title_font = load_font(
         30,
@@ -1606,10 +1531,6 @@ def create_ui_overlay(
         19,
         bold=True,
     )
-
-    # --------------------------------------------------------
-    # TOPIC — deliberately smaller
-    # --------------------------------------------------------
 
     title = f"TOPIC: {topic}"
 
@@ -1630,8 +1551,8 @@ def create_ui_overlay(
             24,
         ),
         title,
-        fill="white",
         font=title_font,
+        fill="white",
     )
 
     # --------------------------------------------------------
@@ -1661,10 +1582,8 @@ def create_ui_overlay(
         [
             card_x,
             card_y,
-            card_x +
-            card_width,
-            card_y +
-            card_height,
+            card_x + card_width,
+            card_y + card_height,
         ],
         radius=15,
         fill=(18, 26, 46, 235),
@@ -1672,7 +1591,6 @@ def create_ui_overlay(
         width=3,
     )
 
-    # Indicator
     draw.ellipse(
         [
             card_x + 22,
@@ -1683,26 +1601,24 @@ def create_ui_overlay(
         fill=glow_color,
     )
 
-    # Name
     draw.text(
         (
             card_x + 60,
             card_y + 12,
         ),
         speaker_name,
-        fill="white",
         font=name_font,
+        fill="white",
     )
 
-    # Role
     draw.text(
         (
             card_x + 60,
             card_y + 52,
         ),
         role_label.upper(),
-        fill=glow_color,
         font=role_font,
+        fill=glow_color,
     )
 
     image.save(filename)
@@ -1711,7 +1627,7 @@ def create_ui_overlay(
 
 
 # ============================================================
-# SCOREBOARD IMAGE
+# SCOREBOARD IMAGE — FIXED
 # ============================================================
 
 def generate_scoreboard(
@@ -1733,20 +1649,14 @@ def generate_scoreboard(
         "background.png",
     )
 
-    if os.path.exists(
-        background
-    ):
+    if os.path.exists(background):
 
         try:
 
             image = (
-                Image.open(
-                    background
-                )
+                Image.open(background)
                 .convert("RGB")
-                .resize(
-                    (1920, 1080)
-                )
+                .resize((1920, 1080))
             )
 
         except Exception:
@@ -1776,9 +1686,7 @@ def generate_scoreboard(
         overlay,
     ).convert("RGB")
 
-    draw = ImageDraw.Draw(
-        image
-    )
+    draw = ImageDraw.Draw(image)
 
     header = load_font(
         36,
@@ -1790,9 +1698,17 @@ def generate_scoreboard(
         bold=True,
     )
 
-    small = load_font(
-        18
-    )
+    small = load_font(18)
+
+    # --------------------------------------------------------
+    # IMPORTANT:
+    #
+    # Every draw.text() call below explicitly uses font=.
+    # This prevents Pillow from interpreting the font as
+    # the fill argument and producing:
+    #
+    # ImageDraw.text() got multiple values for argument 'fill'
+    # --------------------------------------------------------
 
     def centred(
         y,
@@ -1818,12 +1734,13 @@ def generate_scoreboard(
                 y,
             ),
             text,
-            fill=fill,
             font=font,
+            fill=fill,
         )
 
-    judge_count = len(
-        results
+    judge_count = max(
+        1,
+        len(results),
     )
 
     centred(
@@ -1835,7 +1752,10 @@ def generate_scoreboard(
 
     centred(
         72,
-        f"{judge_count} AI JUDGES • THREE CATEGORIES • EACH SCORE 0–100",
+        (
+            f"{judge_count} AI JUDGES • "
+            f"THREE CATEGORIES • EACH SCORE 0–100"
+        ),
         sub,
         "white",
     )
@@ -1889,21 +1809,21 @@ def generate_scoreboard(
     draw.text(
         (120, 215),
         "CATEGORY AVERAGES",
-        sub,
+        font=sub,
         fill="#FFD700",
     )
 
     draw.text(
         (500, 250),
         "APOLOGIST",
-        small,
+        font=small,
         fill="#00FFCC",
     )
 
     draw.text(
         (680, 250),
         "SKEPTIC",
-        small,
+        font=small,
         fill="#FF66FF",
     )
 
@@ -1912,87 +1832,86 @@ def generate_scoreboard(
     for label, a_key, b_key in categories:
 
         a = sum(
-            r[a_key]
+            float(r.get(a_key, 50))
             for r in results
         ) / judge_count
 
         b = sum(
-            r[b_key]
+            float(r.get(b_key, 50))
             for r in results
         ) / judge_count
 
         draw.text(
             (120, y),
             label,
-            small,
+            font=small,
             fill="white",
         )
 
         draw.text(
             (500, y),
             f"{a:.1f}",
-            small,
+            font=small,
             fill="#00FFCC",
         )
 
         draw.text(
             (680, y),
             f"{b:.1f}",
-            small,
+            font=small,
             fill="#FF66FF",
         )
 
         y += 35
 
     # --------------------------------------------------------
-    # INDIVIDUAL JUDGES
+    # INDIVIDUAL JUDGE SCORES
     # --------------------------------------------------------
 
     draw.text(
         (1000, 215),
         "INDIVIDUAL JUDGE SCORES",
-        sub,
+        font=sub,
         fill="#FFD700",
     )
 
     draw.text(
         (1000, 250),
         "Judge",
-        small,
+        font=small,
         fill="white",
     )
 
     draw.text(
         (1570, 250),
         "A",
-        small,
+        font=small,
         fill="#00FFCC",
     )
 
     draw.text(
         (1630, 250),
         "B",
-        small,
+        font=small,
         fill="#FF66FF",
     )
 
-    # 30 judges fit comfortably.
     row_height = 25
     start_y = 285
 
-    for index, result in enumerate(
-        results
-    ):
+    for index, result in enumerate(results):
 
         y = (
             start_y +
-            index *
-            row_height
+            index * row_height
         )
 
-        name = result[
-            "model"
-        ]
+        name = str(
+            result.get(
+                "model",
+                f"Judge {index + 1}",
+            )
+        )
 
         if len(name) > 48:
 
@@ -2005,44 +1924,50 @@ def generate_scoreboard(
         draw.text(
             (1000, y),
             name,
-            small,
+            font=small,
             fill="white",
         )
 
         draw.text(
             (1570, y),
-            f"{result['A_total']:.0f}",
-            small,
+            f"{float(result.get('A_total', 50)):.0f}",
+            font=small,
             fill="#00FFCC",
         )
 
         draw.text(
             (1630, y),
-            f"{result['B_total']:.0f}",
-            small,
+            f"{float(result.get('B_total', 50)):.0f}",
+            font=small,
             fill="#FF66FF",
         )
 
-    image.save(
-        filename
-    )
+    # --------------------------------------------------------
+    # IF MORE RESULTS EVER GET PASSED IN THAN FIT ON SCREEN
+    # --------------------------------------------------------
+
+    max_visible = 30
+
+    if len(results) > max_visible:
+
+        draw.text(
+            (1000, 1035),
+            (
+                f"+ {len(results) - max_visible} "
+                f"additional judges included in the average"
+            ),
+            font=small,
+            fill="#FFD700",
+        )
+
+    image.save(filename)
 
 
 # ============================================================
 # FFMPEG PATH HANDLING
 # ============================================================
 
-def ffmpeg_filter_path(
-    filename
-):
-
-    # IMPORTANT FIX:
-    #
-    # Previous build failed because FFmpeg's ASS filter could
-    # not open the subtitle file.
-    #
-    # Use an absolute path and escape characters that matter
-    # inside an FFmpeg filter expression.
+def ffmpeg_filter_path(filename):
 
     path = os.path.abspath(
         filename
@@ -2081,40 +2006,28 @@ def render_video_segment(
     card_x,
 ):
 
-    # --------------------------------------------------------
-    # Verify subtitle file BEFORE invoking FFmpeg.
-    # --------------------------------------------------------
-
-    if not os.path.exists(
-        ass
-    ):
+    if not os.path.exists(ass):
 
         raise FileNotFoundError(
             f"Subtitle file was not created: "
             f"{os.path.abspath(ass)}"
         )
 
-    if not os.path.exists(
-        audio
-    ):
+    if not os.path.exists(audio):
 
         raise FileNotFoundError(
             f"Audio file was not created: "
             f"{os.path.abspath(audio)}"
         )
 
-    if not os.path.exists(
-        background
-    ):
+    if not os.path.exists(background):
 
         raise FileNotFoundError(
             f"Background file missing: "
             f"{os.path.abspath(background)}"
         )
 
-    if not os.path.exists(
-        ui
-    ):
+    if not os.path.exists(ui):
 
         raise FileNotFoundError(
             f"UI file missing: "
@@ -2125,15 +2038,7 @@ def render_video_segment(
         ass
     )
 
-    glow = glow_color.lstrip(
-        "#"
-    )
-
-    # --------------------------------------------------------
-    # Dynamic sound-wave position.
-    #
-    # Keep it inside the card.
-    # --------------------------------------------------------
+    glow = glow_color.lstrip("#")
 
     wave_x = card_x + 365
     wave_y = 943
@@ -2146,33 +2051,19 @@ def render_video_segment(
         ),
     )
 
-    # --------------------------------------------------------
-    # Background movement
-    # --------------------------------------------------------
-
     if position == "left":
 
         pan_x = "0"
 
     elif position == "right":
 
-        pan_x = (
-            "iw-(iw/zoom)"
-        )
+        pan_x = "iw-(iw/zoom)"
 
     else:
 
-        pan_x = (
-            "(iw-(iw/zoom))/2"
-        )
+        pan_x = "(iw-(iw/zoom))/2"
 
-    pan_y = (
-        "(ih-(ih/zoom))/2"
-    )
-
-    # --------------------------------------------------------
-    # FILTER
-    # --------------------------------------------------------
+    pan_y = "(ih-(ih/zoom))/2"
 
     filter_complex = (
         "[0:v]"
@@ -2276,9 +2167,7 @@ def render_video_segment(
         )
 
         print(
-            result.stderr[
-                -5000:
-            ]
+            result.stderr[-5000:]
         )
 
         raise RuntimeError(
@@ -2540,9 +2429,7 @@ def stitch_segments(
     output,
 ):
 
-    list_file = (
-        "concat_list.txt"
-    )
+    list_file = "concat_list.txt"
 
     with open(
         list_file,
@@ -2556,7 +2443,6 @@ def stitch_segments(
                 segment
             )
 
-            # FFmpeg concat demuxer format.
             path = path.replace(
                 "'",
                 "'\\''",
@@ -2594,9 +2480,7 @@ def stitch_segments(
     if result.returncode != 0:
 
         print(
-            result.stderr[
-                -5000:
-            ]
+            result.stderr[-5000:]
         )
 
         raise RuntimeError(
@@ -2652,16 +2536,9 @@ def run_debate_pipeline():
         )
 
     print()
-    print(
-        "=" * 70
-    )
-    print(
-        "AI DEBATE ARENA"
-    )
-    print(
-        "=" * 70
-    )
-
+    print("=" * 70)
+    print("AI DEBATE ARENA")
+    print("=" * 70)
     print(
         f"\nTOPIC: {topic}\n"
     )
@@ -2670,9 +2547,7 @@ def run_debate_pipeline():
     # MODEL DISCOVERY
     # --------------------------------------------------------
 
-    available_models = (
-        discover_models()
-    )
+    available_models = discover_models()
 
     if not available_models:
 
@@ -2715,12 +2590,10 @@ def run_debate_pipeline():
                 apologist_model,
                 skeptic_model,
             )
-        ][
-            :MAX_JUDGES
-        ]
+        ][:MAX_JUDGES]
 
     print(
-        f"🎤 Debate generation models selected internally."
+        "🎤 Debate generation models selected internally."
     )
 
     print(
@@ -2773,9 +2646,7 @@ def run_debate_pipeline():
             glow,
         )
 
-        segments.append(
-            video
-        )
+        segments.append(video)
 
         segment_id += 1
 
@@ -2820,30 +2691,22 @@ def run_debate_pipeline():
     ):
 
         print()
-        print(
-            "=" * 70
-        )
-
+        print("=" * 70)
         print(
             f"ROUND {round_num}"
         )
-
-        print(
-            "=" * 70
-        )
+        print("=" * 70)
 
         # ----------------------------------------------------
         # APOLOGIST
         # ----------------------------------------------------
 
-        apologist_text = (
-            generate_apologist(
-                topic,
-                round_num,
-                previous_apologist,
-                previous_skeptic,
-                apologist_model,
-            )
+        apologist_text = generate_apologist(
+            topic,
+            round_num,
+            previous_apologist,
+            previous_skeptic,
+            apologist_model,
         )
 
         print(
@@ -2863,14 +2726,12 @@ def run_debate_pipeline():
         # SKEPTIC
         # ----------------------------------------------------
 
-        skeptic_text = (
-            generate_skeptic(
-                topic,
-                round_num,
-                apologist_text,
-                previous_skeptic,
-                skeptic_model,
-            )
+        skeptic_text = generate_skeptic(
+            topic,
+            round_num,
+            apologist_text,
+            previous_skeptic,
+            skeptic_model,
         )
 
         print(
@@ -2890,13 +2751,8 @@ def run_debate_pipeline():
         # SAVE HISTORY
         # ----------------------------------------------------
 
-        previous_apologist = (
-            apologist_text
-        )
-
-        previous_skeptic = (
-            skeptic_text
-        )
+        previous_apologist = apologist_text
+        previous_skeptic = skeptic_text
 
         # ----------------------------------------------------
         # JUDGING
@@ -2989,15 +2845,13 @@ def run_debate_pipeline():
             score_subs,
         )
 
-        score_card_x = (
-            create_ui_overlay(
-                "Moderator",
-                "Scoreboard",
-                topic,
-                "center",
-                "#FFD700",
-                score_ui,
-            )
+        score_card_x = create_ui_overlay(
+            "Moderator",
+            "Scoreboard",
+            topic,
+            "center",
+            "#FFD700",
+            score_ui,
         )
 
         render_video_segment(
@@ -3022,13 +2876,13 @@ def run_debate_pipeline():
         a_results = [
             r
             for r in results
-            if r["winner"] == "A"
+            if r.get("winner") == "A"
         ]
 
         b_results = [
             r
             for r in results
-            if r["winner"] == "B"
+            if r.get("winner") == "B"
         ]
 
         if not a_results:
@@ -3047,16 +2901,14 @@ def run_debate_pipeline():
                 b_results
             )
 
-            comment_a = (
-                generate_panel_commentary(
-                    judge_a["model"],
-                    "A",
-                    topic,
-                    round_num,
-                    apologist_text,
-                    skeptic_text,
-                    panel_comments,
-                )
+            comment_a = generate_panel_commentary(
+                judge_a["model"],
+                "A",
+                topic,
+                round_num,
+                apologist_text,
+                skeptic_text,
+                panel_comments,
             )
 
             panel_comments.append(
@@ -3071,16 +2923,14 @@ def run_debate_pipeline():
                 "#3399FF",
             )
 
-            comment_b = (
-                generate_panel_commentary(
-                    judge_b["model"],
-                    "B",
-                    topic,
-                    round_num,
-                    apologist_text,
-                    skeptic_text,
-                    panel_comments,
-                )
+            comment_b = generate_panel_commentary(
+                judge_b["model"],
+                "B",
+                topic,
+                round_num,
+                apologist_text,
+                skeptic_text,
+                panel_comments,
             )
 
             panel_comments.append(
@@ -3136,17 +2986,9 @@ def run_debate_pipeline():
     # --------------------------------------------------------
 
     print()
-    print(
-        "=" * 70
-    )
-
-    print(
-        "✅ DEBATE COMPLETE"
-    )
-
-    print(
-        "=" * 70
-    )
+    print("=" * 70)
+    print("✅ DEBATE COMPLETE")
+    print("=" * 70)
 
     print(
         f"🎥 Output: {OUTPUT_FILE}"
