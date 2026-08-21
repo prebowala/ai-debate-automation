@@ -9,14 +9,16 @@ import requests
 import subprocess
 import concurrent.futures
 import time
-from typing import List, Dict
+
+from typing import List, Dict, Optional
 
 import edge_tts
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
 
 # ============================================================
-# AI DEBATE ARENA — STABLE VIDEO RENDERER
+# AI DEBATE ARENA
+# FULL TOPIC-ADAPTIVE VERSION
 # ============================================================
 
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY")
@@ -30,42 +32,91 @@ VIDEO_W = 1920
 VIDEO_H = 1080
 FPS = 30
 
+
+# ============================================================
+# DEBATE SETTINGS
+# ============================================================
+
 ROUNDS = 3
 
-# 4 exchanges x ~125 words = ~500 words per side per round.
+# Approximately 500 spoken words per side per round.
+WORDS_PER_SIDE_PER_ROUND = 500
+
+# Four back-and-forth exchanges per round.
 TURNS_PER_SIDE_PER_ROUND = 4
+
 WORDS_PER_TURN = 125
+
 MIN_TURN_WORDS = 105
 MAX_TURN_WORDS = 145
 
-# Seven independent providers maximum.
+
+# ============================================================
+# JUDGING
+# ============================================================
+
+# One model per provider/company.
 MAX_JUDGES = 7
 JUDGE_WORKERS = 7
 
-MODEL_DISCOVERY_TIMEOUT = 20
-MODEL_REQUEST_TIMEOUT = 60
-JUDGE_REQUEST_TIMEOUT = 35
+
+# ============================================================
+# VISUALS
+# ============================================================
+
+# Maximum automatically selected visual moments per speech segment.
+MAX_VISUALS_PER_SEGMENT = 2
+
+# Minimum gap between visual moments.
+MIN_VISUAL_GAP = 2.0
+
+# Visual cards stay above subtitles.
+VISUAL_X = 700
+VISUAL_Y = 525
+VISUAL_W = 520
+VISUAL_H = 245
 
 
 # ============================================================
-# VOICES
+# TTS VOICES
 # ============================================================
 
+# Debate speakers.
 VOICES = {
     "Moderator": "en-US-AndrewMultilingualNeural",
-    "AI Christian Apologist": "en-US-BrianMultilingualNeural",
-    "AI Skeptic": "en-US-AvaMultilingualNeural",
 
-    # Commentary deliberately uses different voices.
-    "Judge 1": "en-US-ChristopherNeural",
-    "Judge 2": "en-US-EmmaMultilingualNeural",
-    "Judge 3": "en-US-RyanMultilingualNeural",
-    "Judge 4": "en-US-AriaNeural",
-    "Judge 5": "en-US-GuyNeural",
-    "Judge 6": "en-US-JennyNeural",
-    "Judge 7": "en-US-DavisNeural",
+    "AI Christian Apologist":
+        "en-US-BrianMultilingualNeural",
+
+    "AI Skeptic":
+        "en-US-AvaMultilingualNeural",
+
+    # Separate judge voice.
+    "AI Judge 1":
+        "en-US-ChristopherNeural",
+
+    "AI Judge 2":
+        "en-US-EmmaMultilingualNeural",
+
+    "AI Judge 3":
+        "en-US-GuyNeural",
+
+    "AI Judge 4":
+        "en-US-JennyNeural",
 }
 
+
+JUDGE_VOICES = [
+    "en-US-ChristopherNeural",
+    "en-US-EmmaMultilingualNeural",
+    "en-US-GuyNeural",
+    "en-US-JennyNeural",
+]
+
+
+# ============================================================
+# FALLBACK MODELS
+# ============================================================
 
 FALLBACK_MODELS = [
     "openai/gpt-4o-mini",
@@ -79,7 +130,7 @@ FALLBACK_MODELS = [
 
 
 # ============================================================
-# PROVIDERS
+# PROVIDER NAMES
 # ============================================================
 
 PROVIDER_ALIASES = {
@@ -107,15 +158,15 @@ PROVIDER_ALIASES = {
     "nousresearch": "Nous Research",
     "rekaai": "Reka",
     "reka": "Reka",
+    "databricks": "Databricks",
 }
 
 
-def provider_from_model(model):
-
-    if not model:
+def provider_from_model(model_id):
+    if not model_id:
         return "Unknown"
 
-    prefix = model.split("/", 1)[0].lower()
+    prefix = model_id.split("/", 1)[0].lower().strip()
 
     return PROVIDER_ALIASES.get(
         prefix,
@@ -123,35 +174,17 @@ def provider_from_model(model):
     )
 
 
-def short_model_name(model):
-
-    if not model:
-        return "Unknown"
-
-    name = model.split("/", 1)[-1]
-
-    name = re.sub(
-        r"[-_](instruct|chat|thinking|preview)$",
-        "",
-        name,
-        flags=re.I,
-    )
-
-    if len(name) > 24:
-        name = name[:21] + "..."
-
-    return name
-
-
 # ============================================================
 # CLEANUP
 # ============================================================
 
 def cleanup_cache():
+    print("🧹 Cleaning temporary files...")
 
     patterns = [
         "*.mp4",
         "*.mp3",
+        "*.ass",
         "*.png",
         "*_list.txt",
     ]
@@ -163,7 +196,6 @@ def cleanup_cache():
     }
 
     for pattern in patterns:
-
         for filename in glob.glob(pattern):
 
             if filename in protected:
@@ -174,37 +206,27 @@ def cleanup_cache():
             except Exception:
                 pass
 
+    print("✨ Workspace cleaned.")
+
 
 # ============================================================
 # BASIC UTILITIES
 # ============================================================
 
 def count_words(text):
-
     return len(
         re.findall(
             r"\b[\w'-]+\b",
-            text or "",
+            text or ""
         )
     )
 
 
-def clamp(value):
-
-    try:
-        value = float(value)
-    except Exception:
-        value = 50
-
-    return max(0, min(100, value))
-
-
 def clean_for_speech(text):
-
     text = re.sub(
         r"\([^)]*\)",
         "",
-        text or "",
+        text or ""
     )
 
     replacements = {
@@ -220,10 +242,24 @@ def clean_for_speech(text):
         "&": "and",
     }
 
-    for a, b in replacements.items():
-        text = text.replace(a, b)
+    for old, new in replacements.items():
+        text = text.replace(old, new)
 
-    return re.sub(r"\s+", " ", text).strip()
+    text = re.sub(r"\s+", " ", text)
+
+    return text.strip()
+
+
+def clamp_score(value):
+    try:
+        value = float(value)
+    except Exception:
+        value = 50.0
+
+    return max(
+        0.0,
+        min(100.0, value)
+    )
 
 
 def load_font(size, bold=False):
@@ -232,97 +268,134 @@ def load_font(size, bold=False):
         paths = [
             "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
             "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+            "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+            "C:\\Windows\\Fonts\\arialbd.ttf",
         ]
     else:
         paths = [
             "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
             "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+            "/System/Library/Fonts/Supplemental/Arial.ttf",
+            "C:\\Windows\\Fonts\\arial.ttf",
         ]
 
     for path in paths:
-
         try:
             return ImageFont.truetype(path, size)
         except Exception:
-            pass
+            continue
 
     return ImageFont.load_default()
+
+
+def hex_to_rgba(hex_str, alpha):
+    h = hex_str.lstrip("#")
+
+    return (
+        int(h[0:2], 16),
+        int(h[2:4], 16),
+        int(h[4:6], 16),
+        alpha,
+    )
 
 
 # ============================================================
 # OPENROUTER
 # ============================================================
 
-def headers():
+def openrouter_headers():
 
     return {
-        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-        "Content-Type": "application/json",
-        "HTTP-Referer": "https://openrouter.ai/",
-        "X-Title": "AI Debate Arena",
+        "Authorization":
+            f"Bearer {OPENROUTER_API_KEY}",
+
+        "Content-Type":
+            "application/json",
+
+        "HTTP-Referer":
+            "https://openrouter.ai/",
+
+        "X-Title":
+            "AI Debate Arena",
     }
 
 
 def discover_models():
 
-    try:
-
-        r = requests.get(
-            OPENROUTER_MODELS_URL,
-            headers=headers(),
-            timeout=MODEL_DISCOVERY_TIMEOUT,
+    if not OPENROUTER_API_KEY:
+        raise RuntimeError(
+            "OPENROUTER_API_KEY is missing."
         )
 
-        if r.status_code != 200:
+    try:
+
+        response = requests.get(
+            OPENROUTER_MODELS_URL,
+            headers=openrouter_headers(),
+            timeout=20,
+        )
+
+        if response.status_code != 200:
+            print(
+                f"⚠️ Model discovery returned "
+                f"HTTP {response.status_code}"
+            )
             return []
+
+        data = response.json()
 
         models = []
 
-        for item in r.json().get("data", []):
+        for item in data.get("data", []):
 
-            model = item.get("id")
+            model_id = item.get("id")
 
-            if not model:
+            if not model_id:
                 continue
 
-            low = model.lower()
+            lowered = model_id.lower()
 
-            if any(
-                x in low
-                for x in [
-                    "embed",
-                    "tts",
-                    "whisper",
-                    "audio",
-                    "image",
-                    "vision",
-                    "moderation",
-                    "guard",
-                ]
-            ):
+            excluded = [
+                "embed",
+                "tts",
+                "whisper",
+                "audio",
+                "image",
+                "vision",
+                "moderation",
+                "guard",
+            ]
+
+            if any(x in lowered for x in excluded):
                 continue
 
-            models.append(model)
+            models.append(model_id)
 
         return list(dict.fromkeys(models))
 
     except Exception as exc:
 
-        print("Model discovery failed:", exc)
+        print(
+            f"⚠️ Model discovery failed: "
+            f"{str(exc)[:200]}"
+        )
 
         return []
 
 
-def ask_model(
+def query_openrouter(
     prompt,
-    model,
-    timeout=MODEL_REQUEST_TIMEOUT,
-    max_tokens=1000,
+    model_id,
+    timeout=60,
+    max_tokens=1200,
     temperature=0.7,
 ):
 
+    if not OPENROUTER_API_KEY:
+        return None
+
     payload = {
-        "model": model,
+        "model": model_id,
         "messages": [
             {
                 "role": "user",
@@ -337,46 +410,56 @@ def ask_model(
 
         try:
 
-            r = requests.post(
+            response = requests.post(
                 OPENROUTER_URL,
-                headers=headers(),
+                headers=openrouter_headers(),
                 json=payload,
                 timeout=timeout,
             )
 
-            if r.status_code == 200:
+            if response.status_code == 200:
 
-                choices = r.json().get(
+                data = response.json()
+
+                choices = data.get(
                     "choices",
-                    [],
+                    []
                 )
 
                 if choices:
 
-                    text = (
+                    content = (
                         choices[0]
                         .get("message", {})
                         .get("content", "")
                     )
 
-                    if text and len(text.strip()) > 20:
-                        return text.strip()
+                    if content and len(
+                        content.strip()
+                    ) > 10:
+
+                        return content.strip()
 
             else:
 
                 print(
-                    f"⚠️ {provider_from_model(model)} "
-                    f"HTTP {r.status_code}"
+                    f"⚠️ {provider_from_model(model_id)} "
+                    f"returned HTTP "
+                    f"{response.status_code}"
                 )
 
         except Exception as exc:
 
             print(
-                f"⚠️ {provider_from_model(model)} "
-                f"{str(exc)[:100]}"
+                f"⚠️ Request failed for "
+                f"{provider_from_model(model_id)}: "
+                f"{str(exc)[:120]}"
             )
 
-        time.sleep(1 + attempt)
+        if attempt < 2:
+            time.sleep(
+                1.5 * (attempt + 1)
+            )
 
     return None
 
@@ -385,9 +468,9 @@ def ask_model(
 # MODEL SELECTION
 # ============================================================
 
-def choose_debate_models(models):
+def choose_primary_models(available_models):
 
-    preferred = [
+    preference = [
         "openai/gpt-4o",
         "openai/gpt-4o-mini",
         "openai/gpt-4.1-mini",
@@ -396,20 +479,32 @@ def choose_debate_models(models):
         "google/gemini-2.5-flash",
         "google/gemini-2.0-flash-001",
         "deepseek/deepseek-chat",
+        "qwen/qwen-2.5-72b-instruct",
     ]
 
-    for first in preferred:
+    found = [
+        m for m in preference
+        if m in set(available_models)
+    ]
 
-        if first in models:
+    if len(found) >= 2:
+        return found[0], found[1]
 
-            for second in preferred:
+    if len(found) == 1:
 
-                if (
-                    second in models
-                    and provider_from_model(first)
-                    != provider_from_model(second)
-                ):
-                    return first, second
+        remaining = [
+            m for m in available_models
+            if m != found[0]
+        ]
+
+        if remaining:
+            return found[0], remaining[0]
+
+    if len(available_models) >= 2:
+        return (
+            available_models[0],
+            available_models[1],
+        )
 
     return (
         FALLBACK_MODELS[0],
@@ -417,21 +512,61 @@ def choose_debate_models(models):
     )
 
 
-def choose_judges(models, debate_models):
+def choose_judges(
+    available_models,
+    primary_models,
+):
 
-    used = {
-        provider_from_model(x)
-        for x in debate_models
-    }
+    excluded = set(primary_models)
 
     candidates = [
-        x
-        for x in models
-        if provider_from_model(x) not in used
+        m for m in available_models
+        if m not in excluded
     ]
 
-    # Preferred order for a strong, diverse panel.
-    preferred_providers = [
+    groups = {}
+
+    for model in candidates:
+
+        provider = provider_from_model(model)
+
+        groups.setdefault(
+            provider,
+            []
+        ).append(model)
+
+    preferred_keywords = [
+        "gpt",
+        "claude",
+        "gemini",
+        "grok",
+        "deepseek",
+        "mistral",
+        "llama",
+        "qwen",
+        "command",
+        "nemotron",
+    ]
+
+    selected = []
+
+    for provider, models in groups.items():
+
+        models.sort(
+            key=lambda m: (
+                0 if any(
+                    k in m.lower()
+                    for k in preferred_keywords
+                ) else 1,
+                len(m),
+            )
+        )
+
+        selected.append(
+            (provider, models[0])
+        )
+
+    priority = [
         "OpenAI",
         "Anthropic",
         "Google",
@@ -444,60 +579,19 @@ def choose_judges(models, debate_models):
         "Perplexity",
     ]
 
-    groups = {}
+    selected.sort(
+        key=lambda x: (
+            priority.index(x[0])
+            if x[0] in priority
+            else 999,
+            x[0],
+        )
+    )
 
-    for model in candidates:
-
-        provider = provider_from_model(model)
-
-        groups.setdefault(
-            provider,
-            [],
-        ).append(model)
-
-    selected = []
-
-    # STRICTLY ONE MODEL PER PROVIDER.
-    for provider in preferred_providers:
-
-        if provider not in groups:
-            continue
-
-        # Prefer shorter, established-looking model IDs.
-        candidate = sorted(
-            groups[provider],
-            key=lambda x: (
-                len(x),
-                x,
-            ),
-        )[0]
-
-        selected.append(candidate)
-
-        if len(selected) >= MAX_JUDGES:
-            break
-
-    if len(selected) < MAX_JUDGES:
-
-        for provider, provider_models in groups.items():
-
-            if provider in {
-                provider_from_model(x)
-                for x in selected
-            }:
-                continue
-
-            selected.append(
-                sorted(
-                    provider_models,
-                    key=len,
-                )[0]
-            )
-
-            if len(selected) >= MAX_JUDGES:
-                break
-
-    return selected[:MAX_JUDGES]
+    return [
+        model
+        for _, model in selected[:MAX_JUDGES]
+    ]
 
 
 # ============================================================
@@ -509,134 +603,183 @@ def generate_turn(
     topic,
     round_num,
     turn_num,
-    history,
+    previous_exchange,
     model,
 ):
 
     if side == "A":
-        role = "AI Christian Apologist"
+        side_name = "AI Christian Apologist"
         opponent = "AI Skeptic"
     else:
-        role = "AI Skeptic"
+        side_name = "AI Skeptic"
         opponent = "AI Christian Apologist"
 
+    if round_num == 1 and turn_num == 1:
+
+        instruction = """
+This is the opening exchange.
+Establish a strong foundation without trying
+to deliver the entire debate at once.
+"""
+
+    else:
+
+        instruction = f"""
+This is turn {turn_num} of round {round_num}.
+
+Respond directly to the immediately preceding
+argument.
+
+Do not restart the debate.
+Do not introduce yourself.
+Do not explain your task.
+Do not say "in this round".
+Do not recycle previous arguments.
+Add a genuinely useful new point.
+"""
+
     prompt = f"""
-You are the {role} in a serious public debate.
+You are the {side_name} in a serious public debate.
 
 Topic:
 {topic}
 
-Round:
-{round_num}
-
-Turn:
-{turn_num}
-
 Opponent:
 {opponent}
 
+{instruction}
+
 Previous exchange:
-{history or "This is the opening."}
+{previous_exchange or "None - opening exchange."}
 
-Write approximately {WORDS_PER_TURN} words.
+Write ONLY your spoken contribution.
 
-Target:
-{MIN_TURN_WORDS}-{MAX_TURN_WORDS} words.
+Target approximately {WORDS_PER_TURN} words.
 
-Respond directly to what was just said.
+Aim for {MIN_TURN_WORDS}-{MAX_TURN_WORDS} words.
 
-Do not restart the debate.
+Use natural conversational speech.
+Suitable for a general YouTube audience.
 
-Do not introduce yourself.
+Be specific.
+Use examples or analogies when useful.
 
-Do not say "in this round".
-
-Do not mention AI models or companies.
-
-Do not use headings or numbered lists.
-
-Use natural spoken YouTube language.
-
-Give a substantive argument or rebuttal.
-
-Write ONLY the spoken contribution.
+No headings.
+No numbered lists.
+No bullet points.
+No meta commentary.
+Do not mention AI models.
+Do not mention companies.
 """
 
-    result = ask_model(
+    response = query_openrouter(
         prompt,
         model,
-        max_tokens=420,
+        max_tokens=430,
         temperature=0.78,
     )
 
-    if result:
-        return result
+    if response:
+        return response
 
     return (
-        "The important issue is whether the evidence really "
-        "supports that conclusion, or whether the argument "
-        "requires assumptions that have not yet been established."
+        "The important question is not simply "
+        "whether a conclusion sounds plausible. "
+        "We need to ask whether the evidence "
+        "actually supports it, what assumptions "
+        "are being made, and whether alternative "
+        "explanations have been properly considered."
     )
 
 
-def generate_round(
+def build_round_exchanges(
     topic,
     round_num,
-    model_a,
-    model_b,
+    apologist_model,
+    skeptic_model,
     previous_history,
 ):
 
-    a_turns = []
-    b_turns = []
+    apologist_turns = []
+    skeptic_turns = []
 
-    history = previous_history
+    exchange_history = previous_history
 
-    for turn in range(
+    for turn_num in range(
         1,
-        TURNS_PER_SIDE_PER_ROUND + 1,
+        TURNS_PER_SIDE_PER_ROUND + 1
     ):
 
-        a = generate_turn(
+        apologist = generate_turn(
             "A",
             topic,
             round_num,
-            turn,
-            history,
-            model_a,
+            turn_num,
+            exchange_history,
+            apologist_model,
         )
 
-        a_turns.append(a)
-
-        history += (
-            "\n\nAI CHRISTIAN APOLOGIST:\n"
-            + a
+        apologist_turns.append(
+            apologist
         )
 
-        b = generate_turn(
+        exchange_history = (
+            "AI Christian Apologist:\n"
+            + apologist
+            + "\n\n"
+        )
+
+        skeptic = generate_turn(
             "B",
             topic,
             round_num,
-            turn,
-            history,
-            model_b,
+            turn_num,
+            exchange_history,
+            skeptic_model,
         )
 
-        b_turns.append(b)
-
-        history += (
-            "\n\nAI SKEPTIC:\n"
-            + b
+        skeptic_turns.append(
+            skeptic
         )
 
-    return a_turns, b_turns, history
+        exchange_history += (
+            "AI Skeptic:\n"
+            + skeptic
+            + "\n\n"
+        )
+
+    return (
+        apologist_turns,
+        skeptic_turns,
+        exchange_history,
+    )
 
 
 # ============================================================
 # JUDGING
 # ============================================================
 
-def judge_one(
+def neutral_judge(model):
+
+    return {
+        "model": model,
+        "provider": provider_from_model(model),
+
+        "A_argument": 50,
+        "A_rebuttal": 50,
+        "A_clarity": 50,
+        "A_total": 50,
+
+        "B_argument": 50,
+        "B_rebuttal": 50,
+        "B_clarity": 50,
+        "B_total": 50,
+
+        "winner": "A",
+    }
+
+
+def judge_round(
     model,
     topic,
     round_num,
@@ -645,7 +788,7 @@ def judge_one(
 ):
 
     prompt = f"""
-You are an impartial debate judge.
+You are an independent and impartial debate judge.
 
 Topic:
 {topic}
@@ -653,38 +796,40 @@ Topic:
 Round:
 {round_num}
 
-SIDE A:
+SIDE A — AI CHRISTIAN APOLOGIST:
 {apologist}
 
-SIDE B:
+SIDE B — AI SKEPTIC:
 {skeptic}
 
-Score both sides independently.
+Evaluate both sides independently.
 
-Categories:
+Score:
 
-Argument strength
-Rebuttal quality
-Clarity and reasoning
+1. Argument strength
+2. Rebuttal quality
+3. Clarity and reasoning
 
-Scores must be 0-100.
+Score every category from 0 to 100.
 
-Return ONLY JSON:
+Return ONLY valid JSON:
 
 {{
 "A_argument": 0,
 "A_rebuttal": 0,
 "A_clarity": 0,
+"A_total": 0,
 "B_argument": 0,
 "B_rebuttal": 0,
-"B_clarity": 0
+"B_clarity": 0,
+"B_total": 0
 }}
 """
 
-    response = ask_model(
+    response = query_openrouter(
         prompt,
         model,
-        timeout=JUDGE_REQUEST_TIMEOUT,
+        timeout=35,
         max_tokens=250,
         temperature=0.1,
     )
@@ -697,7 +842,7 @@ Return ONLY JSON:
         match = re.search(
             r"\{.*\}",
             response,
-            re.S,
+            re.DOTALL,
         )
 
         if not match:
@@ -707,13 +852,29 @@ Return ONLY JSON:
             match.group(0)
         )
 
-        aa = clamp(data.get("A_argument", 50))
-        ar = clamp(data.get("A_rebuttal", 50))
-        ac = clamp(data.get("A_clarity", 50))
+        aa = clamp_score(
+            data.get("A_argument", 50)
+        )
 
-        ba = clamp(data.get("B_argument", 50))
-        br = clamp(data.get("B_rebuttal", 50))
-        bc = clamp(data.get("B_clarity", 50))
+        ar = clamp_score(
+            data.get("A_rebuttal", 50)
+        )
+
+        ac = clamp_score(
+            data.get("A_clarity", 50)
+        )
+
+        ba = clamp_score(
+            data.get("B_argument", 50)
+        )
+
+        br = clamp_score(
+            data.get("B_rebuttal", 50)
+        )
+
+        bc = clamp_score(
+            data.get("B_clarity", 50)
+        )
 
         at = (aa + ar + ac) / 3
         bt = (ba + br + bc) / 3
@@ -721,14 +882,17 @@ Return ONLY JSON:
         return {
             "model": model,
             "provider": provider_from_model(model),
+
             "A_argument": aa,
             "A_rebuttal": ar,
             "A_clarity": ac,
-            "A_total": round(at, 1),
+            "A_total": round(at, 2),
+
             "B_argument": ba,
             "B_rebuttal": br,
             "B_clarity": bc,
-            "B_total": round(bt, 1),
+            "B_total": round(bt, 2),
+
             "winner": "A" if at > bt else "B",
         }
 
@@ -736,87 +900,104 @@ Return ONLY JSON:
         return neutral_judge(model)
 
 
-def neutral_judge(model):
-
-    return {
-        "model": model,
-        "provider": provider_from_model(model),
-        "A_argument": 50,
-        "A_rebuttal": 50,
-        "A_clarity": 50,
-        "A_total": 50,
-        "B_argument": 50,
-        "B_rebuttal": 50,
-        "B_clarity": 50,
-        "B_total": 50,
-        "winner": "A",
-    }
-
-
-def judge_round(
+def evaluate_round(
     judges,
     topic,
     round_num,
-    a,
-    b,
+    apologist,
+    skeptic,
 ):
 
     results = []
 
-    with concurrent.futures.ThreadPoolExecutor(
-        max_workers=min(
-            JUDGE_WORKERS,
-            len(judges),
+    print(
+        f"⚖️ Asking {len(judges)} independent AI judges..."
+    )
+
+    def worker(model):
+        return judge_round(
+            model,
+            topic,
+            round_num,
+            apologist,
+            skeptic,
         )
+
+    with concurrent.futures.ThreadPoolExecutor(
+        max_workers=max(1, min(
+            JUDGE_WORKERS,
+            len(judges)
+        ))
     ) as executor:
 
-        futures = [
+        futures = {
             executor.submit(
-                judge_one,
-                model,
-                topic,
-                round_num,
-                a,
-                b,
-            )
+                worker,
+                model
+            ): model
             for model in judges
-        ]
+        }
 
-        for i, future in enumerate(
-            concurrent.futures.as_completed(futures),
-            1,
+        completed = 0
+
+        for future in concurrent.futures.as_completed(
+            futures
         ):
 
-            result = future.result()
+            model = futures[future]
 
-            results.append(result)
+            try:
 
-            print(
-                f"   ✓ Judge {i}/{len(judges)} "
-                f"— {result['provider']}"
-            )
+                result = future.result()
+
+                results.append(result)
+
+                completed += 1
+
+                print(
+                    f"   ✓ Judge "
+                    f"{completed}/{len(judges)} "
+                    f"— {result['provider']}"
+                )
+
+            except Exception as exc:
+
+                print(
+                    f"   ✗ Judge failed "
+                    f"{provider_from_model(model)}: "
+                    f"{str(exc)[:100]}"
+                )
 
     if not results:
         results = [
-            neutral_judge("fallback/fallback")
+            neutral_judge(
+                "fallback/fallback"
+            )
         ]
 
     return results
 
 
-def averages(results):
+def calculate_round_average(results):
 
-    a = sum(x["A_total"] for x in results) / len(results)
-    b = sum(x["B_total"] for x in results) / len(results)
+    a = sum(
+        r["A_total"]
+        for r in results
+    ) / len(results)
 
-    return round(a, 1), round(b, 1)
+    b = sum(
+        r["B_total"]
+        for r in results
+    ) / len(results)
+
+    return round(a, 2), round(b, 2)
 
 
 # ============================================================
 # TTS
 # ============================================================
 
-async def tts_async(
+async def generate_audio_async(
     text,
     voice,
     filename,
@@ -853,11 +1034,16 @@ async def tts_async(
             words.append({
                 "text": chunk["text"],
                 "start": start,
+                "duration": duration,
                 "end": start + duration,
             })
 
-    with open(filename, "wb") as f:
-        f.write(audio)
+    with open(
+        filename,
+        "wb"
+    ) as file:
+
+        file.write(audio)
 
     return words
 
@@ -866,424 +1052,806 @@ def generate_audio(
     text,
     role,
     filename,
+    judge_voice_index=None,
 ):
 
-    if role.startswith("Judge"):
+    if role == "AI Judge":
 
-        voice = VOICES.get(
-            role,
-            VOICES["Judge 1"],
-        )
+        if judge_voice_index is None:
+            judge_voice_index = 0
+
+        voice = JUDGE_VOICES[
+            judge_voice_index
+            % len(JUDGE_VOICES)
+        ]
 
     else:
 
         voice = VOICES.get(
             role,
-            VOICES["Moderator"],
+            VOICES["Moderator"]
         )
 
-    clean = clean_for_speech(text)
+    clean_text = clean_for_speech(text)
 
-    return asyncio.run(
-        tts_async(
-            clean,
-            voice,
-            filename,
+    try:
+
+        return asyncio.run(
+            generate_audio_async(
+                clean_text,
+                voice,
+                filename,
+            )
         )
+
+    except Exception as exc:
+
+        print(
+            f"⚠️ TTS failed using "
+            f"{voice}: {str(exc)[:150]}"
+        )
+
+        return asyncio.run(
+            generate_audio_async(
+                clean_text,
+                VOICES["Moderator"],
+                filename,
+            )
+        )
+
+
+# ============================================================
+# SUBTITLES
+# ============================================================
+
+def format_ass_time(seconds):
+
+    seconds = max(
+        0.0,
+        float(seconds)
+    )
+
+    hours = int(
+        seconds // 3600
+    )
+
+    minutes = int(
+        (seconds % 3600) // 60
+    )
+
+    secs = seconds % 60
+
+    return (
+        f"{hours}:"
+        f"{minutes:02d}:"
+        f"{secs:05.2f}"
     )
 
 
-# ============================================================
-# SUBTITLE PNG SYSTEM
-#
-# NO ASS / LIBASS.
-# Subtitles are ordinary PNG images placed directly into
-# the FFmpeg video filter graph.
-# ============================================================
+def ass_escape(text):
 
-def wrap_text(
-    draw,
-    text,
-    font,
-    max_width,
+    text = str(text)
+
+    text = text.replace(
+        "\\",
+        "\\\\"
+    )
+
+    text = text.replace(
+        "{",
+        "\\{"
+    )
+
+    text = text.replace(
+        "}",
+        "\\}"
+    )
+
+    text = text.replace(
+        "\n",
+        " "
+    )
+
+    return text
+
+
+def generate_subtitles(
+    words,
+    filename,
+    scorecard=False,
 ):
 
-    words = text.split()
+    # Larger blocks intentionally remain on screen
+    # for longer. This makes tiny TTS timing variations
+    # much less distracting.
+    #
+    # No karaoke/highlight effect is used.
 
-    lines = []
-    current = ""
+    margin_v = 75 if scorecard else 125
 
-    for word in words:
+    header = f"""[Script Info]
+ScriptType: v4.00+
+PlayResX: 1920
+PlayResY: 1080
+WrapStyle: 2
+ScaledBorderAndShadow: yes
 
-        test = (
-            word
-            if not current
-            else current + " " + word
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: DebateSub,DejaVu Sans,42,&H00FFFFFF,&H00FFFFFF,&H00000000,&HCC000000,1,0,0,0,100,100,0,0,1,3,1,2,250,250,{margin_v},1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+"""
+
+    if not words:
+
+        with open(
+            filename,
+            "w",
+            encoding="utf-8"
+        ) as file:
+
+            file.write(header)
+
+        return
+
+    events = []
+
+    # Approximately one small paragraph per screen.
+    block_size = 14
+
+    for i in range(
+        0,
+        len(words),
+        block_size
+    ):
+
+        chunk = words[
+            i:i + block_size
+        ]
+
+        if not chunk:
+            continue
+
+        start = float(
+            chunk[0]["start"]
         )
 
-        box = draw.textbbox(
-            (0, 0),
-            test,
-            font=font,
-        )
+        if i + block_size < len(words):
 
-        if box[2] - box[0] <= max_width:
-            current = test
+            end = float(
+                words[i + block_size]["start"]
+            )
+
         else:
 
-            if current:
-                lines.append(current)
+            end = float(
+                chunk[-1]["end"]
+            ) + 0.15
 
-            current = word
+        subtitle = " ".join(
+            ass_escape(
+                w["text"]
+            )
+            for w in chunk
+        )
 
-    if current:
-        lines.append(current)
+        events.append(
+            "Dialogue: 0,"
+            + format_ass_time(start)
+            + ","
+            + format_ass_time(end)
+            + ",DebateSub,,0,0,0,,"
+            + subtitle
+        )
 
-    return lines
+    with open(
+        filename,
+        "w",
+        encoding="utf-8"
+    ) as file:
+
+        file.write(
+            header
+            + "\n".join(events)
+            + "\n"
+        )
 
 
-def create_subtitle_blocks(
+# ============================================================
+# TOPIC-ADAPTIVE VISUAL PLANNER
+# ============================================================
+
+def plan_visuals(
+    text,
+    model,
+):
+
+    """
+    Ask the AI to identify useful visual moments.
+
+    IMPORTANT:
+    This does not control the video pipeline.
+    If it fails, the video simply continues without visuals.
+    """
+
+    prompt = f"""
+You are a visual director for a YouTube debate.
+
+Read this spoken section:
+
+{text}
+
+Identify up to {MAX_VISUALS_PER_SEGMENT}
+important moments that would benefit from a simple
+visual illustration appearing temporarily on screen.
+
+Do NOT choose generic concepts merely because they are
+mentioned.
+
+Choose moments where a visual would genuinely help viewers
+understand an argument, example, story, historical event,
+object, process, place or analogy.
+
+Return ONLY valid JSON in this format:
+
+[
+  {{
+    "phrase": "short exact phrase from the speech",
+    "label": "SHORT 2-5 WORD LABEL",
+    "description": "simple visual description",
+    "kind": "person|place|object|process|concept|history|comparison"
+  }}
+]
+
+Rules:
+
+- The phrase MUST actually appear in the supplied speech.
+- Use exact wording where possible.
+- Maximum {MAX_VISUALS_PER_SEGMENT} items.
+- Do not choose subtitles or conclusions.
+- Do not create visuals merely for decorative purposes.
+"""
+
+    response = query_openrouter(
+        prompt,
+        model,
+        timeout=35,
+        max_tokens=500,
+        temperature=0.2,
+    )
+
+    if not response:
+        return []
+
+    try:
+
+        match = re.search(
+            r"$begin:math:display$\.\*$end:math:display$",
+            response,
+            re.DOTALL
+        )
+
+        if not match:
+            return []
+
+        data = json.loads(
+            match.group(0)
+        )
+
+        if not isinstance(data, list):
+            return []
+
+        output = []
+
+        for item in data:
+
+            if not isinstance(item, dict):
+                continue
+
+            phrase = str(
+                item.get("phrase", "")
+            ).strip()
+
+            label = str(
+                item.get("label", "")
+            ).strip()
+
+            description = str(
+                item.get("description", "")
+            ).strip()
+
+            kind = str(
+                item.get(
+                    "kind",
+                    "concept"
+                )
+            ).strip().lower()
+
+            if not phrase or not label:
+                continue
+
+            if phrase.lower() not in text.lower():
+                continue
+
+            output.append({
+                "phrase": phrase,
+                "label": label[:35],
+                "description": description[:180],
+                "kind": kind,
+            })
+
+            if len(output) >= MAX_VISUALS_PER_SEGMENT:
+                break
+
+        return output
+
+    except Exception:
+        return []
+
+
+def find_phrase_timing(
+    phrase,
     words,
-    prefix,
+):
+
+    if not phrase or not words:
+        return None
+
+    phrase_words = re.findall(
+        r"\b[\w'-]+\b",
+        phrase.lower()
+    )
+
+    source_words = [
+        re.sub(
+            r"[^\w'-]",
+            "",
+            str(w["text"]).lower()
+        )
+        for w in words
+    ]
+
+    phrase_words = [
+        x for x in phrase_words
+        if x
+    ]
+
+    if not phrase_words:
+        return None
+
+    # Exact contiguous word matching.
+    for i in range(
+        0,
+        len(source_words) - len(phrase_words) + 1
+    ):
+
+        if source_words[
+            i:i + len(phrase_words)
+        ] == phrase_words:
+
+            start = float(
+                words[i]["start"]
+            )
+
+            end_index = min(
+                len(words) - 1,
+                i + len(phrase_words) - 1
+            )
+
+            end = float(
+                words[end_index]["end"]
+            ) + 2.5
+
+            return {
+                "start": max(
+                    0.0,
+                    start - 0.15
+                ),
+                "end": max(
+                    start + 2.5,
+                    end
+                ),
+            }
+
+    # Fuzzy fallback: use first distinctive word.
+    for phrase_word in phrase_words:
+
+        if len(phrase_word) < 4:
+            continue
+
+        for index, source_word in enumerate(
+            source_words
+        ):
+
+            if phrase_word == source_word:
+
+                start = float(
+                    words[index]["start"]
+                )
+
+                end_index = min(
+                    len(words) - 1,
+                    index + 12
+                )
+
+                end = float(
+                    words[end_index]["end"]
+                ) + 1.5
+
+                return {
+                    "start": start,
+                    "end": end,
+                }
+
+    return None
+
+
+def create_visual_plan(
+    text,
+    words,
+    model,
 ):
 
     if not words:
         return []
 
-    blocks = []
+    candidates = plan_visuals(
+        text,
+        model
+    )
 
-    # 12 words per block gives a small paragraph,
-    # while still changing frequently enough to follow speech.
-    BLOCK_WORDS = 12
+    if not candidates:
+        return []
 
-    for i in range(
-        0,
-        len(words),
-        BLOCK_WORDS,
-    ):
+    timed = []
 
-        chunk = words[
-            i:i + BLOCK_WORDS
-        ]
+    for item in candidates:
 
-        start = chunk[0]["start"]
-
-        if i + BLOCK_WORDS < len(words):
-            end = words[
-                i + BLOCK_WORDS
-            ]["start"]
-        else:
-            end = chunk[-1]["end"] + 0.15
-
-        filename = (
-            f"{prefix}_subtitle_{i}.png"
+        timing = find_phrase_timing(
+            item["phrase"],
+            words
         )
 
-        image = Image.new(
-            "RGBA",
-            (1700, 190),
-            (0, 0, 0, 0),
-        )
-
-        draw = ImageDraw.Draw(image)
-
-        font = load_font(
-            42,
-            bold=True,
-        )
-
-        text = " ".join(
-            x["text"]
-            for x in chunk
-        )
-
-        lines = wrap_text(
-            draw,
-            text,
-            font,
-            1580,
-        )
-
-        # Maximum two lines.
-        lines = lines[:2]
-
-        total_height = len(lines) * 52
-
-        y = (
-            95 -
-            total_height / 2
-        )
-
-        for line in lines:
-
-            box = draw.textbbox(
-                (0, 0),
-                line,
-                font=font,
-            )
-
-            width = (
-                box[2] -
-                box[0]
-            )
-
-            x = (
-                1700 -
-                width
-            ) / 2
-
-            # Thick dark outline.
-            draw.text(
-                (x, y),
-                line,
-                font=font,
-                fill="white",
-                stroke_width=4,
-                stroke_fill=(0, 0, 0, 255),
-            )
-
-            y += 52
-
-        image.save(filename)
-
-        blocks.append({
-            "file": filename,
-            "start": start,
-            "end": end,
-        })
-
-    return blocks
-
-
-# ============================================================
-# VISUAL CUES
-# ============================================================
-
-VISUALS = {
-    "garden of eden": ("GARDEN OF EDEN", "garden"),
-    "adam": ("ADAM", "person"),
-    "eve": ("EVE", "person"),
-    "apple": ("FRUIT", "fruit"),
-    "fruit": ("FRUIT", "fruit"),
-    "tree": ("TREE", "tree"),
-    "big bang": ("BIG BANG", "universe"),
-    "universe": ("UNIVERSE", "universe"),
-    "earth": ("EARTH", "earth"),
-    "bible": ("BIBLE", "book"),
-    "scripture": ("SCRIPTURE", "book"),
-    "creator": ("CREATOR", "creator"),
-    "god": ("GOD / CREATOR", "creator"),
-    "evolution": ("EVOLUTION", "evolution"),
-    "science": ("SCIENCE", "science"),
-    "consciousness": ("CONSCIOUSNESS", "mind"),
-}
-
-
-def detect_visuals(text, words):
-
-    lower = text.lower()
-    found = []
-
-    for phrase, (label, kind) in VISUALS.items():
-
-        pos = lower.find(phrase)
-
-        if pos < 0:
+        if not timing:
             continue
 
-        ratio = pos / max(1, len(text))
+        item = dict(item)
 
-        index = min(
-            len(words) - 1,
-            int(ratio * len(words)),
-        )
+        item.update(timing)
 
-        start = words[index]["start"]
+        timed.append(item)
 
-        end_index = min(
-            len(words) - 1,
-            index + 18,
-        )
-
-        end = words[end_index]["end"] + 0.4
-
-        found.append({
-            "label": label,
-            "kind": kind,
-            "start": start,
-            "end": end,
-        })
-
-    found.sort(
+    timed.sort(
         key=lambda x: x["start"]
     )
 
-    # Avoid a screen full of competing graphics.
     output = []
 
-    for item in found:
+    for item in timed:
 
         if any(
-            abs(item["start"] - x["start"]) < 1.5
-            for x in output
+            abs(
+                item["start"]
+                -
+                previous["start"]
+            ) < MIN_VISUAL_GAP
+            for previous in output
         ):
             continue
 
         output.append(item)
 
-        if len(output) >= 3:
+        if len(output) >= MAX_VISUALS_PER_SEGMENT:
             break
 
     return output
 
 
-def draw_visual(
+# ============================================================
+# DYNAMIC VISUAL CARD
+# ============================================================
+
+def draw_generic_illustration(
+    draw,
     kind,
-    label,
 ):
 
-    image = Image.new(
-        "RGBA",
-        (650, 300),
-        (0, 0, 0, 0),
-    )
+    cx = 130
+    cy = 120
 
-    draw = ImageDraw.Draw(image)
+    if kind == "person":
 
-    # Card.
-    draw.rounded_rectangle(
-        (5, 5, 645, 295),
-        radius=28,
-        fill=(10, 18, 35, 235),
-        outline=(255, 215, 0, 240),
-        width=4,
-    )
+        draw.ellipse(
+            (85, 35, 175, 125),
+            fill=(235, 190, 150, 255)
+        )
 
-    cx = 325
-    cy = 125
+        draw.line(
+            (130, 125, 130, 205),
+            fill=(70, 145, 220, 255),
+            width=25
+        )
 
-    # Simple illustrated symbols.
-    if kind == "garden" or kind == "tree":
+        draw.line(
+            (130, 145, 70, 185),
+            fill=(70, 145, 220, 255),
+            width=12
+        )
+
+        draw.line(
+            (130, 145, 190, 185),
+            fill=(70, 145, 220, 255),
+            width=12
+        )
+
+        draw.line(
+            (130, 200, 85, 230),
+            fill=(70, 145, 220, 255),
+            width=12
+        )
+
+        draw.line(
+            (130, 200, 175, 230),
+            fill=(70, 145, 220, 255),
+            width=12
+        )
+
+    elif kind == "place":
 
         draw.rectangle(
-            (cx - 15, cy, cx + 15, 240),
-            fill=(120, 75, 35, 255),
+            (55, 115, 205, 205),
+            fill=(115, 80, 50, 255)
         )
 
-        for dx, dy, r in [
-            (-60, -10, 65),
-            (0, -55, 75),
-            (60, -10, 65),
-        ]:
-
-            draw.ellipse(
-                (
-                    cx + dx - r,
-                    cy + dy - r,
-                    cx + dx + r,
-                    cy + dy + r,
-                ),
-                fill=(65, 160, 80, 255),
-            )
-
-    elif kind == "fruit":
-
-        draw.ellipse(
-            (cx - 65, cy - 60, cx + 65, cy + 70),
-            fill=(220, 60, 55, 255),
-            outline="white",
-            width=4,
+        draw.polygon(
+            [
+                (40, 120),
+                (130, 45),
+                (220, 120),
+            ],
+            fill=(160, 60, 55, 255)
         )
 
-        draw.line(
-            (cx, cy - 55, cx + 20, cy - 90),
-            fill=(80, 140, 60, 255),
-            width=8,
+        draw.rectangle(
+            (110, 155, 150, 205),
+            fill=(55, 45, 40, 255)
         )
 
-    elif kind == "person":
-
-        draw.ellipse(
-            (cx - 30, cy - 85, cx + 30, cy - 25),
-            fill=(235, 190, 150, 255),
-        )
-
-        draw.line(
-            (cx, cy - 20, cx, cy + 90),
-            fill=(80, 150, 230, 255),
-            width=18,
-        )
-
-        draw.line(
-            (cx, cy + 20, cx - 65, cy + 60),
-            fill=(80, 150, 230, 255),
-            width=10,
-        )
-
-        draw.line(
-            (cx, cy + 20, cx + 65, cy + 60),
-            fill=(80, 150, 230, 255),
-            width=10,
-        )
-
-    elif kind in ("universe", "earth"):
-
-        draw.ellipse(
-            (cx - 75, cy - 75, cx + 75, cy + 75),
-            fill=(45, 100, 210, 255),
-            outline="white",
-            width=4,
-        )
-
-    elif kind == "book":
+    elif kind == "object":
 
         draw.rounded_rectangle(
-            (cx - 100, cy - 70, cx + 100, cy + 70),
-            radius=12,
-            fill=(100, 60, 35, 255),
-            outline="white",
-            width=4,
+            (55, 55, 205, 205),
+            radius=25,
+            fill=(55, 105, 180, 255),
+            outline=(255, 215, 0, 255),
+            width=4
         )
 
         draw.line(
-            (cx, cy - 65, cx, cy + 65),
+            (80, 130, 180, 130),
             fill="white",
-            width=4,
+            width=8
+        )
+
+    elif kind == "process":
+
+        draw.ellipse(
+            (45, 70, 115, 140),
+            fill=(60, 145, 220, 255)
+        )
+
+        draw.ellipse(
+            (145, 70, 215, 140),
+            fill=(80, 180, 100, 255)
+        )
+
+        draw.line(
+            (115, 105, 145, 105),
+            fill=(255, 215, 0, 255),
+            width=12
+        )
+
+        draw.polygon(
+            [
+                (145, 105),
+                (125, 90),
+                (125, 120),
+            ],
+            fill=(255, 215, 0, 255)
+        )
+
+        draw.ellipse(
+            (45, 160, 215, 220),
+            fill=(130, 75, 170, 255)
+        )
+
+    elif kind == "history":
+
+        draw.rectangle(
+            (60, 60, 200, 205),
+            fill=(110, 75, 45, 255),
+            outline=(255, 215, 0, 255),
+            width=4
+        )
+
+        draw.line(
+            (80, 95, 180, 95),
+            fill="white",
+            width=6
+        )
+
+        draw.line(
+            (80, 130, 180, 130),
+            fill="white",
+            width=6
+        )
+
+        draw.line(
+            (80, 165, 160, 165),
+            fill="white",
+            width=6
+        )
+
+    elif kind == "comparison":
+
+        draw.rectangle(
+            (45, 75, 105, 190),
+            fill=(50, 150, 210, 255)
+        )
+
+        draw.rectangle(
+            (155, 45, 215, 190),
+            fill=(210, 90, 100, 255)
+        )
+
+        draw.line(
+            (130, 45, 130, 205),
+            fill=(255, 215, 0, 255),
+            width=5
         )
 
     else:
 
+        # Concept visual.
         draw.ellipse(
-            (cx - 75, cy - 75, cx + 75, cy + 75),
-            fill=(40, 55, 90, 255),
+            (55, 45, 205, 195),
+            fill=(55, 65, 105, 255),
             outline=(255, 215, 0, 255),
-            width=4,
+            width=5
         )
 
-    font = load_font(
-        30,
-        bold=True,
+        font = load_font(
+            90,
+            bold=True
+        )
+
+        draw.text(
+            (105, 58),
+            "?",
+            fill="white",
+            font=font
+        )
+
+
+def create_visual_asset(
+    visual,
+    index,
+):
+
+    filename = f"visual_{index}.png"
+
+    image = Image.new(
+        "RGBA",
+        (
+            VISUAL_W,
+            VISUAL_H
+        ),
+        (0, 0, 0, 0)
     )
 
-    box = draw.textbbox(
-        (0, 0),
-        label,
-        font=font,
+    draw = ImageDraw.Draw(
+        image
     )
 
-    tw = box[2] - box[0]
+    draw.rounded_rectangle(
+        (
+            4,
+            4,
+            VISUAL_W - 4,
+            VISUAL_H - 4
+        ),
+        radius=28,
+        fill=(12, 18, 35, 238),
+        outline=(255, 215, 0, 235),
+        width=4
+    )
+
+    draw_generic_illustration(
+        draw,
+        visual.get(
+            "kind",
+            "concept"
+        )
+    )
+
+    label_font = load_font(
+        27,
+        bold=True
+    )
+
+    desc_font = load_font(
+        17
+    )
+
+    label = visual.get(
+        "label",
+        "KEY IDEA"
+    ).upper()
 
     draw.text(
-        (
-            325 - tw / 2,
-            220,
-        ),
+        (230, 48),
         label,
-        font=font,
         fill="white",
+        font=label_font
     )
 
-    return image
+    description = visual.get(
+        "description",
+        ""
+    )
+
+    # Simple wrapping.
+    words = description.split()
+    lines = []
+    current = ""
+
+    for word in words:
+
+        candidate = (
+            current + " " + word
+        ).strip()
+
+        box = draw.textbbox(
+            (0, 0),
+            candidate,
+            font=desc_font
+        )
+
+        if box[2] - box[0] > 250:
+
+            if current:
+                lines.append(
+                    current
+                )
+
+            current = word
+
+        else:
+
+            current = candidate
+
+    if current:
+        lines.append(current)
+
+    for line_index, line in enumerate(
+        lines[:5]
+    ):
+
+        draw.text(
+            (
+                230,
+                95 + line_index * 27
+            ),
+            line,
+            fill=(215, 220, 235, 255),
+            font=desc_font
+        )
+
+    image.save(filename)
+
+    return filename
 
 
 # ============================================================
@@ -1291,20 +1859,28 @@ def draw_visual(
 # ============================================================
 
 def create_background(
+    position,
+    glow_color,
     filename,
-    glow="#00FFCC",
 ):
 
-    if os.path.exists("background.png"):
+    source = os.path.join(
+        os.path.dirname(
+            os.path.abspath(__file__)
+        ),
+        "background.png"
+    )
+
+    if os.path.exists(source):
 
         try:
 
-            image = Image.open(
-                "background.png"
-            ).convert("RGB")
-
-            image = image.resize(
-                (VIDEO_W, VIDEO_H)
+            image = (
+                Image.open(source)
+                .convert("RGB")
+                .resize(
+                    (VIDEO_W, VIDEO_H)
+                )
             )
 
         except Exception:
@@ -1312,7 +1888,7 @@ def create_background(
             image = Image.new(
                 "RGB",
                 (VIDEO_W, VIDEO_H),
-                (12, 16, 32),
+                (12, 16, 32)
             )
 
     else:
@@ -1320,121 +1896,189 @@ def create_background(
         image = Image.new(
             "RGB",
             (VIDEO_W, VIDEO_H),
-            (12, 16, 32),
+            (12, 16, 32)
         )
 
-        draw = ImageDraw.Draw(image)
+        draw = ImageDraw.Draw(
+            image
+        )
 
-        for x in range(0, VIDEO_W, 80):
-
-            draw.line(
-                (x, 0, x, VIDEO_H),
-                fill=(20, 27, 46),
-                width=2,
-            )
-
-        for y in range(0, VIDEO_H, 80):
+        for x in range(
+            0,
+            VIDEO_W,
+            60
+        ):
 
             draw.line(
-                (0, y, VIDEO_W, y),
-                fill=(20, 27, 46),
-                width=2,
+                [(x, 0), (x, VIDEO_H)],
+                fill=(20, 26, 45),
+                width=2
             )
 
-    image.save(filename)
+        for y in range(
+            0,
+            VIDEO_H,
+            60
+        ):
+
+            draw.line(
+                [(0, y), (VIDEO_W, y)],
+                fill=(20, 26, 45),
+                width=2
+            )
+
+    overlay = Image.new(
+        "RGBA",
+        (VIDEO_W, VIDEO_H),
+        (0, 0, 0, 0)
+    )
+
+    draw = ImageDraw.Draw(
+        overlay
+    )
+
+    if position == "left":
+        cx = 400
+    elif position == "right":
+        cx = 1520
+    else:
+        cx = 960
+
+    for radius in range(
+        700,
+        50,
+        -50
+    ):
+
+        alpha = int(
+            15 * (
+                1 - radius / 700
+            )
+        )
+
+        draw.ellipse(
+            [
+                cx - radius,
+                540 - radius,
+                cx + radius,
+                540 + radius,
+            ],
+            fill=hex_to_rgba(
+                glow_color,
+                alpha
+            )
+        )
+
+    overlay = overlay.filter(
+        ImageFilter.GaussianBlur(30)
+    )
+
+    result = Image.alpha_composite(
+        image.convert("RGBA"),
+        overlay
+    ).convert("RGB")
+
+    result.save(filename)
 
 
 # ============================================================
-# SPEAKER UI
+# SPEAKER CARD
 # ============================================================
 
-def create_speaker_ui(
-    name,
+def create_ui_overlay(
+    speaker_name,
     topic,
-    glow,
-    filename,
     position,
+    glow_color,
+    filename,
 ):
 
     image = Image.new(
         "RGBA",
         (VIDEO_W, VIDEO_H),
-        (0, 0, 0, 0),
+        (0, 0, 0, 0)
     )
 
-    draw = ImageDraw.Draw(image)
+    draw = ImageDraw.Draw(
+        image
+    )
 
     title_font = load_font(
-        29,
-        bold=True,
+        30,
+        bold=True
     )
 
     name_font = load_font(
         30,
-        bold=True,
+        bold=True
     )
 
-    # Topic.
+    # Topic at top.
     title = f"TOPIC: {topic}"
 
     box = draw.textbbox(
         (0, 0),
         title,
-        font=title_font,
+        font=title_font
     )
+
+    width = box[2] - box[0]
 
     draw.text(
         (
-            (VIDEO_W - (box[2] - box[0])) / 2,
-            25,
+            (VIDEO_W - width) // 2,
+            24
         ),
         title,
-        font=title_font,
         fill="white",
+        font=title_font
     )
 
-    card_w = 650
-    card_h = 105
-    card_y = 875
+    # One identity line only.
+    card_width = 650
+    card_height = 110
+    card_y = 885
 
     if position == "left":
-        card_x = 65
+        card_x = 75
     elif position == "right":
-        card_x = 1205
+        card_x = 1195
     else:
-        card_x = (VIDEO_W - card_w) // 2
+        card_x = (
+            VIDEO_W - card_width
+        ) // 2
 
     draw.rounded_rectangle(
-        (
+        [
             card_x,
             card_y,
-            card_x + card_w,
-            card_y + card_h,
-        ),
+            card_x + card_width,
+            card_y + card_height
+        ],
         radius=18,
-        fill=(12, 20, 38, 235),
-        outline=glow,
-        width=4,
+        fill=(18, 26, 46, 235),
+        outline=glow_color,
+        width=4
     )
 
     draw.ellipse(
-        (
+        [
             card_x + 22,
-            card_y + 39,
-            card_x + 46,
-            card_y + 63,
-        ),
-        fill=glow,
+            card_y + 27,
+            card_x + 47,
+            card_y + 52
+        ],
+        fill=glow_color
     )
 
     draw.text(
         (
             card_x + 65,
-            card_y + 28,
+            card_y + 22
         ),
-        name,
-        font=name_font,
+        speaker_name,
         fill="white",
+        font=name_font
     )
 
     image.save(filename)
@@ -1443,17 +2087,10 @@ def create_speaker_ui(
 
 
 # ============================================================
-# SCORECARD
-#
-# IMPORTANT:
-# This is deliberately a completely separate renderer.
-# NO ZOOM.
-# NO speaker card.
-# NO waveform.
-# NO visual cue.
+# SCORECARD IMAGE
 # ============================================================
 
-def create_scorecard(
+def generate_scoreboard(
     round_num,
     results,
     round_a,
@@ -1463,452 +2100,567 @@ def create_scorecard(
     filename,
 ):
 
-    image = Image.new(
-        "RGB",
-        (VIDEO_W, VIDEO_H),
-        (9, 14, 27),
+    source = os.path.join(
+        os.path.dirname(
+            os.path.abspath(__file__)
+        ),
+        "background.png"
     )
 
-    draw = ImageDraw.Draw(image)
+    if os.path.exists(source):
 
-    title = load_font(
-        40,
-        bold=True,
+        try:
+
+            image = (
+                Image.open(source)
+                .convert("RGB")
+                .resize(
+                    (VIDEO_W, VIDEO_H)
+                )
+            )
+
+        except Exception:
+
+            image = Image.new(
+                "RGB",
+                (VIDEO_W, VIDEO_H),
+                (12, 16, 32)
+            )
+
+    else:
+
+        image = Image.new(
+            "RGB",
+            (VIDEO_W, VIDEO_H),
+            (12, 16, 32)
+        )
+
+    # Dark static background.
+    overlay = Image.new(
+        "RGBA",
+        (VIDEO_W, VIDEO_H),
+        (0, 0, 0, 235)
+    )
+
+    image = Image.alpha_composite(
+        image.convert("RGBA"),
+        overlay
+    ).convert("RGB")
+
+    draw = ImageDraw.Draw(
+        image
+    )
+
+    header = load_font(
+        38,
+        bold=True
     )
 
     sub = load_font(
-        24,
-        bold=True,
-    )
-
-    body = load_font(
-        21,
+        22,
+        bold=True
     )
 
     small = load_font(
-        18,
+        20
     )
 
-    def centre(y, text, font, fill):
+    def centred(
+        y,
+        text,
+        font,
+        fill,
+    ):
 
         box = draw.textbbox(
             (0, 0),
             text,
-            font=font,
+            font=font
         )
 
         width = box[2] - box[0]
 
         draw.text(
             (
-                (VIDEO_W - width) / 2,
-                y,
+                (VIDEO_W - width) // 2,
+                y
             ),
             text,
-            font=font,
             fill=fill,
+            font=font
         )
 
-    centre(
-        35,
+    judge_count = len(results)
+
+    centred(
+        24,
         f"ROUND {round_num} — AI JUDGING PANEL",
-        title,
-        (255, 215, 0),
+        header,
+        "#FFD700"
     )
 
-    centre(
-        88,
-        f"{len(results)} INDEPENDENT PROVIDERS",
+    centred(
+        72,
+        f"{judge_count} INDEPENDENT JUDGES",
         sub,
-        "white",
+        "white"
     )
 
-    # Score boxes.
-    draw.rounded_rectangle(
-        (100, 150, 860, 270),
-        radius=18,
-        fill=(15, 35, 55),
-        outline=(0, 255, 204),
-        width=3,
-    )
-
-    draw.rounded_rectangle(
-        (1060, 150, 1820, 270),
-        radius=18,
-        fill=(45, 20, 48),
-        outline=(255, 0, 255),
-        width=3,
-    )
-
-    centre(
-        175,
-        f"APOLOGIST  {round_a:.1f}",
+    centred(
+        112,
+        (
+            f"ROUND SCORE   "
+            f"APOLOGIST {round_a:.1f}   "
+            f"VS   "
+            f"SKEPTIC {round_b:.1f}"
+        ),
         sub,
-        (0, 255, 204),
+        "white"
     )
 
-    # Draw skeptic manually to avoid overlap.
-    draw.text(
-        (1280, 175),
-        f"SKEPTIC  {round_b:.1f}",
-        font=sub,
-        fill=(255, 100, 255),
+    centred(
+        150,
+        (
+            f"CUMULATIVE   "
+            f"APOLOGIST {cumulative_a:.1f}   "
+            f"VS   "
+            f"SKEPTIC {cumulative_b:.1f}"
+        ),
+        sub,
+        "#FFD700"
     )
 
-    # --------------------------------------------------------
-    # Categories.
-    # --------------------------------------------------------
-
+    # Left panel.
     draw.text(
-        (100, 315),
+        (100, 225),
         "CATEGORY AVERAGES",
-        font=sub,
-        fill=(255, 215, 0),
+        fill="#FFD700",
+        font=sub
     )
 
     draw.text(
-        (520, 355),
+        (500, 265),
         "APOLOGIST",
-        font=small,
-        fill=(0, 255, 204),
+        fill="#00FFCC",
+        font=small
     )
 
     draw.text(
-        (700, 355),
+        (680, 265),
         "SKEPTIC",
-        font=small,
-        fill=(255, 100, 255),
+        fill="#FF66FF",
+        font=small
     )
 
     categories = [
-        ("Argument strength", "A_argument", "B_argument"),
-        ("Rebuttal quality", "A_rebuttal", "B_rebuttal"),
-        ("Clarity & reasoning", "A_clarity", "B_clarity"),
+        (
+            "Argument strength",
+            "A_argument",
+            "B_argument"
+        ),
+        (
+            "Rebuttal quality",
+            "A_rebuttal",
+            "B_rebuttal"
+        ),
+        (
+            "Clarity & reasoning",
+            "A_clarity",
+            "B_clarity"
+        ),
     ]
 
-    y = 395
+    y = 310
 
-    for label, ak, bk in categories:
+    for label, a_key, b_key in categories:
 
-        av = sum(
-            r[ak]
+        a = sum(
+            r[a_key]
             for r in results
-        ) / len(results)
+        ) / judge_count
 
-        bv = sum(
-            r[bk]
+        b = sum(
+            r[b_key]
             for r in results
-        ) / len(results)
+        ) / judge_count
 
         draw.text(
             (100, y),
             label,
-            font=body,
             fill="white",
+            font=small
         )
 
         draw.text(
-            (530, y),
-            f"{av:.1f}",
-            font=body,
-            fill=(0, 255, 204),
+            (500, y),
+            f"{a:.1f}",
+            fill="#00FFCC",
+            font=small
         )
 
         draw.text(
-            (710, y),
-            f"{bv:.1f}",
-            font=body,
-            fill=(255, 100, 255),
+            (680, y),
+            f"{b:.1f}",
+            fill="#FF66FF",
+            font=small
         )
 
-        y += 45
+        y += 48
 
-    # --------------------------------------------------------
-    # Individual judges.
-    # --------------------------------------------------------
-
+    # Right panel.
     draw.text(
-        (1000, 315),
+        (980, 225),
         "INDIVIDUAL JUDGES",
-        font=sub,
-        fill=(255, 215, 0),
+        fill="#FFD700",
+        font=sub
     )
 
     draw.text(
-        (1000, 355),
+        (980, 270),
         "PROVIDER",
-        font=small,
         fill="white",
+        font=small
     )
 
     draw.text(
-        (1550, 355),
+        (1500, 270),
         "A",
-        font=small,
-        fill=(0, 255, 204),
+        fill="#00FFCC",
+        font=small
     )
 
     draw.text(
-        (1640, 355),
+        (1580, 270),
         "B",
-        font=small,
-        fill=(255, 100, 255),
+        fill="#FF66FF",
+        font=small
     )
 
-    y = 395
+    draw.line(
+        [(970, 300), (1680, 300)],
+        fill=(100, 110, 140, 255),
+        width=2
+    )
 
-    for result in results:
+    # Seven judges maximum.
+    row_height = 48
+    start_y = 320
+
+    for index, result in enumerate(results):
+
+        row_y = (
+            start_y
+            + index * row_height
+        )
 
         provider = result.get(
             "provider",
-            "Unknown",
+            "Unknown"
         )
 
-        # Short provider names only.
         if len(provider) > 28:
-            provider = provider[:25] + "..."
+            provider = (
+                provider[:25]
+                + "..."
+            )
 
         draw.text(
-            (1000, y),
+            (980, row_y),
             provider,
-            font=body,
             fill="white",
+            font=small
         )
 
         draw.text(
-            (1535, y),
+            (1500, row_y),
             f"{result['A_total']:.1f}",
-            font=body,
-            fill=(0, 255, 204),
+            fill="#00FFCC",
+            font=small
         )
 
         draw.text(
-            (1625, y),
+            (1580, row_y),
             f"{result['B_total']:.1f}",
-            font=body,
-            fill=(255, 100, 255),
+            fill="#FF66FF",
+            font=small
         )
 
-        y += 43
-
-    # --------------------------------------------------------
-    # Cumulative.
-    # --------------------------------------------------------
-
-    centre(
-        595,
-        f"CUMULATIVE  {cumulative_a:.1f}  —  {cumulative_b:.1f}",
-        sub,
-        (255, 215, 0),
-    )
-
-    # --------------------------------------------------------
-    # Dedicated subtitle-safe zone.
-    # Bottom 180px is intentionally blank.
-    # --------------------------------------------------------
-
-    draw.line(
-        (100, 670, 1820, 670),
-        fill=(60, 70, 95),
-        width=2,
-    )
-
+    # Important:
+    # No topic title, speaker card or zooming occurs here.
     image.save(filename)
 
 
 # ============================================================
-# FFMPEG HELPERS
+# FFMPEG PATH
 # ============================================================
 
-def duration_of_audio(filename):
+def ffmpeg_filter_path(filename):
 
-    command = [
-        "ffprobe",
-        "-v",
-        "error",
-        "-show_entries",
-        "format=duration",
-        "-of",
-        "default=noprint_wrappers=1:nokey=1",
-        filename,
-    ]
-
-    result = subprocess.run(
-        command,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
+    path = os.path.abspath(
+        filename
     )
 
-    try:
-        return float(result.stdout.strip())
-    except Exception:
-        return 1.0
+    path = path.replace(
+        "\\",
+        "/"
+    )
+
+    path = path.replace(
+        "'",
+        r"\'"
+    )
+
+    path = path.replace(
+        ":",
+        r"\:"
+    )
+
+    return path
 
 
-def render_debate_video(
+# ============================================================
+# VIDEO SEGMENT
+# ============================================================
+
+def render_video_segment(
     background,
     ui,
     audio,
-    subtitle_blocks,
-    visual_cues,
+    subtitles,
     output,
+    position,
+    glow_color,
+    card_x,
+    card_y,
+    visual_plan,
 ):
 
-    inputs = [
-        "-loop", "1", "-i", background,
-        "-loop", "1", "-i", ui,
-        "-i", audio,
+    required = [
+        background,
+        ui,
+        audio,
+        subtitles,
     ]
 
-    # Subtitle PNG inputs.
-    for block in subtitle_blocks:
-        inputs += [
-            "-loop", "1",
-            "-i", block["file"],
-        ]
+    for path in required:
 
-    subtitle_start_index = 3
+        if not os.path.exists(path):
 
-    # Visual inputs.
-    visual_images = []
+            raise FileNotFoundError(
+                f"Required file missing: "
+                f"{os.path.abspath(path)}"
+            )
 
-    for i, cue in enumerate(visual_cues):
+    visual_assets = []
 
-        filename = f"visual_{i}.png"
-
-        img = draw_visual(
-            cue["kind"],
-            cue["label"],
-        )
-
-        img.save(filename)
-
-        visual_images.append(
-            (filename, cue)
-        )
-
-        inputs += [
-            "-loop", "1",
-            "-i", filename,
-        ]
-
-    filters = []
-
-    # Static background.
-    filters.append(
-        "[0:v]scale=1920:1080[bg]"
-    )
-
-    filters.append(
-        "[1:v]scale=1920:1080[ui]"
-    )
-
-    filters.append(
-        "[bg][ui]overlay=0:0[base]"
-    )
-
-    current = "[base]"
-
-    # --------------------------------------------------------
-    # Visuals ABOVE subtitles.
-    # --------------------------------------------------------
-
-    input_index = 3 + len(subtitle_blocks)
-
-    for i, (filename, cue) in enumerate(
-        visual_images
+    for index, visual in enumerate(
+        visual_plan or []
     ):
 
-        label = f"v{i}"
+        try:
 
-        filters.append(
+            asset = create_visual_asset(
+                visual,
+                index
+            )
+
+            visual_assets.append(
+                (asset, visual)
+            )
+
+        except Exception as exc:
+
+            print(
+                f"⚠️ Visual creation skipped: "
+                f"{str(exc)[:100]}"
+            )
+
+    glow = glow_color.lstrip("#")
+
+    if position == "left":
+        pan_x = "0"
+    elif position == "right":
+        pan_x = "iw-(iw/zoom)"
+    else:
+        pan_x = "(iw-(iw/zoom))/2"
+
+    filter_parts = []
+
+    filter_parts.append(
+        "[0:v]"
+        "scale=1920:1080,"
+        "zoompan="
+        "z='min(zoom+0.00020,1.05)':"
+        f"x='{pan_x}':"
+        "y='(ih-(ih/zoom))/2':"
+        "d=9000:"
+        "s=1920x1080:"
+        "fps=30"
+        "[bg];"
+    )
+
+    filter_parts.append(
+        "[1:v]"
+        "scale=1920:1080"
+        "[ui];"
+    )
+
+    filter_parts.append(
+        "[2:a]"
+        "showwaves="
+        "s=300x58:"
+        "mode=cline:"
+        f"colors=0x{glow}:"
+        "rate=30"
+        "[wave];"
+    )
+
+    filter_parts.append(
+        "[bg][ui]"
+        "overlay=0:0"
+        "[base];"
+    )
+
+    # Waveform is deliberately to the right of the name,
+    # inside the lower card, not across the speaker name.
+    wave_x = card_x + 330
+    wave_y = card_y + 47
+
+    filter_parts.append(
+        "[base][wave]"
+        f"overlay={wave_x}:{wave_y}"
+        "[withwave];"
+    )
+
+    current = "[withwave]"
+    input_index = 3
+
+    for index, (
+        asset,
+        visual
+    ) in enumerate(
+        visual_assets
+    ):
+
+        label = f"visual{index}"
+
+        filter_parts.append(
             f"[{input_index}:v]"
-            f"scale=650:300"
+            "format=rgba"
+            f"[{label}];"
+        )
+
+        # Slightly above subtitle region.
+        x = (
+            VIDEO_W - VISUAL_W
+        ) // 2
+
+        y = VISUAL_Y
+
+        start = max(
+            0.0,
+            float(
+                visual["start"]
+            )
+        )
+
+        end = max(
+            start + 2.0,
+            float(
+                visual["end"]
+            )
+        )
+
+        # Fade in/out.
+        enable = (
+            f"between(t,{start:.2f},{end:.2f})"
+        )
+
+        filter_parts.append(
+            f"{current}"
             f"[{label}]"
+            f"overlay={x}:{y}:"
+            f"enable='{enable}'"
+            f"[v{index}];"
         )
 
-        out = f"vis{i}"
-
-        filters.append(
-            f"{current}[{label}]"
-            f"overlay=635:535:"
-            f"enable='between(t,"
-            f"{cue['start']:.2f},"
-            f"{cue['end']:.2f})'"
-            f"[{out}]"
-        )
-
-        current = f"[{out}]"
-
+        current = f"[v{index}]"
         input_index += 1
 
-    # --------------------------------------------------------
-    # Subtitles LAST.
-    #
-    # They are therefore always on top.
-    # Bottom position is fixed and never overlaps scorecards
-    # because this renderer is used only for debate segments.
-    # --------------------------------------------------------
-
-    for i, block in enumerate(
-        subtitle_blocks
-    ):
-
-        label = f"s{i}"
-
-        filters.append(
-            f"[{subtitle_start_index + i}:v]"
-            f"format=rgba"
-            f"[{label}]"
-        )
-
-        out = f"sub{i}"
-
-        filters.append(
-            f"{current}[{label}]"
-            f"overlay=110:765:"
-            f"enable='between(t,"
-            f"{block['start']:.3f},"
-            f"{block['end']:.3f})'"
-            f"[{out}]"
-        )
-
-        current = f"[{out}]"
-
-    filters.append(
-        f"{current}[vout]"
+    subtitle_path = ffmpeg_filter_path(
+        subtitles
     )
 
-    filter_complex = ";".join(filters)
+    # Subtitles are burned LAST.
+    # Therefore they are always visible above the video
+    # composition and cannot be hidden by visual cards.
+    filter_parts.append(
+        f"{current}"
+        f"ass='{subtitle_path}'"
+        "[outv]"
+    )
+
+    filter_complex = "".join(
+        filter_parts
+    )
 
     command = [
         "ffmpeg",
         "-y",
+
+        "-loop",
+        "1",
+        "-framerate",
+        str(FPS),
+        "-i",
+        background,
+
+        "-i",
+        ui,
+
+        "-i",
+        audio,
     ]
 
-    command += inputs
+    for asset, _ in visual_assets:
+
+        command += [
+            "-loop",
+            "1",
+            "-i",
+            asset,
+        ]
 
     command += [
         "-filter_complex",
         filter_complex,
+
         "-map",
-        "[vout]",
+        "[outv]",
+
         "-map",
         "2:a",
+
         "-c:v",
         "libx264",
+
         "-preset",
         "veryfast",
+
         "-crf",
         "20",
+
         "-pix_fmt",
         "yuv420p",
+
         "-c:a",
         "aac",
+
         "-b:a",
         "192k",
+
         "-shortest",
+
         output,
     ]
 
@@ -1916,29 +2668,28 @@ def render_debate_video(
         command,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        text=True,
+        text=True
     )
 
     if result.returncode != 0:
 
-        print(result.stderr[-7000:])
-
-        raise RuntimeError(
-            f"Debate video failed: {output}"
+        print(
+            "\n❌ FFmpeg failed:"
         )
 
-    # Cleanup generated visual/subtitle PNGs.
-    for block in subtitle_blocks:
+        print(
+            result.stderr[-7000:]
+        )
+
+        raise RuntimeError(
+            f"FFmpeg failed creating {output}"
+        )
+
+    # Remove visual assets after rendering.
+    for asset, _ in visual_assets:
 
         try:
-            os.remove(block["file"])
-        except Exception:
-            pass
-
-    for filename, _ in visual_images:
-
-        try:
-            os.remove(filename)
+            os.remove(asset)
         except Exception:
             pass
 
@@ -1948,38 +2699,91 @@ def render_debate_video(
 # ============================================================
 
 def render_scorecard_video(
-    image,
+    scorecard,
     audio,
+    subtitles,
     output,
 ):
 
-    # No zoom, no waveform, no speaker card.
-    # Scorecard remains perfectly static.
+    for path in [
+        scorecard,
+        audio,
+        subtitles,
+    ]:
+
+        if not os.path.exists(path):
+
+            raise FileNotFoundError(
+                f"Scorecard file missing: "
+                f"{os.path.abspath(path)}"
+            )
+
+    subtitle_path = ffmpeg_filter_path(
+        subtitles
+    )
+
+    # IMPORTANT:
+    # No zoom.
+    # No speaker card.
+    # No waveform.
+    # No visual cards.
+    #
+    # This makes the scorecard completely independent
+    # from the normal debate rendering system.
+
+    filter_complex = (
+        "[0:v]"
+        "scale=1920:1080"
+        "[base];"
+        f"[base]ass='{subtitle_path}'"
+        "[outv]"
+    )
 
     command = [
         "ffmpeg",
         "-y",
+
         "-loop",
         "1",
+
         "-framerate",
         str(FPS),
+
         "-i",
-        image,
+        scorecard,
+
         "-i",
         audio,
+
+        "-filter_complex",
+        filter_complex,
+
+        "-map",
+        "[outv]",
+
+        "-map",
+        "1:a",
+
         "-c:v",
         "libx264",
+
         "-preset",
         "veryfast",
+
         "-crf",
         "20",
+
         "-pix_fmt",
         "yuv420p",
+
         "-c:a",
         "aac",
+
         "-b:a",
         "192k",
+
         "-shortest",
+
         output,
     ]
 
@@ -1987,133 +2791,185 @@ def render_scorecard_video(
         command,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        text=True,
+        text=True
     )
 
     if result.returncode != 0:
 
-        print(result.stderr[-7000:])
-
-        raise RuntimeError(
-            f"Scorecard render failed: {output}"
+        print(
+            "\n❌ Scorecard FFmpeg failed:"
         )
 
+        print(
+            result.stderr[-7000:]
+        )
 
-def verify_video(filename):
-
-    if not os.path.exists(filename):
-        return False
-
-    command = [
-        "ffprobe",
-        "-v",
-        "error",
-        "-show_entries",
-        "stream=codec_type",
-        "-of",
-        "csv=p=0",
-        filename,
-    ]
-
-    result = subprocess.run(
-        command,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-
-    streams = result.stdout.lower()
-
-    return (
-        "video" in streams
-        and
-        "audio" in streams
-    )
+        raise RuntimeError(
+            "Scorecard rendering failed."
+        )
 
 
 # ============================================================
 # SEGMENT CREATION
 # ============================================================
 
-def create_debate_segment(
+def create_segment(
     text,
     role,
-    name,
+    speaker_name,
     topic,
     segment_id,
-    position,
-    glow,
+    model_for_visuals,
+    position=None,
+    glow=None,
+    judge_voice_index=None,
 ):
 
-    audio = f"audio_{segment_id}.mp3"
-    background = f"bg_{segment_id}.png"
-    ui = f"ui_{segment_id}.png"
-    output = f"segment_{segment_id}.mp4"
+    if position is None:
+
+        if role == "AI Christian Apologist":
+            position = "left"
+
+        elif role == "AI Skeptic":
+            position = "right"
+
+        else:
+            position = "center"
+
+    if glow is None:
+
+        if role == "AI Christian Apologist":
+            glow = "#00FFCC"
+
+        elif role == "AI Skeptic":
+            glow = "#FF00FF"
+
+        elif role == "AI Judge":
+            glow = "#3399FF"
+
+        else:
+            glow = "#FFD700"
+
+    audio_file = (
+        f"audio_{segment_id}.mp3"
+    )
+
+    subtitle_file = (
+        f"subs_{segment_id}.ass"
+    )
+
+    background_file = (
+        f"bg_{segment_id}.png"
+    )
+
+    ui_file = (
+        f"ui_{segment_id}.png"
+    )
+
+    video_file = (
+        f"segment_{segment_id}.mp4"
+    )
 
     words = generate_audio(
         text,
         role,
-        audio,
+        audio_file,
+        judge_voice_index
     )
 
-    subtitles = create_subtitle_blocks(
+    # Subtitles are ALWAYS created, even if
+    # Edge-TTS does not return word boundaries.
+    generate_subtitles(
         words,
-        f"seg{segment_id}",
+        subtitle_file
     )
 
-    visuals = detect_visuals(
-        clean_for_speech(text),
-        words,
-    )
+    # Topic-adaptive visuals.
+    visual_plan = []
 
-    create_background(
-        background,
-        glow,
-    )
+    try:
 
-    create_speaker_ui(
-        name,
-        topic,
-        glow,
-        ui,
-        position,
-    )
-
-    render_debate_video(
-        background,
-        ui,
-        audio,
-        subtitles,
-        visuals,
-        output,
-    )
-
-    if not verify_video(output):
-        raise RuntimeError(
-            f"Invalid debate segment: {output}"
+        visual_plan = create_visual_plan(
+            clean_for_speech(text),
+            words,
+            model_for_visuals
         )
 
-    return output
+        if visual_plan:
+
+            print(
+                f"   🎨 {len(visual_plan)} "
+                f"adaptive visual cue(s)"
+            )
+
+    except Exception as exc:
+
+        print(
+            f"⚠️ Visual planning skipped: "
+            f"{str(exc)[:120]}"
+        )
+
+    create_background(
+        position,
+        glow,
+        background_file
+    )
+
+    card_x, card_y = create_ui_overlay(
+        speaker_name,
+        topic,
+        position,
+        glow,
+        ui_file
+    )
+
+    render_video_segment(
+        background_file,
+        ui_file,
+        audio_file,
+        subtitle_file,
+        video_file,
+        position,
+        glow,
+        card_x,
+        card_y,
+        visual_plan
+    )
+
+    return video_file
 
 
 # ============================================================
-# JUDGE COMMENTARY
+# PANEL COMMENTARY
 # ============================================================
 
-def generate_commentary(
+def generate_panel_commentary(
     model,
-    preferred_side,
+    side,
     topic,
     round_num,
-    a,
-    b,
+    apologist,
+    skeptic,
+    previous_comments,
 ):
 
     provider = provider_from_model(model)
 
+    preferred_side = (
+        "AI Christian Apologist"
+        if side == "A"
+        else
+        "AI Skeptic"
+    )
+
+    recent = "\n".join(
+        previous_comments[-6:]
+    )
+
     prompt = f"""
-You are a debate commentator representing
-{provider}.
+You are an independent AI debate judge.
+
+Your provider is {provider}.
 
 Topic:
 {topic}
@@ -2121,59 +2977,45 @@ Topic:
 Round:
 {round_num}
 
-You thought the stronger reasoning came from:
+You preferred:
 {preferred_side}
 
-Give a genuinely useful observation about
-the reasoning.
+Give a short insightful observation about
+the quality of reasoning.
 
-Do not simply say who won.
+Do not simply say which side was convincing.
 
-Do not summarise.
+Do not summarise the debate.
 
 Do not quote either debater.
+
+Do not mention your model ID.
+
+Do not mention that you are an AI.
+
+Previous observations:
+
+{recent}
 
 Write 2 or 3 natural spoken sentences.
 """
 
-    result = ask_model(
+    response = query_openrouter(
         prompt,
         model,
-        max_tokens=180,
-        temperature=0.8,
+        timeout=40,
+        max_tokens=220,
+        temperature=0.85
     )
 
-    return result or (
-        "The most important issue is which side "
-        "left fewer important assumptions unexplained."
-    )
+    if response:
+        return response
 
-
-# ============================================================
-# COMMENTARY SEGMENT
-# ============================================================
-
-def create_judge_segment(
-    text,
-    provider,
-    judge_number,
-    topic,
-    segment_id,
-):
-
-    role = f"Judge {judge_number}"
-
-    # Provider only — no huge model ID.
-    name = provider.upper()
-
-    return create_debate_segment(
-        text,
-        role,
-        name,
-        topic,
-        segment_id,
-        "center",
-        "#3399FF",
+    return (
+        "The important distinction is between "
+        "a conclusion that sounds plausible and "
+        "an argument that has actually answered "
+        "the strongest objection."
     )
 
 
@@ -2181,33 +3023,55 @@ def create_judge_segment(
 # INTRO / OUTRO
 # ============================================================
 
-def intro_text(topic, judges):
+def build_intro(
+    topic,
+    judge_count
+):
 
     return (
         "Welcome to the AI Debate Arena. "
-        f"Today's question is: {topic}. "
-        "The debate will take place over three rounds "
+        "Today, an AI Christian Apologist "
+        "faces an AI Skeptic on the question: "
+        f"{topic}. "
+        "The debate will unfold over three rounds "
         "with equal speaking time for both sides. "
-        f"An independent panel of {judges} AI providers "
-        "will judge the arguments. "
+        f"An independent panel of {judge_count} "
+        "AI systems will score argument strength, "
+        "rebuttal quality, and clarity of reasoning. "
         "Let's begin."
     )
 
 
-def outro_text(a, b, judges):
+def build_outro(
+    judge_count,
+    cumulative_a,
+    cumulative_b
+):
 
-    if abs(a - b) < 0.05:
-        winner = "a draw"
-    elif a > b:
-        winner = "the AI Christian Apologist"
+    if math.isclose(
+        cumulative_a,
+        cumulative_b,
+        abs_tol=0.01
+    ):
+
+        result = "a draw"
+
+    elif cumulative_a > cumulative_b:
+
+        result = "the AI Christian Apologist"
+
     else:
-        winner = "the AI Skeptic"
+
+        result = "the AI Skeptic"
 
     return (
-        f"After three rounds, the {judges} AI judges "
-        f"gave the AI Christian Apologist {a:.1f} "
-        f"and the AI Skeptic {b:.1f}. "
-        f"The final result is {winner}. "
+        f"After three rounds, our panel of "
+        f"{judge_count} AI judges gave the "
+        f"AI Christian Apologist a cumulative "
+        f"score of {cumulative_a:.1f}, compared "
+        f"with {cumulative_b:.1f} for the "
+        f"AI Skeptic. "
+        f"The final result is {result}. "
         "But the final verdict is still yours. "
         "Which side do you think actually won?"
     )
@@ -2217,9 +3081,9 @@ def outro_text(a, b, judges):
 # CONCATENATION
 # ============================================================
 
-def stitch(
+def stitch_segments(
     segments,
-    output,
+    output
 ):
 
     list_file = "concat_list.txt"
@@ -2227,16 +3091,27 @@ def stitch(
     with open(
         list_file,
         "w",
-        encoding="utf-8",
-    ) as f:
+        encoding="utf-8"
+    ) as file:
 
         for segment in segments:
 
-            path = os.path.abspath(segment)
+            path = os.path.abspath(
+                segment
+            )
 
-            f.write(
+            path = path.replace(
+                "'",
+                "'\\''"
+            )
+
+            file.write(
                 f"file '{path}'\n"
             )
+
+    print(
+        "🎬 Stitching final video..."
+    )
 
     command = [
         "ffmpeg",
@@ -2256,425 +3131,525 @@ def stitch(
         command,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        text=True,
+        text=True
     )
 
     if result.returncode != 0:
 
-        print(result.stderr[-7000:])
+        print(
+            result.stderr[-7000:]
+        )
 
         raise RuntimeError(
-            "Final concatenation failed."
+            "Final FFmpeg concatenation failed."
         )
 
 
 # ============================================================
-# MAIN
+# MAIN PIPELINE
 # ============================================================
 
-def run():
+def run_debate_pipeline():
 
     cleanup_cache()
 
     if not OPENROUTER_API_KEY:
+
         raise RuntimeError(
-            "OPENROUTER_API_KEY is missing."
+            "OPENROUTER_API_KEY environment "
+            "variable is missing."
         )
+
+    # --------------------------------------------------------
+    # TOPIC
+    # --------------------------------------------------------
 
     if not os.path.exists("topic.txt"):
 
         with open(
             "topic.txt",
             "w",
-            encoding="utf-8",
-        ) as f:
+            encoding="utf-8"
+        ) as file:
 
-            f.write(
+            file.write(
                 "Does the universe require a creator?"
             )
 
     with open(
         "topic.txt",
-        encoding="utf-8",
-    ) as f:
+        "r",
+        encoding="utf-8"
+    ) as file:
 
-        topic = f.read().strip()
+        topic = file.read().strip()
 
     if not topic:
-        topic = "Does the universe require a creator?"
 
+        topic = (
+            "Does the universe require a creator?"
+        )
+
+    print()
     print("=" * 70)
     print("AI DEBATE ARENA")
     print("=" * 70)
-    print("TOPIC:", topic)
+    print(f"\nTOPIC: {topic}\n")
 
     # --------------------------------------------------------
-    # Models
+    # MODEL DISCOVERY
     # --------------------------------------------------------
 
-    models = discover_models()
+    available_models = discover_models()
 
-    if not models:
-        models = FALLBACK_MODELS.copy()
+    if not available_models:
 
-    model_a, model_b = choose_debate_models(models)
+        print(
+            "⚠️ Dynamic discovery failed. "
+            "Using fallback models."
+        )
+
+        available_models = (
+            FALLBACK_MODELS.copy()
+        )
+
+    # --------------------------------------------------------
+    # DEBATE MODELS
+    # --------------------------------------------------------
+
+    (
+        apologist_model,
+        skeptic_model
+    ) = choose_primary_models(
+        available_models
+    )
+
+    print(
+        "🎤 Debate engines:"
+    )
+
+    print(
+        f"   Apologist: "
+        f"{provider_from_model(apologist_model)}"
+    )
+
+    print(
+        f"   Skeptic: "
+        f"{provider_from_model(skeptic_model)}"
+    )
+
+    # --------------------------------------------------------
+    # JUDGES
+    # --------------------------------------------------------
 
     judges = choose_judges(
-        models,
-        [model_a, model_b],
+        available_models,
+        (
+            apologist_model,
+            skeptic_model
+        )
     )
 
     if not judges:
 
+        used = set()
         judges = []
-
-        used = {
-            provider_from_model(model_a),
-            provider_from_model(model_b),
-        }
 
         for model in FALLBACK_MODELS:
 
-            provider = provider_from_model(model)
+            provider = provider_from_model(
+                model
+            )
 
             if provider in used:
+                continue
+
+            if model in (
+                apologist_model,
+                skeptic_model
+            ):
                 continue
 
             judges.append(model)
             used.add(provider)
 
-            if len(judges) == MAX_JUDGES:
+            if len(judges) >= MAX_JUDGES:
                 break
 
     print()
     print(
-        "Debate:",
-        provider_from_model(model_a),
-        "vs",
-        provider_from_model(model_b),
+        f"⚖️ Maximum judges: {MAX_JUDGES}"
     )
 
-    print()
     print(
-        "JUDGING PANEL — ONE MODEL PER PROVIDER"
+        f"⚖️ Actual judges: {len(judges)}"
+    )
+
+    print(
+        "⚖️ ONE MODEL PER PROVIDER:"
     )
 
     for model in judges:
+
         print(
-            " •",
-            provider_from_model(model),
-            "—",
-            short_model_name(model),
+            f"   • "
+            f"{provider_from_model(model)}"
+            f" — "
+            f"{model.split('/', 1)[-1][:28]}"
         )
 
     # --------------------------------------------------------
-    # Segments
+    # VIDEO
     # --------------------------------------------------------
 
     segments = []
     segment_id = 0
 
-    def add_debate(
+    def add_segment(
         text,
         role,
         name,
-        position,
-        glow,
+        position=None,
+        glow=None,
+        judge_voice_index=None
     ):
 
         nonlocal segment_id
 
-        video = create_debate_segment(
+        video = create_segment(
             text,
             role,
             name,
             topic,
             segment_id,
+            apologist_model,
             position,
             glow,
+            judge_voice_index
         )
 
         segments.append(video)
+
         segment_id += 1
 
     # --------------------------------------------------------
-    # Intro
+    # INTRO
     # --------------------------------------------------------
 
-    add_debate(
-        intro_text(
+    add_segment(
+        build_intro(
             topic,
-            len(judges),
+            len(judges)
         ),
         "Moderator",
-        "MODERATOR",
-        "center",
-        "#FFD700",
+        "MODERATOR"
     )
 
-    history = ""
+    # --------------------------------------------------------
+    # HISTORY
+    # --------------------------------------------------------
 
-    cumulative_a = 0
-    cumulative_b = 0
+    previous_history = ""
+
+    cumulative_a = 0.0
+    cumulative_b = 0.0
+
+    panel_comments = []
 
     # --------------------------------------------------------
     # ROUNDS
     # --------------------------------------------------------
 
-    for round_num in range(1, ROUNDS + 1):
+    for round_num in range(
+        1,
+        ROUNDS + 1
+    ):
 
         print()
         print("=" * 70)
-        print(f"ROUND {round_num}")
+        print(
+            f"ROUND {round_num}"
+        )
         print("=" * 70)
 
-        a_turns, b_turns, history = generate_round(
+        (
+            apologist_turns,
+            skeptic_turns,
+            previous_history
+        ) = build_round_exchanges(
             topic,
             round_num,
-            model_a,
-            model_b,
-            history,
+            apologist_model,
+            skeptic_model,
+            previous_history
         )
 
         # True back-and-forth.
-        for i in range(
+        for turn_index in range(
             TURNS_PER_SIDE_PER_ROUND
         ):
 
-            a_text = a_turns[i]
-            b_text = b_turns[i]
-
-            print(
-                f"Exchange {i + 1}: "
-                f"A={count_words(a_text)} "
-                f"B={count_words(b_text)}"
+            apologist_text = (
+                apologist_turns[
+                    turn_index
+                ]
             )
 
-            add_debate(
-                a_text,
+            skeptic_text = (
+                skeptic_turns[
+                    turn_index
+                ]
+            )
+
+            print(
+                f"   Exchange "
+                f"{turn_index + 1}: "
+                f"A={count_words(apologist_text)} "
+                f"words | "
+                f"B={count_words(skeptic_text)} "
+                f"words"
+            )
+
+            add_segment(
+                apologist_text,
                 "AI Christian Apologist",
                 "AI CHRISTIAN APOLOGIST",
                 "left",
-                "#00FFCC",
+                "#00FFCC"
             )
 
-            add_debate(
-                b_text,
+            add_segment(
+                skeptic_text,
                 "AI Skeptic",
                 "AI SKEPTIC",
                 "right",
-                "#FF00FF",
+                "#FF00FF"
             )
 
-        full_a = "\n".join(a_turns)
-        full_b = "\n".join(b_turns)
+        apologist_full = "\n".join(
+            apologist_turns
+        )
+
+        skeptic_full = "\n".join(
+            skeptic_turns
+        )
 
         print(
-            "Round word totals:",
-            count_words(full_a),
-            "vs",
-            count_words(full_b),
+            f"   Round total: "
+            f"A={count_words(apologist_full)} "
+            f"words | "
+            f"B={count_words(skeptic_full)} "
+            f"words"
         )
 
         # ----------------------------------------------------
-        # Judges
+        # JUDGING
         # ----------------------------------------------------
 
-        results = judge_round(
+        results = evaluate_round(
             judges,
             topic,
             round_num,
-            full_a,
-            full_b,
+            apologist_full,
+            skeptic_full
         )
 
-        round_a, round_b = averages(
-            results
+        round_a, round_b = (
+            calculate_round_average(
+                results
+            )
         )
 
         cumulative_a += round_a
         cumulative_b += round_b
 
         print(
-            f"ROUND SCORE: {round_a:.1f} vs {round_b:.1f}"
+            f"📊 Round {round_num}: "
+            f"A {round_a:.1f} "
+            f"vs "
+            f"B {round_b:.1f}"
         )
 
         print(
-            f"CUMULATIVE: {cumulative_a:.1f} vs "
-            f"{cumulative_b:.1f}"
+            f"📊 Cumulative: "
+            f"A {cumulative_a:.1f} "
+            f"vs "
+            f"B {cumulative_b:.1f}"
         )
 
         # ----------------------------------------------------
-        # SCORECARD — STATIC, SEPARATE VIDEO
+        # STATIC SCORECARD
         # ----------------------------------------------------
 
-        score_image = (
-            f"scorecard_r{round_num}.png"
+        scoreboard_file = (
+            f"scoreboard_r{round_num}.png"
         )
 
-        score_audio = (
-            f"score_audio_r{round_num}.mp3"
-        )
-
-        score_video = (
-            f"score_video_r{round_num}.mp4"
-        )
-
-        create_scorecard(
+        generate_scoreboard(
             round_num,
             results,
             round_a,
             round_b,
             cumulative_a,
             cumulative_b,
-            score_image,
+            scoreboard_file
         )
 
         score_text = (
             f"Round {round_num} is complete. "
-            f"The AI Christian Apologist scored "
-            f"{round_a:.1f}, while the AI Skeptic "
-            f"scored {round_b:.1f}. "
+            f"The {len(results)} independent "
+            f"AI judges gave the AI Christian "
+            f"Apologist an average score of "
+            f"{round_a:.1f}, and the AI Skeptic "
+            f"an average score of {round_b:.1f}. "
             f"The cumulative score is "
             f"{cumulative_a:.1f} to "
             f"{cumulative_b:.1f}."
         )
 
-        generate_audio(
+        score_audio = (
+            f"score_audio_r{round_num}.mp3"
+        )
+
+        score_subs = (
+            f"score_subs_r{round_num}.ass"
+        )
+
+        score_video = (
+            f"score_video_r{round_num}.mp4"
+        )
+
+        score_words = generate_audio(
             score_text,
             "Moderator",
-            score_audio,
+            score_audio
+        )
+
+        generate_subtitles(
+            score_words,
+            score_subs,
+            scorecard=True
         )
 
         render_scorecard_video(
-            score_image,
+            scoreboard_file,
             score_audio,
-            score_video,
+            score_subs,
+            score_video
         )
 
-        if not verify_video(score_video):
-            raise RuntimeError(
-                f"Scorecard video failed verification: "
-                f"{score_video}"
-            )
-
-        # THIS IS THE CRITICAL PART:
-        # Explicitly append the scorecard.
-        segments.append(score_video)
-
-        print(
-            f"✓ Scorecard r{round_num} rendered"
+        segments.append(
+            score_video
         )
 
         # ----------------------------------------------------
-        # Judge commentary
+        # TWO INTER-ROUND JUDGES
         # ----------------------------------------------------
 
         if results:
 
-            a_winners = [
+            a_results = [
                 r for r in results
                 if r["winner"] == "A"
             ]
 
-            b_winners = [
+            b_results = [
                 r for r in results
                 if r["winner"] == "B"
             ]
 
-            if not a_winners:
-                a_winners = results
+            if not a_results:
+                a_results = results
 
-            if not b_winners:
-                b_winners = results
+            if not b_results:
+                b_results = results
 
-            selected = [
-                random.choice(a_winners),
-                random.choice(b_winners),
-            ]
-
-            for n, result in enumerate(
-                selected,
-                1,
-            ):
-
-                preferred = (
-                    "the Apologist"
-                    if result["winner"] == "A"
-                    else "the Skeptic"
-                )
-
-                commentary = generate_commentary(
-                    result["model"],
-                    preferred,
-                    topic,
-                    round_num,
-                    full_a,
-                    full_b,
-                )
-
-                print(
-                    f"✓ {result['provider']} commentary"
-                )
-
-                video = create_judge_segment(
-                    commentary,
-                    result["provider"],
-                    n,
-                    topic,
-                    segment_id,
-                )
-
-                segments.append(video)
-
-                segment_id += 1
-
-    # --------------------------------------------------------
-    # Outro
-    # --------------------------------------------------------
-
-    add_debate(
-        outro_text(
-            cumulative_a,
-            cumulative_b,
-            len(judges),
-        ),
-        "Moderator",
-        "MODERATOR",
-        "center",
-        "#FFD700",
-    )
-
-    # --------------------------------------------------------
-    # FINAL STITCH
-    # --------------------------------------------------------
-
-    print()
-    print("Checking all segments...")
-
-    for segment in segments:
-
-        if not verify_video(segment):
-
-            raise RuntimeError(
-                f"Invalid segment before final stitch: "
-                f"{segment}"
+            judge_a = random.choice(
+                a_results
             )
 
-    print(
-        f"✓ {len(segments)} segments verified"
+            judge_b = random.choice(
+                b_results
+            )
+
+            comment_a = (
+                generate_panel_commentary(
+                    judge_a["model"],
+                    "A",
+                    topic,
+                    round_num,
+                    apologist_full,
+                    skeptic_full,
+                    panel_comments
+                )
+            )
+
+            panel_comments.append(
+                comment_a
+            )
+
+            add_segment(
+                comment_a,
+                "AI Judge",
+                (
+                    "AI JUDGE — "
+                    + judge_a["provider"].upper()
+                ),
+                "center",
+                "#3399FF",
+                judge_voice_index=0
+            )
+
+            comment_b = (
+                generate_panel_commentary(
+                    judge_b["model"],
+                    "B",
+                    topic,
+                    round_num,
+                    apologist_full,
+                    skeptic_full,
+                    panel_comments
+                )
+            )
+
+            panel_comments.append(
+                comment_b
+            )
+
+            add_segment(
+                comment_b,
+                "AI Judge",
+                (
+                    "AI JUDGE — "
+                    + judge_b["provider"].upper()
+                ),
+                "center",
+                "#3399FF",
+                judge_voice_index=1
+            )
+
+    # --------------------------------------------------------
+    # OUTRO
+    # --------------------------------------------------------
+
+    add_segment(
+        build_outro(
+            len(judges),
+            cumulative_a,
+            cumulative_b
+        ),
+        "Moderator",
+        "MODERATOR"
     )
 
-    stitch(
+    # --------------------------------------------------------
+    # STITCH
+    # --------------------------------------------------------
+
+    stitch_segments(
         segments,
-        OUTPUT_FILE,
+        OUTPUT_FILE
     )
-
-    if not verify_video(OUTPUT_FILE):
-
-        raise RuntimeError(
-            "Final output failed video/audio verification."
-        )
 
     print()
     print("=" * 70)
@@ -2682,18 +3657,21 @@ def run():
     print("=" * 70)
 
     print(
-        "Output:",
-        OUTPUT_FILE,
+        f"🎥 Output: {OUTPUT_FILE}"
     )
 
     print(
-        f"Judges: {len(judges)}"
+        f"⚖️ AI judges: {len(judges)}"
     )
 
     print(
-        f"Final: Apologist {cumulative_a:.1f} "
-        f"vs Skeptic {cumulative_b:.1f}"
+        f"🏆 Final score: "
+        f"Apologist {cumulative_a:.1f} "
+        f"vs "
+        f"Skeptic {cumulative_b:.1f}"
     )
+
+    cleanup_cache()
 
 
 # ============================================================
@@ -2704,12 +3682,12 @@ if __name__ == "__main__":
 
     try:
 
-        run()
+        run_debate_pipeline()
 
     except KeyboardInterrupt:
 
         print(
-            "\n⛔ Build cancelled."
+            "\n⛔ Pipeline cancelled."
         )
 
     except Exception as exc:
