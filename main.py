@@ -186,6 +186,7 @@ def cleanup_cache():
         "*.mp3",
         "*.ass",
         "*.png",
+        "*.gif",
         "*_list.txt",
     ]
 
@@ -1101,7 +1102,7 @@ def generate_audio(
 
 
 # ============================================================
-# SUBTITLES
+# SUBTITLES - CHUNKS/PARAGRAPHS
 # ============================================================
 
 def format_ass_time(seconds):
@@ -1160,14 +1161,8 @@ def generate_subtitles(
     filename,
     scorecard=False,
 ):
-
-    # Larger blocks intentionally remain on screen
-    # for longer. This makes tiny TTS timing variations
-    # much less distracting.
-    #
-    # No karaoke/highlight effect is used.
-
-    margin_v = 75 if scorecard else 125
+    # Using larger margin constraints effectively groups text into paragraph blocks
+    margin_v = 75 if scorecard else 100
 
     header = f"""[Script Info]
 ScriptType: v4.00+
@@ -1178,63 +1173,47 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: DebateSub,DejaVu Sans,42,&H00FFFFFF,&H00FFFFFF,&H00000000,&HCC000000,1,0,0,0,100,100,0,0,1,3,1,2,250,250,{margin_v},1
+Style: DebateSub,DejaVu Sans,38,&H00FFFFFF,&H00FFFFFF,&H00000000,&HCC000000,1,0,0,0,100,100,0,0,1,3,1,2,300,300,{margin_v},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
 
     if not words:
-
-        with open(
-            filename,
-            "w",
-            encoding="utf-8"
-        ) as file:
-
+        with open(filename, "w", encoding="utf-8") as file:
             file.write(header)
-
         return
 
     events = []
+    chunks = []
+    current_chunk = []
 
-    # Approximately one small paragraph per screen.
-    block_size = 14
+    # Chunk the words into paragraphs based on sentence boundaries
+    for w in words:
+        current_chunk.append(w)
+        text_clean = str(w["text"]).strip()
+        is_boundary = text_clean.endswith(('.', '?', '!', ':', ';'))
+        
+        # Break into a chunk if we've accumulated ~20 words AND hit punctuation,
+        # OR if the block is dragging on over 40 words.
+        if (len(current_chunk) >= 18 and is_boundary) or len(current_chunk) >= 40:
+            chunks.append(current_chunk)
+            current_chunk = []
 
-    for i in range(
-        0,
-        len(words),
-        block_size
-    ):
+    if current_chunk:
+        chunks.append(current_chunk)
 
-        chunk = words[
-            i:i + block_size
-        ]
-
+    for chunk in chunks:
         if not chunk:
             continue
 
-        start = float(
-            chunk[0]["start"]
-        )
+        start = float(chunk[0]["start"])
+        # Hold the paragraph slightly past the spoken audio for reading comfort
+        end = float(chunk[-1]["end"]) + 0.35 
 
-        if i + block_size < len(words):
-
-            end = float(
-                words[i + block_size]["start"]
-            )
-
-        else:
-
-            end = float(
-                chunk[-1]["end"]
-            ) + 0.15
-
-        subtitle = " ".join(
-            ass_escape(
-                w["text"]
-            )
-            for w in chunk
+        # Fade in and out (250ms) so text isn't a jarring "still" cut
+        subtitle_text = "{\\fad(250,250)}" + " ".join(
+            ass_escape(w["text"]) for w in chunk
         )
 
         events.append(
@@ -1243,20 +1222,11 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             + ","
             + format_ass_time(end)
             + ",DebateSub,,0,0,0,,"
-            + subtitle
+            + subtitle_text
         )
 
-    with open(
-        filename,
-        "w",
-        encoding="utf-8"
-    ) as file:
-
-        file.write(
-            header
-            + "\n".join(events)
-            + "\n"
-        )
+    with open(filename, "w", encoding="utf-8") as file:
+        file.write(header + "\n".join(events) + "\n")
 
 
 # ============================================================
@@ -1328,7 +1298,7 @@ Rules:
     try:
 
         match = re.search(
-            r"$begin:math:display$\.\*$end:math:display$",
+            r"\[.*\]",
             response,
             re.DOTALL
         )
@@ -1550,307 +1520,146 @@ def create_visual_plan(
 
 
 # ============================================================
-# DYNAMIC VISUAL CARD
+# DYNAMIC ANIMATED VISUAL CARD
 # ============================================================
 
-def draw_generic_illustration(
-    draw,
-    kind,
-):
-
-    cx = 130
-    cy = 120
+def draw_animated_illustration(draw, kind, progress):
+    """
+    Draws the visual illustration dynamically based on a progress value (0.0 to 1.0).
+    """
+    p = progress
 
     if kind == "person":
-
-        draw.ellipse(
-            (85, 35, 175, 125),
-            fill=(235, 190, 150, 255)
-        )
-
-        draw.line(
-            (130, 125, 130, 205),
-            fill=(70, 145, 220, 255),
-            width=25
-        )
-
-        draw.line(
-            (130, 145, 70, 185),
-            fill=(70, 145, 220, 255),
-            width=12
-        )
-
-        draw.line(
-            (130, 145, 190, 185),
-            fill=(70, 145, 220, 255),
-            width=12
-        )
-
-        draw.line(
-            (130, 200, 85, 230),
-            fill=(70, 145, 220, 255),
-            width=12
-        )
-
-        draw.line(
-            (130, 200, 175, 230),
-            fill=(70, 145, 220, 255),
-            width=12
-        )
+        bob = int(8 * p)
+        draw.ellipse((85, 35 + bob, 175, 125 + bob), fill=(235, 190, 150, 255))
+        draw.line((130, 125 + bob, 130, 205), fill=(70, 145, 220, 255), width=25)
+        arm_y = 185 - int(15 * p)
+        draw.line((130, 145 + bob, 70, arm_y), fill=(70, 145, 220, 255), width=12)
+        draw.line((130, 145 + bob, 190, arm_y), fill=(70, 145, 220, 255), width=12)
+        draw.line((130, 200, 85, 230), fill=(70, 145, 220, 255), width=12)
+        draw.line((130, 200, 175, 230), fill=(70, 145, 220, 255), width=12)
 
     elif kind == "place":
-
-        draw.rectangle(
-            (55, 115, 205, 205),
-            fill=(115, 80, 50, 255)
-        )
-
-        draw.polygon(
-            [
-                (40, 120),
-                (130, 45),
-                (220, 120),
-            ],
-            fill=(160, 60, 55, 255)
-        )
-
-        draw.rectangle(
-            (110, 155, 150, 205),
-            fill=(55, 45, 40, 255)
-        )
+        shift = int(10 * p)
+        draw.rectangle((55, 115, 205, 205), fill=(115, 80, 50, 255))
+        draw.polygon([(40, 120), (130, 45 - shift), (220, 120)], fill=(160, 60, 55, 255))
+        draw.rectangle((110, 155, 150, 205), fill=(55, 45, 40, 255))
 
     elif kind == "object":
-
+        hover = int(12 * p)
         draw.rounded_rectangle(
-            (55, 55, 205, 205),
-            radius=25,
-            fill=(55, 105, 180, 255),
-            outline=(255, 215, 0, 255),
-            width=4
+            (55, 55 - hover, 205, 205 - hover), radius=25,
+            fill=(55, 105, 180, 255), outline=(255, 215, 0, 255), width=4
         )
-
-        draw.line(
-            (80, 130, 180, 130),
-            fill="white",
-            width=8
-        )
+        shadow_w = int(100 - 20 * p)
+        draw.ellipse((130 - shadow_w//2, 215, 130 + shadow_w//2, 225), fill=(0, 0, 0, 100))
+        draw.line((80, 130 - hover, 180, 130 - hover), fill="white", width=8)
 
     elif kind == "process":
-
-        draw.ellipse(
-            (45, 70, 115, 140),
-            fill=(60, 145, 220, 255)
-        )
-
-        draw.ellipse(
-            (145, 70, 215, 140),
-            fill=(80, 180, 100, 255)
-        )
-
-        draw.line(
-            (115, 105, 145, 105),
-            fill=(255, 215, 0, 255),
-            width=12
-        )
-
-        draw.polygon(
-            [
-                (145, 105),
-                (125, 90),
-                (125, 120),
-            ],
-            fill=(255, 215, 0, 255)
-        )
-
-        draw.ellipse(
-            (45, 160, 215, 220),
-            fill=(130, 75, 170, 255)
-        )
+        node_x = int(20 * p)
+        draw.ellipse((45 + node_x, 70, 115 + node_x, 140), fill=(60, 145, 220, 255))
+        draw.ellipse((145 - node_x, 70, 215 - node_x, 140), fill=(80, 180, 100, 255))
+        draw.line((115 + node_x, 105, 145 - node_x, 105), fill=(255, 215, 0, 255), width=12)
+        draw.polygon([(145 - node_x, 105), (125 - node_x, 90), (125 - node_x, 120)], fill=(255, 215, 0, 255))
+        draw.ellipse((45, 160, 215, 220), fill=(130, 75, 170, 255))
 
     elif kind == "history":
-
-        draw.rectangle(
-            (60, 60, 200, 205),
-            fill=(110, 75, 45, 255),
-            outline=(255, 215, 0, 255),
-            width=4
-        )
-
-        draw.line(
-            (80, 95, 180, 95),
-            fill="white",
-            width=6
-        )
-
-        draw.line(
-            (80, 130, 180, 130),
-            fill="white",
-            width=6
-        )
-
-        draw.line(
-            (80, 165, 160, 165),
-            fill="white",
-            width=6
-        )
+        width_ext = int(40 * p)
+        draw.rectangle((60, 60, 200, 205), fill=(110, 75, 45, 255), outline=(255, 215, 0, 255), width=4)
+        draw.line((80, 95, 140 + width_ext, 95), fill="white", width=6)
+        draw.line((80, 130, 180 - int(20 * p), 130), fill="white", width=6)
+        draw.line((80, 165, 120 + width_ext, 165), fill="white", width=6)
 
     elif kind == "comparison":
-
-        draw.rectangle(
-            (45, 75, 105, 190),
-            fill=(50, 150, 210, 255)
-        )
-
-        draw.rectangle(
-            (155, 45, 215, 190),
-            fill=(210, 90, 100, 255)
-        )
-
-        draw.line(
-            (130, 45, 130, 205),
-            fill=(255, 215, 0, 255),
-            width=5
-        )
+        bar1 = int(30 * p)
+        bar2 = int(30 * (1 - p))
+        draw.rectangle((45, 75 - bar1, 105, 190), fill=(50, 150, 210, 255))
+        draw.rectangle((155, 45 + bar2, 215, 190), fill=(210, 90, 100, 255))
+        draw.line((130, 45, 130, 205), fill=(255, 215, 0, 255), width=5)
 
     else:
-
-        # Concept visual.
+        pulse = int(10 * p)
         draw.ellipse(
-            (55, 45, 205, 195),
-            fill=(55, 65, 105, 255),
-            outline=(255, 215, 0, 255),
-            width=5
+            (55 - pulse, 45 - pulse, 205 + pulse, 195 + pulse),
+            fill=(55, 65, 105, 255), outline=(255, 215, 0, 255), width=5
         )
-
-        font = load_font(
-            90,
-            bold=True
-        )
-
-        draw.text(
-            (105, 58),
-            "?",
-            fill="white",
-            font=font
-        )
+        font = load_font(90 + pulse, bold=True)
+        draw.text((105 - pulse//2, 58 - pulse//2), "?", fill="white", font=font)
 
 
-def create_visual_asset(
-    visual,
-    index,
-):
-
-    filename = f"visual_{index}.png"
-
-    image = Image.new(
-        "RGBA",
-        (
-            VISUAL_W,
-            VISUAL_H
-        ),
-        (0, 0, 0, 0)
-    )
-
-    draw = ImageDraw.Draw(
-        image
-    )
-
-    draw.rounded_rectangle(
-        (
-            4,
-            4,
-            VISUAL_W - 4,
-            VISUAL_H - 4
-        ),
-        radius=28,
-        fill=(12, 18, 35, 238),
-        outline=(255, 215, 0, 235),
-        width=4
-    )
-
-    draw_generic_illustration(
-        draw,
-        visual.get(
-            "kind",
-            "concept"
-        )
-    )
-
-    label_font = load_font(
-        27,
-        bold=True
-    )
-
-    desc_font = load_font(
-        17
-    )
-
-    label = visual.get(
-        "label",
-        "KEY IDEA"
-    ).upper()
-
-    draw.text(
-        (230, 48),
-        label,
-        fill="white",
-        font=label_font
-    )
-
-    description = visual.get(
-        "description",
-        ""
-    )
-
-    # Simple wrapping.
+def create_visual_asset(visual, index):
+    """
+    Generates a smoothly looping animated GIF asset rather than a static image.
+    """
+    filename = f"visual_{index}.gif"
+    
+    frames = []
+    num_frames = 30
+    
+    label_font = load_font(27, bold=True)
+    desc_font = load_font(17)
+    
+    label = visual.get("label", "KEY IDEA").upper()
+    description = visual.get("description", "")
+    
+    # Calculate simple word wrapping utilizing a dummy image
+    dummy_img = Image.new("RGBA", (1, 1))
+    dummy_draw = ImageDraw.Draw(dummy_img)
     words = description.split()
     lines = []
     current = ""
-
     for word in words:
-
-        candidate = (
-            current + " " + word
-        ).strip()
-
-        box = draw.textbbox(
-            (0, 0),
-            candidate,
-            font=desc_font
-        )
-
+        candidate = (current + " " + word).strip()
+        box = dummy_draw.textbbox((0, 0), candidate, font=desc_font)
         if box[2] - box[0] > 250:
-
             if current:
-                lines.append(
-                    current
-                )
-
+                lines.append(current)
             current = word
-
         else:
-
             current = candidate
-
     if current:
         lines.append(current)
-
-    for line_index, line in enumerate(
-        lines[:5]
-    ):
-
-        draw.text(
-            (
-                230,
-                95 + line_index * 27
-            ),
-            line,
-            fill=(215, 220, 235, 255),
-            font=desc_font
+        
+    for f in range(num_frames):
+        image = Image.new("RGBA", (VISUAL_W, VISUAL_H), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(image)
+        
+        # Solid background avoids GIF transparency bugs
+        draw.rounded_rectangle(
+            (4, 4, VISUAL_W - 4, VISUAL_H - 4),
+            radius=28,
+            fill=(12, 18, 35, 255),
+            outline=(255, 215, 0, 255),
+            width=4
         )
-
-    image.save(filename)
-
+        
+        # Sine wave mapping for smooth continuous looping
+        progress = math.sin(math.pi * (f / num_frames))
+        
+        draw_animated_illustration(draw, visual.get("kind", "concept"), progress)
+        
+        draw.text((230, 48), label, fill="white", font=label_font)
+        
+        for line_index, line in enumerate(lines[:5]):
+            draw.text(
+                (230, 95 + line_index * 27),
+                line,
+                fill=(215, 220, 235, 255),
+                font=desc_font
+            )
+            
+        frames.append(image)
+        
+    frames[0].save(
+        filename,
+        format='GIF',
+        save_all=True,
+        append_images=frames[1:],
+        duration=33, # ~30fps 
+        loop=0,
+        disposal=2
+    )
+    
     return filename
 
 
@@ -2521,8 +2330,6 @@ def render_video_segment(
         "[base];"
     )
 
-    # Waveform is deliberately to the right of the name,
-    # inside the lower card, not across the speaker name.
     wave_x = card_x + 330
     wave_y = card_y + 47
 
@@ -2535,51 +2342,33 @@ def render_video_segment(
     current = "[withwave]"
     input_index = 3
 
-    for index, (
-        asset,
-        visual
-    ) in enumerate(
-        visual_assets
-    ):
-
+    for index, (asset, visual) in enumerate(visual_assets):
         label = f"visual{index}"
 
+        start = max(0.0, float(visual["start"]))
+        end = max(start + 2.0, float(visual["end"]))
+        
+        # Apply fade in and out to the alpha channel of the visual card
         filter_parts.append(
             f"[{input_index}:v]"
-            "format=rgba"
-            f"[{label}];"
+            f"format=rgba,"
+            f"fade=t=in:st={start}:d=0.4:alpha=1,"
+            f"fade=t=out:st={end-0.4}:d=0.4:alpha=1"
+            f"[{label}_faded];"
         )
 
-        # Slightly above subtitle region.
-        x = (
-            VIDEO_W - VISUAL_W
-        ) // 2
-
-        y = VISUAL_Y
-
-        start = max(
-            0.0,
-            float(
-                visual["start"]
-            )
-        )
-
-        end = max(
-            start + 2.0,
-            float(
-                visual["end"]
-            )
-        )
-
-        # Fade in/out.
-        enable = (
-            f"between(t,{start:.2f},{end:.2f})"
-        )
+        x = (VIDEO_W - VISUAL_W) // 2
+        
+        # Dynamic float animation: Start low, slowly drift upwards while visible
+        drift_speed = 15 # pixels per second
+        y_expr = f"{VISUAL_Y} + 20 - (t-{start})*{drift_speed}"
+        
+        enable = f"between(t,{start:.2f},{end:.2f})"
 
         filter_parts.append(
             f"{current}"
-            f"[{label}]"
-            f"overlay={x}:{y}:"
+            f"[{label}_faded]"
+            f"overlay={x}:'{y_expr}':"
             f"enable='{enable}'"
             f"[v{index}];"
         )
@@ -2592,8 +2381,6 @@ def render_video_segment(
     )
 
     # Subtitles are burned LAST.
-    # Therefore they are always visible above the video
-    # composition and cannot be hidden by visual cards.
     filter_parts.append(
         f"{current}"
         f"ass='{subtitle_path}'"
@@ -2623,13 +2410,20 @@ def render_video_segment(
     ]
 
     for asset, _ in visual_assets:
-
-        command += [
-            "-loop",
-            "1",
-            "-i",
-            asset,
-        ]
+        if asset.endswith(".gif"):
+            command += [
+                "-ignore_loop",
+                "0",
+                "-i",
+                asset,
+            ]
+        else:
+            command += [
+                "-loop",
+                "1",
+                "-i",
+                asset,
+            ]
 
     command += [
         "-filter_complex",
@@ -2685,9 +2479,7 @@ def render_video_segment(
             f"FFmpeg failed creating {output}"
         )
 
-    # Remove visual assets after rendering.
     for asset, _ in visual_assets:
-
         try:
             os.remove(asset)
         except Exception:
@@ -2721,15 +2513,6 @@ def render_scorecard_video(
     subtitle_path = ffmpeg_filter_path(
         subtitles
     )
-
-    # IMPORTANT:
-    # No zoom.
-    # No speaker card.
-    # No waveform.
-    # No visual cards.
-    #
-    # This makes the scorecard completely independent
-    # from the normal debate rendering system.
 
     filter_complex = (
         "[0:v]"
@@ -2877,14 +2660,11 @@ def create_segment(
         judge_voice_index
     )
 
-    # Subtitles are ALWAYS created, even if
-    # Edge-TTS does not return word boundaries.
     generate_subtitles(
         words,
         subtitle_file
     )
 
-    # Topic-adaptive visuals.
     visual_plan = []
 
     try:
