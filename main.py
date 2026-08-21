@@ -1161,19 +1161,21 @@ def generate_subtitles(
     filename,
     scorecard=False,
 ):
-    # Using larger margin constraints effectively groups text into paragraph blocks
-    margin_v = 75 if scorecard else 100
+    # MarginV is measured up from the bottom of the frame. The speaker
+    # card sits at y=885-995, so subtitles need enough clearance to sit
+    # above it instead of overlapping it.
+    margin_v = 90 if scorecard else 230
 
     header = f"""[Script Info]
 ScriptType: v4.00+
 PlayResX: 1920
 PlayResY: 1080
-WrapStyle: 2
+WrapStyle: 0
 ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: DebateSub,DejaVu Sans,38,&H00FFFFFF,&H00FFFFFF,&H00000000,&HCC000000,1,0,0,0,100,100,0,0,1,3,1,2,300,300,{margin_v},1
+Style: DebateSub,DejaVu Sans,38,&H00FFFFFF,&H00FFFFFF,&H00000000,&HCC000000,1,0,0,0,100,100,0,0,1,3,1,2,260,260,{margin_v},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -1188,15 +1190,25 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     chunks = []
     current_chunk = []
 
-    # Chunk the words into paragraphs based on sentence boundaries
+    # Chunk the words into short, on-screen-width lines instead of long
+    # paragraphs. WrapStyle 2 (used previously) disables libass's
+    # automatic line wrapping entirely, so any chunk longer than a
+    # single screen-width line renders as ONE unbroken line running off
+    # both edges of the frame - which is why subtitles looked like they
+    # weren't showing at all. Short chunks + WrapStyle 0 (smart wrap)
+    # fixes this.
+    MAX_CHUNK_WORDS = 9
+    MIN_CHUNK_WORDS = 6
+
     for w in words:
         current_chunk.append(w)
         text_clean = str(w["text"]).strip()
-        is_boundary = text_clean.endswith(('.', '?', '!', ':', ';'))
-        
-        # Break into a chunk if we've accumulated ~20 words AND hit punctuation,
-        # OR if the block is dragging on over 40 words.
-        if (len(current_chunk) >= 18 and is_boundary) or len(current_chunk) >= 40:
+        is_boundary = text_clean.endswith(('.', '?', '!'))
+
+        if (
+            (len(current_chunk) >= MIN_CHUNK_WORDS and is_boundary)
+            or len(current_chunk) >= MAX_CHUNK_WORDS
+        ):
             chunks.append(current_chunk)
             current_chunk = []
 
@@ -1208,11 +1220,11 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             continue
 
         start = float(chunk[0]["start"])
-        # Hold the paragraph slightly past the spoken audio for reading comfort
-        end = float(chunk[-1]["end"]) + 0.35 
+        # Hold the line slightly past the spoken audio for reading comfort
+        end = float(chunk[-1]["end"]) + 0.3
 
-        # Fade in and out (250ms) so text isn't a jarring "still" cut
-        subtitle_text = "{\\fad(250,250)}" + " ".join(
+        # Fade in and out (150ms) so text isn't a jarring "still" cut
+        subtitle_text = "{\\fad(150,150)}" + " ".join(
             ass_escape(w["text"]) for w in chunk
         )
 
@@ -1458,6 +1470,47 @@ def find_phrase_timing(
     return None
 
 
+def fallback_visual_timing(
+    index,
+    total,
+    words,
+):
+    """
+    Places a visual at a proportional point in the segment when the
+    model's exact phrase can't be located in the spoken words.
+
+    Real LLMs routinely paraphrase even when told to quote exactly, so
+    requiring an exact substring match causes most planned visuals to be
+    silently dropped - which is why animations were almost never
+    appearing. Spacing candidates evenly across the segment keeps every
+    visual the model actually identified, just without phrase-level
+    timing precision.
+    """
+
+    if not words:
+        return None
+
+    last_end = float(words[-1]["end"])
+
+    # Keep clear of the very start/end of the segment.
+    usable_start = 0.15 * last_end
+    usable_end = 0.85 * last_end
+
+    if total <= 1:
+        start = usable_start
+    else:
+        start = usable_start + (
+            (usable_end - usable_start)
+            * index
+            / max(1, total - 1)
+        )
+
+    return {
+        "start": max(0.0, start),
+        "end": max(start + 3.0, start + 3.0),
+    }
+
+
 def create_visual_plan(
     text,
     words,
@@ -1477,12 +1530,22 @@ def create_visual_plan(
 
     timed = []
 
-    for item in candidates:
+    for index, item in enumerate(candidates):
 
         timing = find_phrase_timing(
             item["phrase"],
             words
         )
+
+        if not timing:
+            # The model identified a genuinely useful visual moment but
+            # didn't quote it verbatim - fall back to a proportional
+            # position instead of dropping the visual entirely.
+            timing = fallback_visual_timing(
+                index,
+                len(candidates),
+                words,
+            )
 
         if not timing:
             continue
@@ -1896,6 +1959,293 @@ def create_ui_overlay(
 
 
 # ============================================================
+# FFMPEG PATH
+# ============================================================
+
+def ffmpeg_filter_path(filename):
+
+    path = os.path.abspath(
+        filename
+    )
+
+    path = path.replace(
+        "\\",
+        "/"
+    )
+
+    path = path.replace(
+        "'",
+        r"\'"
+    )
+
+    path = path.replace(
+        ":",
+        r"\:"
+    )
+
+    return path
+
+
+# ============================================================
+# VIDEO SEGMENT
+# ============================================================
+
+def render_video_segment(
+    background,
+    ui,
+    audio,
+    subtitles,
+    output,
+    position,
+    glow_color,
+    card_x,
+    card_y,
+    visual_plan,
+):
+
+    required = [
+        background,
+        ui,
+        audio,
+        subtitles,
+    ]
+
+    for path in required:
+
+        if not os.path.exists(path):
+
+            raise FileNotFoundError(
+                f"Required file missing: "
+                f"{os.path.abspath(path)}"
+            )
+
+    visual_assets = []
+
+    for index, visual in enumerate(
+        visual_plan or []
+    ):
+
+        try:
+
+            asset = create_visual_asset(
+                visual,
+                index
+            )
+
+            visual_assets.append(
+                (asset, visual)
+            )
+
+        except Exception as exc:
+
+            print(
+                f"⚠️ Visual creation skipped: "
+                f"{str(exc)[:100]}"
+            )
+
+    glow = glow_color.lstrip("#")
+
+    if position == "left":
+        pan_x = "0"
+    elif position == "right":
+        pan_x = "iw-(iw/zoom)"
+    else:
+        pan_x = "(iw-(iw/zoom))/2"
+
+    filter_parts = []
+
+    filter_parts.append(
+        "[0:v]"
+        "scale=1920:1080,"
+        "zoompan="
+        "z='min(zoom+0.00020,1.05)':"
+        f"x='{pan_x}':"
+        "y='(ih-(ih/zoom))/2':"
+        "d=9000:"
+        "s=1920x1080:"
+        "fps=30"
+        "[bg];"
+    )
+
+    filter_parts.append(
+        "[1:v]"
+        "scale=1920:1080"
+        "[ui];"
+    )
+
+    filter_parts.append(
+        "[2:a]"
+        "showwaves="
+        "s=300x58:"
+        "mode=cline:"
+        f"colors=0x{glow}:"
+        "rate=30"
+        "[wave];"
+    )
+
+    filter_parts.append(
+        "[bg][ui]"
+        "overlay=0:0"
+        "[base];"
+    )
+
+    wave_x = card_x + 330
+    wave_y = card_y + 47
+
+    filter_parts.append(
+        "[base][wave]"
+        f"overlay={wave_x}:{wave_y}"
+        "[withwave];"
+    )
+
+    current = "[withwave]"
+    input_index = 3
+
+    for index, (asset, visual) in enumerate(visual_assets):
+        label = f"visual{index}"
+
+        start = max(0.0, float(visual["start"]))
+        end = max(start + 2.0, float(visual["end"]))
+        
+        # Apply fade in and out to the alpha channel of the visual card
+        filter_parts.append(
+            f"[{input_index}:v]"
+            f"format=rgba,"
+            f"fade=t=in:st={start}:d=0.4:alpha=1,"
+            f"fade=t=out:st={end-0.4}:d=0.4:alpha=1"
+            f"[{label}_faded];"
+        )
+
+        x = (VIDEO_W - VISUAL_W) // 2
+        
+        # Dynamic float animation: Start low, slowly drift upwards while visible
+        drift_speed = 15 # pixels per second
+        y_expr = f"{VISUAL_Y} + 20 - (t-{start})*{drift_speed}"
+        
+        enable = f"between(t,{start:.2f},{end:.2f})"
+
+        filter_parts.append(
+            f"{current}"
+            f"[{label}_faded]"
+            f"overlay={x}:'{y_expr}':"
+            f"enable='{enable}'"
+            f"[v{index}];"
+        )
+
+        current = f"[v{index}]"
+        input_index += 1
+
+    subtitle_path = ffmpeg_filter_path(
+        subtitles
+    )
+
+    # Subtitles are burned LAST.
+    filter_parts.append(
+        f"{current}"
+        f"ass='{subtitle_path}'"
+        "[outv]"
+    )
+
+    filter_complex = "".join(
+        filter_parts
+    )
+
+    command = [
+        "ffmpeg",
+        "-y",
+
+        "-loop",
+        "1",
+        "-framerate",
+        str(FPS),
+        "-i",
+        background,
+
+        "-i",
+        ui,
+
+        "-i",
+        audio,
+    ]
+
+    for asset, _ in visual_assets:
+        if asset.endswith(".gif"):
+            command += [
+                "-ignore_loop",
+                "0",
+                "-i",
+                asset,
+            ]
+        else:
+            command += [
+                "-loop",
+                "1",
+                "-i",
+                asset,
+            ]
+
+    command += [
+        "-filter_complex",
+        filter_complex,
+
+        "-map",
+        "[outv]",
+
+        "-map",
+        "2:a",
+
+        "-c:v",
+        "libx264",
+
+        "-preset",
+        "veryfast",
+
+        "-crf",
+        "20",
+
+        "-pix_fmt",
+        "yuv420p",
+
+        "-c:a",
+        "aac",
+
+        "-b:a",
+        "192k",
+
+        "-shortest",
+
+        output,
+    ]
+
+    result = subprocess.run(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True
+    )
+
+    if result.returncode != 0:
+
+        print(
+            "\n❌ FFmpeg failed:"
+        )
+
+        print(
+            result.stderr[-7000:]
+        )
+
+        raise RuntimeError(
+            f"FFmpeg failed creating {output}"
+        )
+
+    for asset, _ in visual_assets:
+        try:
+            os.remove(asset)
+        except Exception:
+            pass
+
+
+# ============================================================
 # SCORECARD IMAGE
 # ============================================================
 
@@ -2200,293 +2550,6 @@ def generate_scoreboard(
 
 
 # ============================================================
-# FFMPEG PATH
-# ============================================================
-
-def ffmpeg_filter_path(filename):
-
-    path = os.path.abspath(
-        filename
-    )
-
-    path = path.replace(
-        "\\",
-        "/"
-    )
-
-    path = path.replace(
-        "'",
-        r"\'"
-    )
-
-    path = path.replace(
-        ":",
-        r"\:"
-    )
-
-    return path
-
-
-# ============================================================
-# VIDEO SEGMENT
-# ============================================================
-
-def render_video_segment(
-    background,
-    ui,
-    audio,
-    subtitles,
-    output,
-    position,
-    glow_color,
-    card_x,
-    card_y,
-    visual_plan,
-):
-
-    required = [
-        background,
-        ui,
-        audio,
-        subtitles,
-    ]
-
-    for path in required:
-
-        if not os.path.exists(path):
-
-            raise FileNotFoundError(
-                f"Required file missing: "
-                f"{os.path.abspath(path)}"
-            )
-
-    visual_assets = []
-
-    for index, visual in enumerate(
-        visual_plan or []
-    ):
-
-        try:
-
-            asset = create_visual_asset(
-                visual,
-                index
-            )
-
-            visual_assets.append(
-                (asset, visual)
-            )
-
-        except Exception as exc:
-
-            print(
-                f"⚠️ Visual creation skipped: "
-                f"{str(exc)[:100]}"
-            )
-
-    glow = glow_color.lstrip("#")
-
-    if position == "left":
-        pan_x = "0"
-    elif position == "right":
-        pan_x = "iw-(iw/zoom)"
-    else:
-        pan_x = "(iw-(iw/zoom))/2"
-
-    filter_parts = []
-
-    filter_parts.append(
-        "[0:v]"
-        "scale=1920:1080,"
-        "zoompan="
-        "z='min(zoom+0.00020,1.05)':"
-        f"x='{pan_x}':"
-        "y='(ih-(ih/zoom))/2':"
-        "d=9000:"
-        "s=1920x1080:"
-        "fps=30"
-        "[bg];"
-    )
-
-    filter_parts.append(
-        "[1:v]"
-        "scale=1920:1080"
-        "[ui];"
-    )
-
-    filter_parts.append(
-        "[2:a]"
-        "showwaves="
-        "s=300x58:"
-        "mode=cline:"
-        f"colors=0x{glow}:"
-        "rate=30"
-        "[wave];"
-    )
-
-    filter_parts.append(
-        "[bg][ui]"
-        "overlay=0:0"
-        "[base];"
-    )
-
-    wave_x = card_x + 330
-    wave_y = card_y + 47
-
-    filter_parts.append(
-        "[base][wave]"
-        f"overlay={wave_x}:{wave_y}"
-        "[withwave];"
-    )
-
-    current = "[withwave]"
-    input_index = 3
-
-    for index, (asset, visual) in enumerate(visual_assets):
-        label = f"visual{index}"
-
-        start = max(0.0, float(visual["start"]))
-        end = max(start + 2.0, float(visual["end"]))
-        
-        # Apply fade in and out to the alpha channel of the visual card
-        filter_parts.append(
-            f"[{input_index}:v]"
-            f"format=rgba,"
-            f"fade=t=in:st={start}:d=0.4:alpha=1,"
-            f"fade=t=out:st={end-0.4}:d=0.4:alpha=1"
-            f"[{label}_faded];"
-        )
-
-        x = (VIDEO_W - VISUAL_W) // 2
-        
-        # Dynamic float animation: Start low, slowly drift upwards while visible
-        drift_speed = 15 # pixels per second
-        y_expr = f"{VISUAL_Y} + 20 - (t-{start})*{drift_speed}"
-        
-        enable = f"between(t,{start:.2f},{end:.2f})"
-
-        filter_parts.append(
-            f"{current}"
-            f"[{label}_faded]"
-            f"overlay={x}:'{y_expr}':"
-            f"enable='{enable}'"
-            f"[v{index}];"
-        )
-
-        current = f"[v{index}]"
-        input_index += 1
-
-    subtitle_path = ffmpeg_filter_path(
-        subtitles
-    )
-
-    # Subtitles are burned LAST.
-    filter_parts.append(
-        f"{current}"
-        f"ass='{subtitle_path}'"
-        "[outv]"
-    )
-
-    filter_complex = "".join(
-        filter_parts
-    )
-
-    command = [
-        "ffmpeg",
-        "-y",
-
-        "-loop",
-        "1",
-        "-framerate",
-        str(FPS),
-        "-i",
-        background,
-
-        "-i",
-        ui,
-
-        "-i",
-        audio,
-    ]
-
-    for asset, _ in visual_assets:
-        if asset.endswith(".gif"):
-            command += [
-                "-ignore_loop",
-                "0",
-                "-i",
-                asset,
-            ]
-        else:
-            command += [
-                "-loop",
-                "1",
-                "-i",
-                asset,
-            ]
-
-    command += [
-        "-filter_complex",
-        filter_complex,
-
-        "-map",
-        "[outv]",
-
-        "-map",
-        "2:a",
-
-        "-c:v",
-        "libx264",
-
-        "-preset",
-        "veryfast",
-
-        "-crf",
-        "20",
-
-        "-pix_fmt",
-        "yuv420p",
-
-        "-c:a",
-        "aac",
-
-        "-b:a",
-        "192k",
-
-        "-shortest",
-
-        output,
-    ]
-
-    result = subprocess.run(
-        command,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True
-    )
-
-    if result.returncode != 0:
-
-        print(
-            "\n❌ FFmpeg failed:"
-        )
-
-        print(
-            result.stderr[-7000:]
-        )
-
-        raise RuntimeError(
-            f"FFmpeg failed creating {output}"
-        )
-
-    for asset, _ in visual_assets:
-        try:
-            os.remove(asset)
-        except Exception:
-            pass
-
-
-# ============================================================
 # SCORECARD VIDEO
 # ============================================================
 
@@ -2746,6 +2809,23 @@ def generate_panel_commentary(
         previous_comments[-6:]
     )
 
+    # NOTE: previously `apologist` and `skeptic` (the actual debate
+    # arguments) were accepted as parameters but never inserted into the
+    # prompt below. The judge model was being asked to comment on
+    # reasoning quality with zero information about what was actually
+    # said - only the topic and round number. That's why commentary came
+    # out generic or outright invented (e.g. referencing things nobody
+    # said). Trimming and including the real arguments grounds the
+    # commentary in what was actually debated.
+    def trim_for_prompt(text, max_words=220):
+        words_list = text.split()
+        if len(words_list) <= max_words:
+            return text
+        return " ".join(words_list[-max_words:])
+
+    apologist_excerpt = trim_for_prompt(apologist)
+    skeptic_excerpt = trim_for_prompt(skeptic)
+
     prompt = f"""
 You are an independent AI debate judge.
 
@@ -2757,17 +2837,24 @@ Topic:
 Round:
 {round_num}
 
+What the AI Christian Apologist argued this round:
+{apologist_excerpt}
+
+What the AI Skeptic argued this round:
+{skeptic_excerpt}
+
 You preferred:
 {preferred_side}
 
-Give a short insightful observation about
-the quality of reasoning.
+Give a short, specific, insightful observation about
+the quality of reasoning you just read above - refer to
+an actual argument or move either side made.
 
 Do not simply say which side was convincing.
 
-Do not summarise the debate.
+Do not summarise the whole debate.
 
-Do not quote either debater.
+Do not quote either debater word-for-word.
 
 Do not mention your model ID.
 
@@ -3096,13 +3183,19 @@ def run_debate_pipeline():
 
         nonlocal segment_id
 
+        visuals_model = (
+            skeptic_model
+            if role == "AI Skeptic"
+            else apologist_model
+        )
+
         video = create_segment(
             text,
             role,
             name,
             topic,
             segment_id,
-            apologist_model,
+            visuals_model,
             position,
             glow,
             judge_voice_index
