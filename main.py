@@ -18,7 +18,7 @@ VOICES = {
     "Moderator": "en-US-AndrewMultilingualNeural", 
     "AI Christian Apologist": "en-US-BrianMultilingualNeural",
     "AI Skeptic": "en-US-AvaMultilingualNeural",
-    "Panelist 1": "en-US-GuyNeural",
+    "Panelist 1": "en-US-ChristopherNeural", # Swapped to a more natural voice
     "Panelist 2": "en-US-EmmaMultilingualNeural"
 }
 
@@ -103,13 +103,18 @@ def hex_to_rgba(hex_str, alpha):
     hex_str = hex_str.lstrip('#')
     return (int(hex_str[0:2], 16), int(hex_str[2:4], 16), int(hex_str[4:6], 16), alpha)
 
-def query_openrouter(prompt, primary_model_id, timeout=45):
+def query_openrouter(prompt, primary_model_id, timeout=45, max_tokens=600):
     headers = {"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"}
     for _ in range(2):
         try:
             response = requests.post(
                 OPENROUTER_URL, headers=headers, 
-                json={"model": primary_model_id, "messages": [{"role": "user", "content": prompt}], "temperature": 0.6}, 
+                json={
+                    "model": primary_model_id, 
+                    "messages": [{"role": "user", "content": prompt}], 
+                    "temperature": 0.7,
+                    "max_tokens": max_tokens
+                }, 
                 timeout=timeout
             )
             if response.status_code == 200:
@@ -142,7 +147,8 @@ def format_ass_time(seconds):
     secs = seconds % 60
     return f"{hours}:{minutes:02d}:{secs:05.2f}"
 
-def generate_karaoke_ass(words, ass_filename):
+def generate_standard_ass(words, ass_filename):
+    """FIXED: Robust subtitle generation ensuring no empty blocks or missing styles"""
     ass_header = """[Script Info]
 ScriptType: v4.00+
 PlayResX: 1920
@@ -150,30 +156,20 @@ PlayResY: 1080
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Karaoke,DejaVuSans-Bold,44,&H0000FFFF,&H00FFFFFF,&H00000000,&H80000000,1,0,0,0,100,100,0,0,1,3,2,2,100,100,80,1
+Style: Default,DejaVuSans-Bold,48,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,1,0,0,0,100,100,0,0,1,3,2,2,100,100,100,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
     lines = []
-    chunk_size = 6
+    chunk_size = 8
     for i in range(0, len(words), chunk_size):
         chunk = words[i:i+chunk_size]
         if not chunk: continue
-        chunk_start = chunk[0]['start']
-        chunk_end = chunk[-1]['end']
-        
-        dialogue_text = ""
-        last_time = chunk_start
-        for w in chunk:
-            delay = w['start'] - last_time
-            if delay > 0.05: 
-                dialogue_text += f"{{\\K{int(delay * 100)}}}"
-            dur_cs = max(1, int(w['duration'] * 100)) 
-            dialogue_text += f"{{\\K{dur_cs}}}{w['text']} "
-            last_time = w['end']
-            
-        lines.append(f"Dialogue: 0,{format_ass_time(chunk_start)},{format_ass_time(chunk_end + 0.4)},Karaoke,,0,0,0,,{dialogue_text.strip()}")
+        start_t = chunk[0]['start']
+        end_t = chunk[-1]['end'] + 0.3
+        text_content = " ".join([w['text'] for w in chunk])
+        lines.append(f"Dialogue: 0,{format_ass_time(start_t)},{format_ass_time(end_t)},Default,,0,0,0,,{text_content}")
 
     with open(ass_filename, "w", encoding="utf-8") as f:
         f.write(ass_header + "\n".join(lines) + "\n")
@@ -185,7 +181,7 @@ def generate_edge_audio_and_subs(text, role_key, output_audio, output_ass):
         words = asyncio.run(_generate_audio_and_words(safe_text, voice, output_audio))
     except Exception:
         words = asyncio.run(_generate_audio_and_words(safe_text, "en-US-AndrewMultilingualNeural", output_audio))
-    generate_karaoke_ass(words, output_ass)
+    generate_standard_ass(words, output_ass)
 
 def create_background(pos, glow_color, bg_out):
     script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -238,7 +234,14 @@ def render_video_segment(bg_path, ui_path, audio_path, ass_path, output_path, po
     ff_color = "0x" + glow_color.lstrip("#")
     
     if zoom_bg:
-        pan_x = "0" if position == "left" else ("iw-(iw/zoom)" if position == "right" else "(iw-(iw/zoom))/2")
+        # FIXED: Corrected dynamic right-side zoom bounds so Skeptic zooms in cleanly just like Apologist
+        if position == "left":
+            pan_x = "0"
+        elif position == "right":
+            pan_x = "iw-(iw/zoom)"
+        else:
+            pan_x = "(iw-(iw/zoom))/2"
+            
         pan_y = "(ih-(ih/zoom))/2"
         bg_filter = f"[0:v]scale=1920:1080,zoompan=z='min(zoom+0.0007,1.15)':x='{pan_x}':y='{pan_y}':d=8000:s=1920x1080:fps=30[bg_processed];"
     else:
@@ -345,7 +348,6 @@ def run_debate_pipeline():
 
     add_video_segment(f"Welcome to our showcase debate. The topic is: {topic}.", "Moderator", "Moderator", topic)
     
-    # RESTORED: AI Preamble Introductions
     add_video_segment("As OpenAI representing the panel, I look forward to a rigorous, multi-model evaluation of this foundational topic.", "Panelist 1", "Panelist GPT", topic)
     add_video_segment("And as Anthropic, we are ready to test the structural integrity and logical consistency of every claim presented today.", "Panelist 2", "Panelist Claude", topic)
 
@@ -358,11 +360,14 @@ def run_debate_pipeline():
         add_video_segment(f"Moving into Round {round_num}. The Apologist takes the floor.", "Moderator", "Moderator", topic)
 
         prompt_a = f"Topic: {topic}\nRound {round_num}: Present a compelling, detailed pro argument. {'Directly address this counterpoint: ' + last_text_b if round_num > 1 else ''}"
-        text_a = query_openrouter(prompt_a, "openai/gpt-4o")
+        text_a = query_openrouter(prompt_a, "openai/gpt-4o", max_tokens=500)
         add_video_segment(text_a, "AI Christian Apologist", "Apologist", topic)
 
-        prompt_b = f"Topic: {topic}\nRound {round_num}: You are the AI Skeptic. Provide a forceful, multi-paragraph rebuttal attacking the Apologist's logic point-by-point: {text_a}"
-        text_b = query_openrouter(prompt_b, "anthropic/claude-3.5-sonnet")
+        # FIXED: Explicit formatting rule forcing full multi-paragraph structural rebuttal
+        prompt_b = f"""Topic: {topic}
+Round {round_num}: You are the AI Skeptic. Provide a forceful, detailed multi-paragraph rebuttal attacking the Apologist's logic point-by-point. You must write at least three full paragraphs addressing their underlying premises.
+Apologist statement: {text_a}"""
+        text_b = query_openrouter(prompt_b, "anthropic/claude-3.5-sonnet", max_tokens=700)
         last_text_b = text_b
         add_video_segment(text_b, "AI Skeptic", "Skeptic", topic)
 
@@ -372,7 +377,7 @@ def run_debate_pipeline():
             Side B: {text_b[:300]}...
             RETURN ONLY A VALID JSON OBJECT. Example: {{"A": 85, "B": 82}}"""
             
-            resp = query_openrouter(j_prompt, judge["id"], timeout=12)
+            resp = query_openrouter(j_prompt, judge["id"], timeout=12, max_tokens=100)
             try:
                 match = re.search(r'\{.*?\}', resp, re.DOTALL)
                 scores = json.loads(match.group(0))
@@ -413,12 +418,13 @@ def run_debate_pipeline():
         rep_a = random.choice(rep_a_pool) if rep_a_pool else judge_results[0]
         rep_b = random.choice(rep_b_pool) if rep_b_pool else judge_results[1]
 
-        commentary_prompt_1 = f"Topic: {topic}\nYou are {rep_a['name']} on the AI panel. In Round {round_num}, you favored the Apologist with {int(rep_a['score_a'])} points. In 2 to 3 sentences max (~15 seconds spoken), state why you chose their argument."
-        commentary_text_1 = query_openrouter(commentary_prompt_1, rep_a['id'])
+        # FIXED: Distinct commentary directives to stop panels from echoing each other
+        commentary_prompt_1 = f"Topic: {topic}\nYou are {rep_a['name']} on the AI panel. In Round {round_num}, you favored the Apologist with {int(rep_a['score_a'])} points. Focus strictly on the structural strength of their opening theological or philosophical premise. Give a 2-sentence summary (~15 seconds)."
+        commentary_text_1 = query_openrouter(commentary_prompt_1, rep_a['id'], max_tokens=150)
         add_video_segment(commentary_text_1, "Panelist 1", f"Judge: {rep_a['name']}", topic)
 
-        commentary_prompt_2 = f"Topic: {topic}\nYou are {rep_b['name']} on the AI panel. In Round {round_num}, you favored the Skeptic with {int(rep_b['score_b'])} points. In 2 to 3 sentences max (~15 seconds spoken), state why you chose their rebuttal."
-        commentary_text_2 = query_openrouter(commentary_prompt_2, rep_b['id'])
+        commentary_prompt_2 = f"Topic: {topic}\nYou are {rep_b['name']} on the AI panel. In Round {round_num}, you favored the Skeptic with {int(rep_b['score_b'])} points. Focus strictly on the empirical gaps or evidential counter-claims raised in the rebuttal. Give a 2-sentence summary (~15 seconds)."
+        commentary_text_2 = query_openrouter(commentary_prompt_2, rep_b['id'], max_tokens=150)
         add_video_segment(commentary_text_2, "Panelist 2", f"Judge: {rep_b['name']}", topic)
 
     winner = "Apologist" if cumulative_score_a > cumulative_score_b else "Skeptic"
