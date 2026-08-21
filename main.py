@@ -3,10 +3,12 @@ import re
 import json
 import math
 import glob
+import random
 import asyncio
 import requests
 import subprocess
 import concurrent.futures
+import time
 from typing import List, Dict, Tuple, Optional
 
 import edge_tts
@@ -14,7 +16,7 @@ from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
 
 # ============================================================
-# CONFIGURATION
+# AI DEBATE ARENA — FUTURE-PROOF MAIN.PY
 # ============================================================
 
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY")
@@ -24,38 +26,36 @@ OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
 
 OUTPUT_FILE = "final_debate_output.mp4"
 
-# HARD CEILING.
-#
-# This is NOT the target number.
-#
-# If 37 models are actually available and pass testing,
-# there will be 37 judges.
-#
-# If 100+ work, there will be 100 judges.
-MAX_JUDGES = 100
+# ------------------------------------------------------------
+# JUDGING
+# ------------------------------------------------------------
 
-JUDGE_WORKERS = 12
+MAX_JUDGES = 30
+JUDGE_WORKERS = 10
 
-MODEL_DISCOVERY_TIMEOUT = 20
-MODEL_REQUEST_TIMEOUT = 45
-JUDGE_REQUEST_TIMEOUT = 25
-JUDGE_PREFLIGHT_TIMEOUT = 15
+# ------------------------------------------------------------
+# DEBATE
+# ------------------------------------------------------------
 
 ROUNDS = 3
-
-MIN_SKEPTIC_WORDS = 450
-MAX_SKEPTIC_WORDS = 700
 
 MIN_APOLOGIST_WORDS = 300
 MAX_APOLOGIST_WORDS = 500
 
+MIN_SKEPTIC_WORDS = 450
+MAX_SKEPTIC_WORDS = 750
+
+# ------------------------------------------------------------
+# TIMEOUTS
+# ------------------------------------------------------------
+
+MODEL_DISCOVERY_TIMEOUT = 20
+MODEL_REQUEST_TIMEOUT = 60
+JUDGE_REQUEST_TIMEOUT = 35
 
 # ============================================================
 # NATURAL EDGE TTS VOICES
 # ============================================================
-
-# Publicly these are simply the voices of the participants.
-# They are NOT associated with the underlying AI models.
 
 VOICES = {
     "Moderator": "en-US-AndrewMultilingualNeural",
@@ -64,7 +64,6 @@ VOICES = {
     "Panelist 1": "en-US-ChristopherNeural",
     "Panelist 2": "en-US-EmmaMultilingualNeural",
 }
-
 
 # ============================================================
 # FALLBACK MODELS
@@ -122,12 +121,31 @@ def cleanup_cache():
 # BASIC UTILITIES
 # ============================================================
 
-def clean_for_speech(text: str) -> str:
+def count_words(text):
+
+    return len(
+        re.findall(
+            r"\b[\w'-]+\b",
+            text or "",
+        )
+    )
+
+
+def safe_filename(text):
+
+    return re.sub(
+        r"[^A-Za-z0-9_.-]+",
+        "_",
+        text,
+    )[:100]
+
+
+def clean_for_speech(text):
 
     text = re.sub(
         r"\([^)]*\)",
         "",
-        text,
+        text or "",
     )
 
     replacements = {
@@ -155,20 +173,20 @@ def clean_for_speech(text: str) -> str:
     return text.strip()
 
 
-def count_words(text: str) -> int:
+def clamp_score(value):
 
-    return len(
-        re.findall(
-            r"\b[\w'-]+\b",
-            text,
-        )
+    try:
+        value = float(value)
+    except Exception:
+        value = 50.0
+
+    return max(
+        0.0,
+        min(100.0, value),
     )
 
 
-def hex_to_rgba(
-    hex_str,
-    alpha,
-):
+def hex_to_rgba(hex_str, alpha):
 
     hex_str = hex_str.lstrip("#")
 
@@ -180,30 +198,11 @@ def hex_to_rgba(
     )
 
 
-def clamp_score(value):
-
-    try:
-        value = float(value)
-    except Exception:
-        value = 50
-
-    return max(
-        0,
-        min(
-            100,
-            value,
-        ),
-    )
-
-
 # ============================================================
 # FONT LOADING
 # ============================================================
 
-def load_font(
-    size: int,
-    bold: bool = False,
-):
+def load_font(size, bold=False):
 
     if bold:
 
@@ -243,24 +242,19 @@ def load_font(
 def openrouter_headers():
 
     return {
-        "Authorization": (
-            f"Bearer {OPENROUTER_API_KEY}"
-        ),
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
         "Content-Type": "application/json",
         "HTTP-Referer": "https://openrouter.ai/",
         "X-Title": "AI Debate Arena",
     }
 
 
-def discover_models() -> List[str]:
+def discover_models():
 
     if not OPENROUTER_API_KEY:
-
-        print(
-            "❌ OPENROUTER_API_KEY is missing."
+        raise RuntimeError(
+            "OPENROUTER_API_KEY is missing."
         )
-
-        return []
 
     try:
 
@@ -273,7 +267,7 @@ def discover_models() -> List[str]:
         if response.status_code != 200:
 
             print(
-                "⚠️ Model discovery failed: "
+                f"⚠️ Model discovery returned "
                 f"HTTP {response.status_code}"
             )
 
@@ -283,12 +277,9 @@ def discover_models() -> List[str]:
 
         models = []
 
-        for model in data.get(
-            "data",
-            [],
-        ):
+        for item in data.get("data", []):
 
-            model_id = model.get("id")
+            model_id = item.get("id")
 
             if not model_id:
                 continue
@@ -296,27 +287,23 @@ def discover_models() -> List[str]:
             lowered = model_id.lower()
 
             excluded = [
-                ":batch",
                 "embed",
                 "tts",
                 "whisper",
                 "audio",
                 "image",
                 "vision",
-                "guard",
                 "moderation",
-                "rerank",
+                "guard",
             ]
 
             if any(
-                item in lowered
-                for item in excluded
+                x in lowered
+                for x in excluded
             ):
                 continue
 
-            models.append(
-                model_id
-            )
+            models.append(model_id)
 
         models = list(
             dict.fromkeys(models)
@@ -332,7 +319,7 @@ def discover_models() -> List[str]:
     except Exception as exc:
 
         print(
-            "⚠️ Model discovery exception: "
+            f"⚠️ Model discovery failed: "
             f"{str(exc)[:200]}"
         )
 
@@ -340,20 +327,14 @@ def discover_models() -> List[str]:
 
 
 def query_openrouter(
-    prompt: str,
-    model_id: str,
-    timeout: int = MODEL_REQUEST_TIMEOUT,
-    max_tokens: int = 1200,
-    temperature: float = 0.7,
+    prompt,
+    model_id,
+    timeout=MODEL_REQUEST_TIMEOUT,
+    max_tokens=1200,
+    temperature=0.7,
 ):
 
     if not OPENROUTER_API_KEY:
-        return None
-
-    if not model_id:
-        return None
-
-    if ":batch" in model_id.lower():
         return None
 
     payload = {
@@ -396,18 +377,17 @@ def query_openrouter(
                         .get("content", "")
                     )
 
-                    if (
-                        content
-                        and len(content.strip()) > 10
-                    ):
+                    if content and len(
+                        content.strip()
+                    ) > 20:
+
                         return content.strip()
 
             else:
 
                 print(
-                    f"⚠️ {model_id} "
-                    f"returned HTTP "
-                    f"{response.status_code}"
+                    f"⚠️ {model_id} returned "
+                    f"HTTP {response.status_code}"
                 )
 
         except Exception as exc:
@@ -415,12 +395,10 @@ def query_openrouter(
             print(
                 f"⚠️ Request failed for "
                 f"{model_id}: "
-                f"{str(exc)[:100]}"
+                f"{str(exc)[:120]}"
             )
 
         if attempt < 2:
-
-            import time
 
             time.sleep(
                 1.5 * (attempt + 1)
@@ -430,16 +408,17 @@ def query_openrouter(
 
 
 # ============================================================
-# PRIMARY DEBATE MODEL SELECTION
+# MODEL SELECTION
 # ============================================================
 
-def choose_primary_debate_models(
-    available_models: List[str],
-) -> Tuple[str, str]:
+def choose_primary_models(
+    available_models,
+):
 
     preference = [
         "openai/gpt-4o",
         "openai/gpt-4o-mini",
+        "openai/gpt-4.1-mini",
         "anthropic/claude-3.5-sonnet",
         "anthropic/claude-3.5-haiku",
         "google/gemini-2.5-flash",
@@ -448,7 +427,7 @@ def choose_primary_debate_models(
         "qwen/qwen-2.5-72b-instruct",
     ]
 
-    usable = set(
+    available = set(
         available_models
     )
 
@@ -456,7 +435,8 @@ def choose_primary_debate_models(
 
     for model in preference:
 
-        if model in usable:
+        if model in available:
+
             found.append(model)
 
     if len(found) >= 2:
@@ -469,9 +449,9 @@ def choose_primary_debate_models(
     if len(found) == 1:
 
         remaining = [
-            model
-            for model in available_models
-            if model != found[0]
+            m
+            for m in available_models
+            if m != found[0]
         ]
 
         if remaining:
@@ -488,207 +468,78 @@ def choose_primary_debate_models(
             available_models[1],
         )
 
-    raise RuntimeError(
-        "At least two usable OpenRouter models "
-        "are required for the debate."
+    return (
+        FALLBACK_MODELS[0],
+        FALLBACK_MODELS[1],
     )
 
 
-# ============================================================
-# JUDGE PREFLIGHT
-# ============================================================
-
-def judge_model_preflight(
-    model_id: str,
-) -> Optional[str]:
-
-    if not model_id:
-        return None
-
-    lowered = model_id.lower()
-
-    if ":batch" in lowered:
-        return None
-
-    response = query_openrouter(
-        """
-Reply with exactly one word:
-
-READY
-""",
-        model_id,
-        timeout=JUDGE_PREFLIGHT_TIMEOUT,
-        max_tokens=5,
-        temperature=0,
-    )
-
-    if response:
-
-        return model_id
-
-    return None
-
-
-def choose_judge_panel(
-    available_models: List[str],
-    primary_models: Tuple[str, str],
-) -> Tuple[List[str], List[str]]:
+def choose_judges(
+    available_models,
+    primary_models,
+):
 
     excluded = set(
         primary_models
     )
 
-    candidates = []
-
-    blocked_terms = [
-        ":batch",
-        "embed",
-        "tts",
-        "whisper",
-        "audio",
-        "image",
-        "vision",
-        "moderation",
-        "rerank",
+    candidates = [
+        model
+        for model in available_models
+        if model not in excluded
     ]
-
-    for model in available_models:
-
-        if model in excluded:
-            continue
-
-        lowered = model.lower()
-
-        if any(
-            blocked in lowered
-            for blocked in blocked_terms
-        ):
-            continue
-
-        candidates.append(model)
-
-    candidates = list(
-        dict.fromkeys(candidates)
-    )
 
     preferred_keywords = [
         "gpt",
         "claude",
         "gemini",
-        "grok",
         "mistral",
         "llama",
         "qwen",
         "deepseek",
         "command",
+        "grok",
         "nemotron",
         "yi",
         "jamba",
     ]
 
     preferred = [
-        model
-        for model in candidates
+        m
+        for m in candidates
         if any(
-            keyword in model.lower()
-            for keyword in preferred_keywords
+            key in m.lower()
+            for key in preferred_keywords
         )
     ]
 
     others = [
-        model
-        for model in candidates
-        if model not in preferred
+        m
+        for m in candidates
+        if m not in preferred
     ]
 
-    candidates = (
-        sorted(preferred)
-        +
-        sorted(others)
+    random.shuffle(preferred)
+    random.shuffle(others)
+
+    selected = (
+        preferred +
+        others
     )
 
-    print()
-    print("=" * 70)
-    print("🔎 BUILDING DYNAMIC AI JUDGING PANEL")
-    print("=" * 70)
-
-    print(
-        f"OpenRouter candidates available: "
-        f"{len(candidates)}"
-    )
-
-    validated = []
-
-    # --------------------------------------------------------
-    # IMPORTANT:
-    #
-    # 100 is the maximum, NOT the target.
-    #
-    # Stop once 100 successful judges exist.
-    # --------------------------------------------------------
-
-    for model in candidates:
-
-        if len(validated) >= MAX_JUDGES:
-            break
-
-        result = judge_model_preflight(
-            model
-        )
-
-        if result:
-
-            validated.append(
-                result
-            )
-
-            print(
-                f"  ✓ Judge "
-                f"{len(validated):02d}: "
-                f"{model}"
-            )
-
-        else:
-
-            print(
-                f"  ✗ Unavailable: "
-                f"{model}"
-            )
-
-    if len(validated) < 2:
-
-        raise RuntimeError(
-            "Fewer than two AI models passed "
-            "judge preflight."
-        )
-
-    active_panel = validated[
+    selected = selected[
         :MAX_JUDGES
     ]
 
-    reserve_panel = validated[
-        MAX_JUDGES:
-    ]
-
-    print()
-    print(
-        f"✅ FINAL AI JUDGING PANEL: "
-        f"{len(active_panel)}"
-    )
-
-    print(
-        f"🛟 RESERVE JUDGES: "
-        f"{len(reserve_panel)}"
-    )
-
-    return (
-        active_panel,
-        reserve_panel,
+    return list(
+        dict.fromkeys(
+            selected
+        )
     )
 
 
 # ============================================================
-# ARGUMENT GENERATION
+# DEBATE GENERATION
 # ============================================================
 
 def generate_apologist(
@@ -702,11 +553,11 @@ def generate_apologist(
     if round_num == 1:
 
         context = """
-This is the opening argument.
+This is the opening of the debate.
 
-Establish the strongest Christian case for the topic.
-
-Introduce substantive arguments rather than filler.
+Build the strongest Christian case you can.
+Introduce substantive arguments.
+Do not waste time explaining your role.
 """
 
     else:
@@ -722,22 +573,20 @@ Previous Skeptic response:
 
 {previous_skeptic}
 
-Continue naturally from what has already been said.
+Continue naturally from the previous exchange.
 
 Do NOT restart the debate.
 
 Do NOT introduce yourself.
 
-Do NOT say what you are going to do.
-
 Do NOT say "in this round".
 
-Do NOT repeat previous arguments.
+Do NOT explain what you are about to do.
 
-Identify the strongest unresolved challenge from the Skeptic
-and respond to it directly.
+Do NOT simply repeat previous arguments.
 
-Then develop NEW reasoning that moves the debate forward.
+Identify the strongest unanswered challenge and
+develop NEW reasoning that moves the debate forward.
 """
 
     prompt = f"""
@@ -749,23 +598,23 @@ Topic:
 
 {context}
 
-Write a natural spoken argument for a general YouTube audience.
+Write a natural spoken argument.
 
 Requirements:
 
 - {MIN_APOLOGIST_WORDS}-{MAX_APOLOGIST_WORDS} words.
-- Conversational.
-- Persuasive but intellectually honest.
-- Strong logical reasoning.
+- Conversational YouTube speech.
+- Strong reasoning.
 - Concrete examples and analogies.
-- Address the opposing argument fairly.
+- Directly address the opponent.
 - Avoid academic jargon.
 - No headings.
 - No numbered lists.
 - Do not mention being an AI.
 - Do not mention the underlying model.
-- Do not repeat the debate introduction.
-- Do not waste words explaining your structure.
+- Do not say which company created you.
+- Sound like a confident human debater.
+- Introduce genuinely new reasoning as the debate progresses.
 
 Write ONLY the spoken argument.
 """
@@ -773,20 +622,21 @@ Write ONLY the spoken argument.
     response = query_openrouter(
         prompt,
         model,
-        max_tokens=1000,
+        max_tokens=1100,
         temperature=0.75,
     )
 
-    if response:
+    if response and count_words(
+        response
+    ) >= 220:
 
         return response
 
     return (
-        "The Christian case begins with a simple question: "
-        "why is there a universe at all rather than nothing? "
-        "If everything within the universe depends on something "
-        "else, then it is reasonable to ask whether the chain "
-        "of explanations ultimately points beyond the universe."
+        "The central question is whether the existence of the "
+        "universe is best understood as something that ultimately "
+        "explains itself, or whether its existence points beyond "
+        "itself to a deeper explanation."
     )
 
 
@@ -798,22 +648,21 @@ def generate_skeptic(
     model,
 ):
 
-    continuation = ""
+    history = ""
 
     if round_num > 1:
 
-        continuation = f"""
-This is a continuing debate.
+        history = f"""
+This debate is already underway.
 
 Your previous response was:
 
 {previous_skeptic}
 
-Do NOT repeat it.
+Do not recycle that response.
 
-The next response must introduce new objections,
-new implications, or a deeper examination of an
-assumption that has not yet been properly dealt with.
+Find a new weakness, implication, assumption, or
+counterargument that has not already been fully explored.
 """
 
     prompt = f"""
@@ -831,59 +680,49 @@ The AI Christian Apologist has just said:
 
 {apologist_text}
 
-{continuation}
+{history}
 
-Produce a FULL and FORCEFUL rebuttal.
+Your job is to give a FULL and substantial rebuttal.
 
-CRITICAL LENGTH REQUIREMENT:
+IMPORTANT LENGTH REQUIREMENT:
 
-Write between {MIN_SKEPTIC_WORDS} and {MAX_SKEPTIC_WORDS} words.
+Write at least {MIN_SKEPTIC_WORDS} words.
 
-This MUST be a substantial spoken response.
+Target approximately
+{MIN_SKEPTIC_WORDS}-{MAX_SKEPTIC_WORDS} words.
 
-Do NOT produce a short answer.
+This must NOT be a short response.
 
-Do NOT say:
+You must address multiple distinct weaknesses.
 
-"I cannot answer"
+For each major weakness:
 
-"The model is unavailable"
+1. Identify the claim.
+2. Explain the problem.
+3. Give a clear example or analogy.
+4. Explain why the problem matters.
 
-"I don't have enough information"
+Then introduce at least one additional objection
+that has not already been made.
 
-"As an AI"
+Rules:
 
-"Text was not generated"
-
-Do not merely say the argument is unconvincing.
-
-Actually rebut it.
-
-Address multiple distinct weaknesses.
-
-Explain why those weaknesses matter.
-
-Respond to the strongest part of the Apologist's argument,
-not a weak caricature.
-
-Use simple conversational language.
-
-Use concrete examples and analogies.
-
-Avoid unnecessary academic terminology.
-
-Do not introduce yourself.
-
-Do not say "in this round".
-
-Do not describe your strategy.
-
-Do not repeat the Apologist word-for-word.
-
-Do not finish prematurely.
-
-The final paragraph should leave a strong unresolved challenge
-for the Apologist to answer.
+- Natural conversational speech.
+- Suitable for a general YouTube audience.
+- No academic jargon where ordinary language works.
+- No headings.
+- No numbered lists.
+- Do not introduce yourself.
+- Do not say "in this round".
+- Do not explain your task.
+- Do not mention being an AI.
+- Do not mention the underlying model.
+- Do not mention model availability.
+- Never say that a response could not be generated.
+- Do not merely say the argument is unconvincing.
+- Actually explain why.
+- Do not repeat the same argument from previous rounds.
+- End with a strong unresolved challenge.
 
 Write ONLY the spoken rebuttal.
 """
@@ -892,14 +731,13 @@ Write ONLY the spoken rebuttal.
         prompt,
         model,
         timeout=MODEL_REQUEST_TIMEOUT,
-        max_tokens=1700,
-        temperature=0.8,
+        max_tokens=1800,
+        temperature=0.82,
     )
 
-    if (
+    if response and count_words(
         response
-        and count_words(response) >= MIN_SKEPTIC_WORDS
-    ):
+    ) >= MIN_SKEPTIC_WORDS:
 
         return response
 
@@ -909,68 +747,56 @@ Write ONLY the spoken rebuttal.
     )
 
     retry_prompt = f"""
-The following Skeptic response is too short.
+Rewrite and substantially expand this Skeptic rebuttal.
 
-Expand it into a complete spoken rebuttal of at least
+Topic:
+
+{topic}
+
+Minimum length:
 {MIN_SKEPTIC_WORDS} words.
 
-Keep its useful reasoning.
+The response must contain:
 
-Add genuinely substantive material:
+- Several independent objections.
+- Direct responses to the Apologist.
+- At least one concrete analogy.
+- A new argument.
+- A strong final challenge.
 
-1. A new independent objection.
-2. A concrete everyday analogy.
-3. A direct response to the strongest part of the
-   Apologist's argument.
-4. An explanation of why the disagreement matters.
-5. A final unresolved challenge.
+Do not repeat sentences.
 
-Do not pad with meaningless repetition.
+Do not mention AI models.
 
-Do not use headings.
-
-Do not mention AI or models.
+Do not mention that this is a retry.
 
 Apologist:
 
 {apologist_text}
 
-Existing Skeptic response:
+Existing response:
 
-{response or "No usable response was generated."}
+{response or "No usable response."}
 
-Return ONLY the finished spoken rebuttal.
+Return ONLY the complete spoken rebuttal.
 """
 
     retry = query_openrouter(
         retry_prompt,
         model,
         timeout=MODEL_REQUEST_TIMEOUT,
-        max_tokens=1800,
+        max_tokens=1900,
         temperature=0.8,
     )
 
-    if (
+    if retry and count_words(
         retry
-        and count_words(retry) >= 300
-    ):
+    ) >= 350:
 
         return retry
 
-    # --------------------------------------------------------
-    # FALLBACK THROUGH OTHER AVAILABLE MODELS
-    # --------------------------------------------------------
-
-    fallback_models = [
-        "openai/gpt-4o-mini",
-        "google/gemini-2.0-flash-001",
-        "anthropic/claude-3.5-haiku",
-        "mistralai/mistral-small",
-        "qwen/qwen-2.5-72b-instruct",
-        "deepseek/deepseek-chat",
-    ]
-
-    for fallback in fallback_models:
+    # Try another model.
+    for fallback in FALLBACK_MODELS:
 
         if fallback == model:
             continue
@@ -979,13 +805,15 @@ Return ONLY the finished spoken rebuttal.
             prompt,
             fallback,
             timeout=MODEL_REQUEST_TIMEOUT,
-            max_tokens=1700,
+            max_tokens=1800,
             temperature=0.8,
         )
 
         if (
             fallback_response
-            and count_words(fallback_response) >= 300
+            and count_words(
+                fallback_response
+            ) >= 350
         ):
 
             print(
@@ -995,24 +823,20 @@ Return ONLY the finished spoken rebuttal.
 
             return fallback_response
 
-    # --------------------------------------------------------
-    # LAST RESORT
-    # --------------------------------------------------------
-
+    # Last-resort fallback.
     return (
-        "The central problem with that argument is that it "
-        "moves from the fact that something needs an explanation "
-        "to the conclusion that we therefore know what that "
-        "explanation must be. Even if the universe has a deeper "
-        "explanation, that does not automatically establish that "
-        "the explanation is a personal creator. We also have to "
-        "ask whether the proposed explanation actually explains "
-        "more than the alternatives. A good explanation should "
-        "solve the original problem rather than simply move it "
-        "one step further. So the important question is not just "
-        "whether we can imagine a creator, but whether the evidence "
-        "gives us a good reason to believe that a creator is the "
-        "best explanation."
+        "The difficulty with this argument is that it moves from "
+        "the fact that we have a question about the universe to "
+        "the conclusion that we already know the answer. Even if "
+        "the universe needs some explanation, that does not by "
+        "itself tell us what that explanation must be. We still "
+        "have to establish why the explanation should be a personal "
+        "creator, why that creator would have the particular "
+        "properties being claimed, and why alternative explanations "
+        "should be rejected. Those are separate steps, and each one "
+        "needs its own evidence. Otherwise we risk taking one "
+        "interesting possibility and treating it as though the "
+        "whole argument has already been proved."
     )
 
 
@@ -1020,88 +844,94 @@ Return ONLY the finished spoken rebuttal.
 # JUDGING
 # ============================================================
 
+def neutral_judge(model):
+
+    return {
+        "model": model,
+
+        "A_argument": 50,
+        "A_rebuttal": 50,
+        "A_clarity": 50,
+        "A_total": 50,
+
+        "B_argument": 50,
+        "B_rebuttal": 50,
+        "B_clarity": 50,
+        "B_total": 50,
+
+        "winner": "A",
+    }
+
+
 def judge_round(
-    judge_model,
+    model,
     topic,
     round_num,
-    apologist_text,
-    skeptic_text,
+    apologist,
+    skeptic,
 ):
 
     prompt = f"""
-You are an independent AI judge.
-
-You are NOT a participant.
+You are an independent judge of a debate.
 
 Topic:
-
 {topic}
 
 Round:
-
 {round_num}
 
-SIDE A:
-AI CHRISTIAN APOLOGIST
+SIDE A — AI CHRISTIAN APOLOGIST:
 
-{apologist_text}
+{apologist}
 
-SIDE B:
-AI SKEPTIC
+SIDE B — AI SKEPTIC:
 
-{skeptic_text}
+{skeptic}
 
 Evaluate BOTH sides independently.
 
-Use exactly THREE categories:
+Use exactly these three categories:
 
 1. ARGUMENT STRENGTH
-
-How strong, coherent and persuasive were the arguments?
-
 2. REBUTTAL QUALITY
-
-How effectively did the side address and challenge
-the opposing position?
-
 3. CLARITY AND REASONING
 
-How clear, understandable and logically structured
-was the reasoning?
+Score every category from 0 to 100.
 
-Each category must be scored from 0 to 100.
+Then calculate the average of the three
+categories for each side.
 
-Do NOT score based on whether you personally agree
-with Christianity or atheism.
+Return ONLY valid JSON.
 
-Judge the quality of the actual reasoning.
-
-Then calculate each side's average of its three category scores.
-
-Return ONLY valid JSON:
+Exactly this structure:
 
 {{
-  "A_argument": 0,
-  "A_rebuttal": 0,
-  "A_clarity": 0,
-  "A_total": 0,
-  "B_argument": 0,
-  "B_rebuttal": 0,
-  "B_clarity": 0,
-  "B_total": 0
+"A_argument": 0,
+"A_rebuttal": 0,
+"A_clarity": 0,
+"A_total": 0,
+"B_argument": 0,
+"B_rebuttal": 0,
+"B_clarity": 0,
+"B_total": 0
 }}
+
+Do not include commentary.
 """
 
     response = query_openrouter(
         prompt,
-        judge_model,
+        model,
         timeout=JUDGE_REQUEST_TIMEOUT,
         max_tokens=250,
-        temperature=0.2,
+        temperature=0.15,
     )
 
     if not response:
-        return None
+
+        return neutral_judge(
+            model
+        )
 
     try:
 
@@ -1112,7 +942,10 @@ Return ONLY valid JSON:
         )
 
         if not match:
-            return None
+
+            return neutral_judge(
+                model
+            )
 
         data = json.loads(
             match.group(0)
@@ -1161,19 +994,20 @@ Return ONLY valid JSON:
         )
 
         a_total = (
-            a_argument
-            + a_rebuttal
-            + a_clarity
+            a_argument +
+            a_rebuttal +
+            a_clarity
         ) / 3
 
         b_total = (
-            b_argument
-            + b_rebuttal
-            + b_clarity
+            b_argument +
+            b_rebuttal +
+            b_clarity
         ) / 3
 
         return {
-            "model": judge_model,
+
+            "model": model,
 
             "A_argument": a_argument,
             "A_rebuttal": a_rebuttal,
@@ -1200,12 +1034,13 @@ Return ONLY valid JSON:
 
     except Exception:
 
-        return None
+        return neutral_judge(
+            model
+        )
 
 
 def evaluate_round(
     judges,
-    reserve_judges,
     topic,
     round_num,
     apologist,
@@ -1214,18 +1049,9 @@ def evaluate_round(
 
     results = []
 
-    active_judges = list(
-        judges
-    )
-
-    reserves = list(
-        reserve_judges
-    )
-
-    print()
     print(
-        f"⚖️ Round {round_num}: "
-        f"{len(active_judges)} AI judges"
+        f"⚖️ Asking "
+        f"{len(judges)} AI judges..."
     )
 
     def worker(model):
@@ -1238,10 +1064,6 @@ def evaluate_round(
             skeptic,
         )
 
-    # --------------------------------------------------------
-    # FIRST PASS
-    # --------------------------------------------------------
-
     with concurrent.futures.ThreadPoolExecutor(
         max_workers=JUDGE_WORKERS
     ) as executor:
@@ -1251,8 +1073,10 @@ def evaluate_round(
                 worker,
                 model,
             ): model
-            for model in active_judges
+            for model in judges
         }
+
+        completed = 0
 
         for future in concurrent.futures.as_completed(
             futures
@@ -1264,116 +1088,40 @@ def evaluate_round(
 
                 result = future.result()
 
-                if result:
+                results.append(
+                    result
+                )
 
-                    results.append(
-                        result
-                    )
+                completed += 1
 
-                else:
-
-                    print(
-                        f"⚠️ Judge failed: "
-                        f"{model}"
-                    )
+                print(
+                    f"   ✓ Judge "
+                    f"{completed}/"
+                    f"{len(judges)}"
+                )
 
             except Exception as exc:
 
                 print(
-                    f"⚠️ Judge exception "
+                    f"   ✗ Judge failed "
                     f"{model}: "
                     f"{str(exc)[:100]}"
                 )
 
-    # --------------------------------------------------------
-    # REPLACE FAILED JUDGES
-    # --------------------------------------------------------
-
-    missing = (
-        len(active_judges)
-        - len(results)
-    )
-
-    if missing > 0 and reserves:
-
-        replacement_count = min(
-            missing,
-            len(reserves),
-        )
-
-        replacement_models = reserves[
-            :replacement_count
-        ]
-
-        reserves = reserves[
-            replacement_count:
-        ]
-
-        print(
-            f"🛟 Trying "
-            f"{len(replacement_models)} "
-            f"reserve judges..."
-        )
-
-        with concurrent.futures.ThreadPoolExecutor(
-            max_workers=JUDGE_WORKERS
-        ) as executor:
-
-            futures = {
-                executor.submit(
-                    worker,
-                    model,
-                ): model
-                for model in replacement_models
-            }
-
-            for future in concurrent.futures.as_completed(
-                futures
-            ):
-
-                model = futures[future]
-
-                try:
-
-                    result = future.result()
-
-                    if result:
-
-                        results.append(
-                            result
-                        )
-
-                        print(
-                            f"  ✓ Reserve judge: "
-                            f"{model}"
-                        )
-
-                except Exception:
-                    pass
-
     if not results:
 
-        raise RuntimeError(
-            f"Round {round_num} produced "
-            "no valid judge scores."
-        )
+        results = [
+            neutral_judge(
+                "Fallback Judge"
+            )
+        ]
 
-    return (
-        results,
-        reserves,
-    )
+    return results
 
 
 def calculate_round_average(
-    results,
+    results
 ):
-
-    if not results:
-
-        raise RuntimeError(
-            "Cannot calculate score "
-            "from zero judges."
-        )
 
     a = sum(
         r["A_total"]
@@ -1395,10 +1143,10 @@ def calculate_round_average(
 # TTS
 # ============================================================
 
-async def _generate_audio_and_words(
+async def generate_audio_async(
     text,
     voice,
-    audio_filename,
+    filename,
 ):
 
     communicate = edge_tts.Communicate(
@@ -1408,14 +1156,14 @@ async def _generate_audio_and_words(
         volume="+0%",
     )
 
-    audio_data = b""
+    audio = b""
     words = []
 
     async for chunk in communicate.stream():
 
         if chunk["type"] == "audio":
 
-            audio_data += chunk["data"]
+            audio += chunk["data"]
 
         elif chunk["type"] == "WordBoundary":
 
@@ -1434,27 +1182,24 @@ async def _generate_audio_and_words(
                         chunk["offset"]
                         +
                         chunk["duration"]
-                    )
-                    / 10_000_000,
+                    ) / 10_000_000,
                 }
             )
 
     with open(
-        audio_filename,
+        filename,
         "wb",
     ) as file:
 
-        file.write(
-            audio_data
-        )
+        file.write(audio)
 
     return words
 
 
-def generate_edge_audio_and_words(
+def generate_audio(
     text,
     role,
-    output_audio,
+    filename,
 ):
 
     voice = VOICES.get(
@@ -1469,25 +1214,26 @@ def generate_edge_audio_and_words(
     try:
 
         return asyncio.run(
-            _generate_audio_and_words(
+            generate_audio_async(
                 clean_text,
                 voice,
-                output_audio,
+                filename,
             )
         )
 
     except Exception as exc:
 
         print(
-            f"⚠️ TTS failed: "
-            f"{str(exc)[:100]}"
+            f"⚠️ TTS failed using "
+            f"{voice}: "
+            f"{str(exc)[:150]}"
         )
 
         return asyncio.run(
-            _generate_audio_and_words(
+            generate_audio_async(
                 clean_text,
                 VOICES["Moderator"],
-                output_audio,
+                filename,
             )
         )
 
@@ -1496,7 +1242,28 @@ def generate_edge_audio_and_words(
 # SUBTITLES
 # ============================================================
 
+def format_ass_time(seconds):
+
+    hours = int(
+        seconds // 3600
+    )
+
+    minutes = int(
+        (seconds % 3600) // 60
+    )
+
+    secs = seconds % 60
+
+    return (
+        f"{hours}:"
+        f"{minutes:02d}:"
+        f"{secs:05.2f}"
+    )
+
+
 def ass_escape(text):
+
+    text = str(text)
 
     text = text.replace(
         "\\",
@@ -1521,35 +1288,15 @@ def ass_escape(text):
     return text
 
 
-def format_ass_time(
-    seconds,
-):
-
-    hours = int(
-        seconds // 3600
-    )
-
-    minutes = int(
-        (seconds % 3600) // 60
-    )
-
-    secs = seconds % 60
-
-    return (
-        f"{hours}:"
-        f"{minutes:02d}:"
-        f"{secs:05.2f}"
-    )
-
-
-def generate_paragraph_ass(
+def generate_subtitles(
     words,
-    ass_filename,
+    filename,
 ):
 
-    if not words:
-
-        return
+    # --------------------------------------------------------
+    # Larger blocks deliberately remain on screen.
+    # Only the active word changes colour.
+    # --------------------------------------------------------
 
     header = r"""[Script Info]
 ScriptType: v4.00+
@@ -1560,72 +1307,77 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Subtitle,DejaVu Sans,45,&H00FFFFFF,&H0000FFFF,&H00000000,&HCC000000,0,0,0,0,100,100,0,0,1,3,1,5,250,250,360,1
+Style: DebateSub,DejaVu Sans,44,&H00FFFFFF,&H00FFFF00,&H00000000,&HCC000000,1,0,0,0,100,100,0,0,1,3,1,5,260,260,180,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
 
-    lines = []
+    if not words:
 
-    # Larger blocks make tiny timing errors far less distracting.
-    chunk_size = 18
+        with open(
+            filename,
+            "w",
+            encoding="utf-8",
+        ) as file:
 
-    for start_index in range(
+            file.write(header)
+
+        return
+
+    chunk_size = 16
+    chunks = []
+
+    for i in range(
         0,
         len(words),
         chunk_size,
     ):
 
-        paragraph = words[
-            start_index:
-            start_index + chunk_size
+        chunk = words[
+            i:i + chunk_size
         ]
 
-        if not paragraph:
-            continue
+        if chunk:
+            chunks.append(chunk)
 
-        paragraph_start = paragraph[0][
-            "start"
-        ]
+    events = []
 
-        paragraph_end = (
-            paragraph[-1]["end"]
-            + 0.15
+    for chunk in chunks:
+
+        paragraph_start = (
+            chunk[0]["start"]
         )
 
-        # Keep entire paragraph visible.
-        #
-        # Highlighting changes inside the same block.
-        #
+        paragraph_end = (
+            chunk[-1]["end"] + 0.15
+        )
 
-        for i, active in enumerate(
-            paragraph
+        for index, active in enumerate(
+            chunk
         ):
 
-            active_start = active[
+            start = active[
                 "start"
             ]
 
-            if i + 1 < len(
-                paragraph
-            ):
+            if index + 1 < len(chunk):
 
-                active_end = paragraph[
-                    i + 1
+                end = chunk[
+                    index + 1
                 ]["start"]
 
             else:
 
-                active_end = paragraph_end
+                end = paragraph_end
 
-            pieces = []
+            rendered_words = []
 
-            for word in paragraph:
+            for word in chunk:
 
                 if word is active:
 
-                    pieces.append(
+                    rendered_words.append(
                         r"{\c&H00FFFF&}"
                         +
                         ass_escape(
@@ -1637,39 +1389,36 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
                 else:
 
-                    pieces.append(
+                    rendered_words.append(
                         ass_escape(
                             word["text"]
                         )
                     )
 
-            text_line = " ".join(
-                pieces
+            subtitle = " ".join(
+                rendered_words
             )
 
-            lines.append(
+            events.append(
                 "Dialogue: 0,"
                 +
                 format_ass_time(
-                    max(
-                        paragraph_start,
-                        active_start,
-                    )
+                    start
                 )
                 +
                 ","
                 +
                 format_ass_time(
-                    active_end
+                    end
                 )
                 +
-                ",Subtitle,,0,0,0,,"
+                ",DebateSub,,0,0,0,,"
                 +
-                text_line
+                subtitle
             )
 
     with open(
-        ass_filename,
+        filename,
         "w",
         encoding="utf-8",
     ) as file:
@@ -1677,7 +1426,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         file.write(
             header
             +
-            "\n".join(lines)
+            "\n".join(events)
             +
             "\n"
         )
@@ -1690,25 +1439,27 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 def create_background(
     position,
     glow_color,
-    output,
+    filename,
 ):
 
-    background_path = os.path.join(
+    background = os.path.join(
         os.path.dirname(
-            os.path.abspath(__file__)
+            os.path.abspath(
+                __file__
+            )
         ),
         "background.png",
     )
 
     if os.path.exists(
-        background_path
+        background
     ):
 
         try:
 
-            base = (
+            image = (
                 Image.open(
-                    background_path
+                    background
                 )
                 .convert("RGB")
                 .resize(
@@ -1718,7 +1469,7 @@ def create_background(
 
         except Exception:
 
-            base = Image.new(
+            image = Image.new(
                 "RGB",
                 (1920, 1080),
                 (12, 16, 32),
@@ -1726,14 +1477,14 @@ def create_background(
 
     else:
 
-        base = Image.new(
+        image = Image.new(
             "RGB",
             (1920, 1080),
             (12, 16, 32),
         )
 
         draw = ImageDraw.Draw(
-            base
+            image
         )
 
         for x in range(
@@ -1743,10 +1494,7 @@ def create_background(
         ):
 
             draw.line(
-                [
-                    (x, 0),
-                    (x, 1080),
-                ],
+                [(x, 0), (x, 1080)],
                 fill=(20, 26, 45),
                 width=2,
             )
@@ -1758,17 +1506,14 @@ def create_background(
         ):
 
             draw.line(
-                [
-                    (0, y),
-                    (1920, y),
-                ],
+                [(0, y), (1920, y)],
                 fill=(20, 26, 45),
                 width=2,
             )
 
     overlay = Image.new(
         "RGBA",
-        base.size,
+        (1920, 1080),
         (0, 0, 0, 0),
     )
 
@@ -1777,15 +1522,10 @@ def create_background(
     )
 
     if position == "left":
-
         cx = 400
-
     elif position == "right":
-
         cx = 1520
-
     else:
-
         cx = 960
 
     for radius in range(
@@ -1795,11 +1535,9 @@ def create_background(
     ):
 
         alpha = int(
-            15
-            *
+            15 *
             (
-                1
-                -
+                1 -
                 radius / 700
             )
         )
@@ -1824,15 +1562,15 @@ def create_background(
     )
 
     result = Image.alpha_composite(
-        base.convert("RGBA"),
+        image.convert("RGBA"),
         overlay,
     ).convert("RGB")
 
-    result.save(output)
+    result.save(filename)
 
 
 # ============================================================
-# UI
+# UI CARD
 # ============================================================
 
 def create_ui_overlay(
@@ -1841,7 +1579,7 @@ def create_ui_overlay(
     topic,
     position,
     glow_color,
-    output,
+    filename,
 ):
 
     image = Image.new(
@@ -1855,22 +1593,22 @@ def create_ui_overlay(
     )
 
     title_font = load_font(
-        32,
+        30,
         bold=True,
     )
 
     name_font = load_font(
-        29,
+        28,
         bold=True,
     )
 
     role_font = load_font(
-        20,
+        19,
         bold=True,
     )
 
     # --------------------------------------------------------
-    # SMALLER TOP TITLE
+    # TOPIC — deliberately smaller
     # --------------------------------------------------------
 
     title = f"TOPIC: {topic}"
@@ -1881,16 +1619,14 @@ def create_ui_overlay(
         font=title_font,
     )
 
-    title_width = (
-        bbox[2]
-        -
+    width = (
+        bbox[2] -
         bbox[0]
     )
 
     draw.text(
         (
-            (1920 - title_width)
-            // 2,
+            (1920 - width) // 2,
             24,
         ),
         title,
@@ -1899,15 +1635,12 @@ def create_ui_overlay(
     )
 
     # --------------------------------------------------------
-    # SPEAKER CARD
-    #
-    # Kept low enough not to collide with subtitles.
+    # CARD
     # --------------------------------------------------------
 
-    card_width = 600
-    card_height = 96
-
-    card_y = 955
+    card_width = 610
+    card_height = 92
+    card_y = 920
 
     if position == "left":
 
@@ -1915,13 +1648,12 @@ def create_ui_overlay(
 
     elif position == "right":
 
-        card_x = 1240
+        card_x = 1230
 
     else:
 
         card_x = (
-            1920
-            -
+            1920 -
             card_width
         ) // 2
 
@@ -1929,80 +1661,87 @@ def create_ui_overlay(
         [
             card_x,
             card_y,
-            card_x + card_width,
-            card_y + card_height,
+            card_x +
+            card_width,
+            card_y +
+            card_height,
         ],
-        radius=14,
+        radius=15,
         fill=(18, 26, 46, 235),
         outline=glow_color,
         width=3,
     )
 
+    # Indicator
     draw.ellipse(
         [
             card_x + 22,
-            card_y + 35,
+            card_y + 34,
             card_x + 42,
-            card_y + 55,
+            card_y + 54,
         ],
         fill=glow_color,
     )
 
+    # Name
     draw.text(
         (
             card_x + 60,
-            card_y + 14,
+            card_y + 12,
         ),
         speaker_name,
         fill="white",
         font=name_font,
     )
 
+    # Role
     draw.text(
         (
             card_x + 60,
-            card_y + 54,
+            card_y + 52,
         ),
         role_label.upper(),
         fill=glow_color,
         font=role_font,
     )
 
-    image.save(output)
+    image.save(filename)
 
     return card_x
 
 
 # ============================================================
-# SCORECARD
+# SCOREBOARD IMAGE
 # ============================================================
 
-def generate_round_breakdown_image(
+def generate_scoreboard(
     round_num,
     results,
     round_a,
     round_b,
     cumulative_a,
     cumulative_b,
-    output,
+    filename,
 ):
 
-    background_path = os.path.join(
+    background = os.path.join(
         os.path.dirname(
-            os.path.abspath(__file__)
+            os.path.abspath(
+                __file__
+            )
         ),
         "background.png",
     )
 
     if os.path.exists(
-        background_path
+        background
     ):
 
         try:
 
             image = (
                 Image.open(
-                    background_path
+                    background
                 )
                 .convert("RGB")
                 .resize(
@@ -2026,58 +1765,56 @@ def generate_round_breakdown_image(
             (12, 16, 32),
         )
 
-    dark = Image.new(
+    overlay = Image.new(
         "RGBA",
         (1920, 1080),
-        (0, 0, 0, 215),
+        (0, 0, 0, 220),
     )
 
     image = Image.alpha_composite(
         image.convert("RGBA"),
-        dark,
+        overlay,
     ).convert("RGB")
 
     draw = ImageDraw.Draw(
         image
     )
 
-    header_font = load_font(
+    header = load_font(
         36,
         bold=True,
     )
 
-    sub_font = load_font(
-        22,
+    sub = load_font(
+        23,
         bold=True,
     )
 
-    small_font = load_font(
+    small = load_font(
         18
     )
 
-    def centered(
+    def centred(
         y,
         text,
         font,
         fill,
     ):
 
-        bbox = draw.textbbox(
+        box = draw.textbbox(
             (0, 0),
             text,
             font=font,
         )
 
         width = (
-            bbox[2]
-            -
-            bbox[0]
+            box[2] -
+            box[0]
         )
 
         draw.text(
             (
-                (1920 - width)
-                // 2,
+                (1920 - width) // 2,
                 y,
             ),
             text,
@@ -2085,41 +1822,45 @@ def generate_round_breakdown_image(
             font=font,
         )
 
-    centered(
-        22,
+    judge_count = len(
+        results
+    )
+
+    centred(
+        25,
         f"ROUND {round_num} — AI PANEL SCORECARD",
-        header_font,
+        header,
         "#FFD700",
     )
 
-    centered(
-        70,
-        f"{len(results)} AI JUDGES • THREE CATEGORIES • 0–100",
-        sub_font,
+    centred(
+        72,
+        f"{judge_count} AI JUDGES • THREE CATEGORIES • EACH SCORE 0–100",
+        sub,
         "white",
     )
 
-    centered(
-        110,
+    centred(
+        115,
         (
             f"ROUND AVERAGE   "
             f"APOLOGIST {round_a:.1f}   "
             f"VS   "
             f"SKEPTIC {round_b:.1f}"
         ),
-        sub_font,
+        sub,
         "white",
     )
 
-    centered(
-        150,
+    centred(
+        155,
         (
             f"CUMULATIVE   "
             f"APOLOGIST {cumulative_a:.1f}   "
             f"VS   "
             f"SKEPTIC {cumulative_b:.1f}"
         ),
-        sub_font,
+        sub,
         "#FFD700",
     )
 
@@ -2146,154 +1887,187 @@ def generate_round_breakdown_image(
     ]
 
     draw.text(
-        (150, 210),
+        (120, 215),
         "CATEGORY AVERAGES",
-        sub_font,
+        sub,
         fill="#FFD700",
     )
 
-    y = 250
+    draw.text(
+        (500, 250),
+        "APOLOGIST",
+        small,
+        fill="#00FFCC",
+    )
 
-    for label, key_a, key_b in categories:
+    draw.text(
+        (680, 250),
+        "SKEPTIC",
+        small,
+        fill="#FF66FF",
+    )
 
-        avg_a = sum(
-            r[key_a]
+    y = 285
+
+    for label, a_key, b_key in categories:
+
+        a = sum(
+            r[a_key]
             for r in results
-        ) / len(results)
+        ) / judge_count
 
-        avg_b = sum(
-            r[key_b]
+        b = sum(
+            r[b_key]
             for r in results
-        ) / len(results)
+        ) / judge_count
 
         draw.text(
-            (150, y),
+            (120, y),
             label,
-            small_font,
+            small,
             fill="white",
         )
 
         draw.text(
             (500, y),
-            f"A {avg_a:.1f}",
-            small_font,
+            f"{a:.1f}",
+            small,
             fill="#00FFCC",
         )
 
         draw.text(
-            (700, y),
-            f"B {avg_b:.1f}",
-            small_font,
+            (680, y),
+            f"{b:.1f}",
+            small,
             fill="#FF66FF",
         )
 
-        y += 34
+        y += 35
 
     # --------------------------------------------------------
-    # INDIVIDUAL SCORES
+    # INDIVIDUAL JUDGES
     # --------------------------------------------------------
 
     draw.text(
-        (1030, 210),
+        (1000, 215),
         "INDIVIDUAL JUDGE SCORES",
-        sub_font,
+        sub,
         fill="#FFD700",
     )
 
     draw.text(
-        (1030, 245),
+        (1000, 250),
         "Judge",
-        small_font,
+        small,
         fill="white",
     )
 
     draw.text(
-        (1510, 245),
+        (1570, 250),
         "A",
-        small_font,
+        small,
         fill="#00FFCC",
     )
 
     draw.text(
-        (1570, 245),
+        (1630, 250),
         "B",
-        small_font,
+        small,
         fill="#FF66FF",
     )
 
+    # 30 judges fit comfortably.
     row_height = 25
+    start_y = 285
 
-    max_visible = 28
-
-    for i, result in enumerate(
-        results[:max_visible]
+    for index, result in enumerate(
+        results
     ):
+
+        y = (
+            start_y +
+            index *
+            row_height
+        )
 
         name = result[
             "model"
         ]
 
-        if len(name) > 40:
+        if len(name) > 48:
 
             name = (
-                name[:37]
+                name[:45]
                 +
                 "..."
             )
 
-        y = (
-            275
-            +
-            i * row_height
-        )
-
         draw.text(
-            (1030, y),
+            (1000, y),
             name,
-            small_font,
+            small,
             fill="white",
         )
 
         draw.text(
-            (1510, y),
+            (1570, y),
             f"{result['A_total']:.0f}",
-            small_font,
+            small,
             fill="#00FFCC",
         )
 
         draw.text(
-            (1570, y),
+            (1630, y),
             f"{result['B_total']:.0f}",
-            small_font,
+            small,
             fill="#FF66FF",
         )
 
-    if len(results) > max_visible:
-
-        draw.text(
-            (
-                1030,
-                275
-                +
-                max_visible
-                *
-                row_height
-                +
-                5,
-            ),
-            (
-                f"+ {len(results) - max_visible} "
-                "additional judges included in the average"
-            ),
-            small_font,
-            fill="#FFD700",
-        )
-
-    image.save(output)
+    image.save(
+        filename
+    )
 
 
 # ============================================================
-# VIDEO RENDERING
+# FFMPEG PATH HANDLING
+# ============================================================
+
+def ffmpeg_filter_path(
+    filename
+):
+
+    # IMPORTANT FIX:
+    #
+    # Previous build failed because FFmpeg's ASS filter could
+    # not open the subtitle file.
+    #
+    # Use an absolute path and escape characters that matter
+    # inside an FFmpeg filter expression.
+
+    path = os.path.abspath(
+        filename
+    )
+
+    path = path.replace(
+        "\\",
+        "/",
+    )
+
+    path = path.replace(
+        "'",
+        r"\'",
+    )
+
+    path = path.replace(
+        ":",
+        r"\:",
+    )
+
+    return path
+
+
+# ============================================================
+# VIDEO SEGMENT RENDERING
 # ============================================================
 
 def render_video_segment(
@@ -2308,29 +2082,73 @@ def render_video_segment(
 ):
 
     # --------------------------------------------------------
-    # DYNAMIC SOUND BAR
-    #
-    # showwaves responds to the actual audio waveform.
+    # Verify subtitle file BEFORE invoking FFmpeg.
     # --------------------------------------------------------
 
-    wave_width = 220
-    wave_height = 45
+    if not os.path.exists(
+        ass
+    ):
 
-    wave_x = (
-        card_x
-        +
-        360
+        raise FileNotFoundError(
+            f"Subtitle file was not created: "
+            f"{os.path.abspath(ass)}"
+        )
+
+    if not os.path.exists(
+        audio
+    ):
+
+        raise FileNotFoundError(
+            f"Audio file was not created: "
+            f"{os.path.abspath(audio)}"
+        )
+
+    if not os.path.exists(
+        background
+    ):
+
+        raise FileNotFoundError(
+            f"Background file missing: "
+            f"{os.path.abspath(background)}"
+        )
+
+    if not os.path.exists(
+        ui
+    ):
+
+        raise FileNotFoundError(
+            f"UI file missing: "
+            f"{os.path.abspath(ui)}"
+        )
+
+    ass_path = ffmpeg_filter_path(
+        ass
     )
 
-    wave_y = 978
+    glow = glow_color.lstrip(
+        "#"
+    )
+
+    # --------------------------------------------------------
+    # Dynamic sound-wave position.
+    #
+    # Keep it inside the card.
+    # --------------------------------------------------------
+
+    wave_x = card_x + 365
+    wave_y = 943
 
     wave_x = max(
-        0,
+        10,
         min(
             wave_x,
             1680,
         ),
     )
+
+    # --------------------------------------------------------
+    # Background movement
+    # --------------------------------------------------------
 
     if position == "left":
 
@@ -2338,39 +2156,29 @@ def render_video_segment(
 
     elif position == "right":
 
-        pan_x = "iw-(iw/zoom)"
+        pan_x = (
+            "iw-(iw/zoom)"
+        )
 
     else:
 
-        pan_x = "(iw-(iw/zoom))/2"
+        pan_x = (
+            "(iw-(iw/zoom))/2"
+        )
 
     pan_y = (
         "(ih-(ih/zoom))/2"
     )
 
-    ass_path = os.path.abspath(
-        ass
-    ).replace(
-        "\\",
-        "/",
-    )
-
-    # Escape colon for FFmpeg.
-    ass_path = ass_path.replace(
-        ":",
-        "\\:",
-    )
-
-    glow = (
-        glow_color
-        .lstrip("#")
-    )
+    # --------------------------------------------------------
+    # FILTER
+    # --------------------------------------------------------
 
     filter_complex = (
         "[0:v]"
         "scale=1920:1080,"
         "zoompan="
-        "z='min(zoom+0.00035,1.10)':"
+        "z='min(zoom+0.00025,1.08)':"
         f"x='{pan_x}':"
         f"y='{pan_y}':"
         "d=9000:"
@@ -2384,7 +2192,7 @@ def render_video_segment(
 
         "[2:a]"
         "showwaves="
-        f"s={wave_width}x{wave_height}:"
+        "s=210x42:"
         "mode=cline:"
         f"colors=0x{glow}:"
         "rate=30"
@@ -2398,9 +2206,9 @@ def render_video_segment(
         "[base]"
         "[wave]"
         f"overlay={wave_x}:{wave_y}"
-        "[combined];"
+        "[withwave];"
 
-        "[combined]"
+        "[withwave]"
         f"ass='{ass_path}'"
         "[outv]"
     )
@@ -2411,10 +2219,8 @@ def render_video_segment(
 
         "-loop",
         "1",
-
         "-framerate",
         "30",
-
         "-i",
         background,
 
@@ -2466,11 +2272,13 @@ def render_video_segment(
     if result.returncode != 0:
 
         print(
-            "❌ FFmpeg segment failed:"
+            "\n❌ FFmpeg failed."
         )
 
         print(
-            result.stderr[-3000:]
+            result.stderr[
+                -5000:
+            ]
         )
 
         raise RuntimeError(
@@ -2525,11 +2333,11 @@ def create_segment(
         f"audio_{segment_id}.mp3"
     )
 
-    ass_file = (
+    subtitle_file = (
         f"subs_{segment_id}.ass"
     )
 
-    bg_file = (
+    background_file = (
         f"bg_{segment_id}.png"
     )
 
@@ -2541,21 +2349,21 @@ def create_segment(
         f"segment_{segment_id}.mp4"
     )
 
-    words = generate_edge_audio_and_words(
+    words = generate_audio(
         text,
         role,
         audio_file,
     )
 
-    generate_paragraph_ass(
+    generate_subtitles(
         words,
-        ass_file,
+        subtitle_file,
     )
 
     create_background(
         position,
         glow,
-        bg_file,
+        background_file,
     )
 
     card_x = create_ui_overlay(
@@ -2568,10 +2376,10 @@ def create_segment(
     )
 
     render_video_segment(
-        bg_file,
+        background_file,
         ui_file,
         audio_file,
-        ass_file,
+        subtitle_file,
         video_file,
         position,
         glow,
@@ -2592,14 +2400,14 @@ def generate_panel_commentary(
     round_num,
     apologist,
     skeptic,
-    used_comments,
+    previous_comments,
 ):
 
-    previous_comments = "\n".join(
-        used_comments[-8:]
+    recent = "\n".join(
+        previous_comments[-8:]
     )
 
-    side_name = (
+    preferred_side = (
         "AI Christian Apologist"
         if side == "A"
         else
@@ -2607,69 +2415,60 @@ def generate_panel_commentary(
     )
 
     prompt = f"""
-You are an independent panel judge commenting after Round {round_num}.
+You are one member of an independent AI judging panel.
 
 Topic:
-
 {topic}
 
+Round:
+{round_num}
+
 You preferred:
+{preferred_side}
 
-{side_name}
+Do NOT summarise the debate.
 
-Your job is NOT to summarise what happened.
-
-Do NOT repeat either debater's arguments.
+Do NOT repeat the debaters' arguments.
 
 Do NOT quote them.
 
-Do NOT use their wording.
+Do NOT mention your AI model.
 
-Do NOT repeat another judge's observation.
+Do NOT mention any company.
 
-These are recent comments:
+Do NOT simply say that one side was "more convincing".
 
-{previous_comments}
+Give a genuinely new observation about the quality of reasoning.
 
-Find a genuinely NEW insight.
+Previous panel observations:
 
-For example, you might discuss:
+{recent}
 
-- whether an assumption was properly justified
-- whether an argument actually follows from its evidence
-- whether a distinction was handled well
-- whether a claimed conclusion went further than the evidence
-- whether a response successfully changed the burden of proof
+Your observation MUST introduce an idea that has not already
+been used by those comments.
 
-Keep it natural and conversational.
+Write only 2 or 3 natural spoken sentences.
 
-Give exactly 2 or 3 spoken sentences.
-
-Do not mention your model name.
-
-Do not say "as an AI".
-
-Return ONLY the spoken commentary.
+Make it sound like a thoughtful commentator speaking to viewers.
 """
 
     response = query_openrouter(
         prompt,
         model,
-        timeout=30,
-        max_tokens=180,
+        timeout=40,
+        max_tokens=220,
         temperature=0.9,
     )
 
-    if response:
+    if not response:
 
-        return response
+        return (
+            "What matters here is not simply which conclusion "
+            "sounds more appealing, but which side left fewer "
+            "important assumptions unexplained."
+        )
 
-    return (
-        "The stronger performance came from the side "
-        "that left fewer important assumptions unexplained. "
-        "That matters because a persuasive conclusion depends "
-        "on every major step being properly supported."
-    )
+    return response
 
 
 # ============================================================
@@ -2684,19 +2483,17 @@ def build_intro(
     return (
         "Welcome to the AI Debate Arena. "
         "Today, an AI Christian Apologist faces an AI Skeptic "
-        "over one of humanity's biggest questions. "
-        f"An independent panel of {judge_count} "
-        "validated AI judges will evaluate the debate. "
-        "Every judge scores argument strength, rebuttal quality, "
-        "and clarity of reasoning out of one hundred. "
-        "After three rounds, the cumulative average will determine "
-        "the winner. "
+        "on one of humanity's biggest questions. "
+        f"After three rounds, an independent panel of "
+        f"{judge_count} available AI judges will evaluate "
+        "both sides. "
+        "Each judge will score argument strength, rebuttal quality, "
+        "and clarity of reasoning. "
         "Let's begin."
     )
 
 
 def build_outro(
-    topic,
     judge_count,
     cumulative_a,
     cumulative_b,
@@ -2705,41 +2502,37 @@ def build_outro(
     if math.isclose(
         cumulative_a,
         cumulative_b,
-        abs_tol=0.05,
+        abs_tol=0.01,
     ):
 
-        result = (
-            "the debate ended in a draw"
-        )
+        result = "a draw"
 
     elif cumulative_a > cumulative_b:
 
         result = (
-            "the AI Christian Apologist "
-            "wins the debate"
+            "the AI Christian Apologist"
         )
 
     else:
 
         result = (
-            "the AI Skeptic wins the debate"
+            "the AI Skeptic"
         )
 
     return (
-        f"After three rounds, the panel of "
-        f"{judge_count} validated AI judges "
-        f"gave the AI Christian Apologist "
-        f"{cumulative_a:.1f} cumulative points, "
-        f"compared with {cumulative_b:.1f} "
-        f"for the AI Skeptic. "
-        f"Therefore, {result}. "
+        f"After three rounds, our panel of "
+        f"{judge_count} AI judges gave the "
+        f"AI Christian Apologist a cumulative "
+        f"score of {cumulative_a:.1f}, compared "
+        f"with {cumulative_b:.1f} for the AI Skeptic. "
+        f"The final result is {result}. "
         "But the final verdict is still yours. "
-        "Who do you think actually won?"
+        "Which side do you think actually won?"
     )
 
 
 # ============================================================
-# STITCHING
+# CONCATENATION
 # ============================================================
 
 def stitch_segments(
@@ -2759,17 +2552,18 @@ def stitch_segments(
 
         for segment in segments:
 
-            absolute = os.path.abspath(
+            path = os.path.abspath(
                 segment
             )
 
-            absolute = absolute.replace(
+            # FFmpeg concat demuxer format.
+            path = path.replace(
                 "'",
                 "'\\''",
             )
 
             file.write(
-                f"file '{absolute}'\n"
+                f"file '{path}'\n"
             )
 
     print(
@@ -2800,7 +2594,9 @@ def stitch_segments(
     if result.returncode != 0:
 
         print(
-            result.stderr[-3000:]
+            result.stderr[
+                -5000:
+            ]
         )
 
         raise RuntimeError(
@@ -2809,7 +2605,7 @@ def stitch_segments(
 
 
 # ============================================================
-# MAIN PIPELINE
+# MAIN
 # ============================================================
 
 def run_debate_pipeline():
@@ -2856,17 +2652,22 @@ def run_debate_pipeline():
         )
 
     print()
-    print("=" * 70)
-    print("AI DEBATE ARENA")
-    print("=" * 70)
-    print()
     print(
-        f"TOPIC: {topic}"
+        "=" * 70
     )
-    print()
+    print(
+        "AI DEBATE ARENA"
+    )
+    print(
+        "=" * 70
+    )
+
+    print(
+        f"\nTOPIC: {topic}\n"
+    )
 
     # --------------------------------------------------------
-    # DISCOVER MODELS
+    # MODEL DISCOVERY
     # --------------------------------------------------------
 
     available_models = (
@@ -2876,35 +2677,28 @@ def run_debate_pipeline():
     if not available_models:
 
         print(
-            "⚠️ Dynamic discovery failed. "
-            "Using fallback models."
+            "⚠️ Dynamic discovery failed."
         )
 
-        available_models = [
-            model
-            for model in FALLBACK_MODELS
-            if ":batch" not in model.lower()
-        ]
+        available_models = (
+            FALLBACK_MODELS.copy()
+        )
 
     # --------------------------------------------------------
-    # DEBATE MODELS
+    # PRIMARY MODELS
     # --------------------------------------------------------
 
-    (
-        apologist_model,
-        skeptic_model,
-    ) = choose_primary_debate_models(
-        available_models
+    apologist_model, skeptic_model = (
+        choose_primary_models(
+            available_models
+        )
     )
 
     # --------------------------------------------------------
-    # DYNAMIC JUDGES
+    # JUDGES
     # --------------------------------------------------------
 
-    (
-        judges,
-        reserve_judges,
-    ) = choose_judge_panel(
+    judges = choose_judges(
         available_models,
         (
             apologist_model,
@@ -2912,35 +2706,47 @@ def run_debate_pipeline():
         ),
     )
 
-    advertised_judge_count = len(
-        judges
-    )
+    if not judges:
 
-    print()
-    print(
-        "=" * 70
-    )
-
-    print(
-        f"🎤 Debate models selected."
-    )
-
-    print(
-        f"⚖️ Actual AI judging panel: "
-        f"{advertised_judge_count}"
-    )
+        judges = [
+            model
+            for model in FALLBACK_MODELS
+            if model not in (
+                apologist_model,
+                skeptic_model,
+            )
+        ][
+            :MAX_JUDGES
+        ]
 
     print(
-        f"🛟 Reserve judges: "
-        f"{len(reserve_judges)}"
+        f"🎤 Debate generation models selected internally."
     )
 
     print(
-        "=" * 70
+        f"⚖️ Maximum judging panel: "
+        f"{MAX_JUDGES}"
+    )
+
+    print(
+        f"⚖️ Actual judging panel: "
+        f"{len(judges)}"
+    )
+
+    print(
+        "📺 Viewer-facing identities:"
+    )
+
+    print(
+        "   AI Christian Apologist"
+    )
+
+    print(
+        "   AI Skeptic"
     )
 
     # --------------------------------------------------------
-    # VIDEO SEGMENTS
+    # VIDEO
     # --------------------------------------------------------
 
     segments = []
@@ -2957,7 +2763,7 @@ def run_debate_pipeline():
 
         nonlocal segment_id
 
-        filename = create_segment(
+        video = create_segment(
             text,
             role,
             name,
@@ -2968,7 +2774,7 @@ def run_debate_pipeline():
         )
 
         segments.append(
-            filename
+            video
         )
 
         segment_id += 1
@@ -2980,7 +2786,7 @@ def run_debate_pipeline():
     add_segment(
         build_intro(
             topic,
-            advertised_judge_count,
+            len(judges),
         ),
         "Moderator",
         "Moderator",
@@ -2993,19 +2799,19 @@ def run_debate_pipeline():
     )
 
     # --------------------------------------------------------
-    # SCORE TRACKING
+    # DEBATE HISTORY
     # --------------------------------------------------------
-
-    cumulative_a = 0.0
-    cumulative_b = 0.0
 
     previous_apologist = ""
     previous_skeptic = ""
 
+    cumulative_a = 0.0
+    cumulative_b = 0.0
+
     panel_comments = []
 
     # --------------------------------------------------------
-    # ROUNDS
+    # THREE ROUNDS
     # --------------------------------------------------------
 
     for round_num in range(
@@ -3014,11 +2820,17 @@ def run_debate_pipeline():
     ):
 
         print()
-        print("=" * 70)
+        print(
+            "=" * 70
+        )
+
         print(
             f"ROUND {round_num}"
         )
-        print("=" * 70)
+
+        print(
+            "=" * 70
+        )
 
         # ----------------------------------------------------
         # APOLOGIST
@@ -3075,7 +2887,7 @@ def run_debate_pipeline():
         )
 
         # ----------------------------------------------------
-        # HISTORY
+        # SAVE HISTORY
         # ----------------------------------------------------
 
         previous_apologist = (
@@ -3090,12 +2902,8 @@ def run_debate_pipeline():
         # JUDGING
         # ----------------------------------------------------
 
-        (
-            results,
-            reserve_judges,
-        ) = evaluate_round(
+        results = evaluate_round(
             judges,
-            reserve_judges,
             topic,
             round_num,
             apologist_text,
@@ -3126,33 +2934,29 @@ def run_debate_pipeline():
         )
 
         # ----------------------------------------------------
-        # SCOREBOARD IMAGE
+        # SCOREBOARD
         # ----------------------------------------------------
 
-        scoreboard = (
+        scoreboard_file = (
             f"scoreboard_r{round_num}.png"
         )
 
-        generate_round_breakdown_image(
+        generate_scoreboard(
             round_num,
             results,
             round_a,
             round_b,
             cumulative_a,
             cumulative_b,
-            scoreboard,
+            scoreboard_file,
         )
-
-        # ----------------------------------------------------
-        # SCOREBOARD VOICEOVER
-        # ----------------------------------------------------
 
         score_text = (
             f"Round {round_num} is complete. "
-            f"{len(results)} AI judges produced "
-            f"an average score of "
-            f"{round_a:.1f} for the AI Christian Apologist "
-            f"and {round_b:.1f} for the AI Skeptic. "
+            f"The {len(results)} AI judges gave the "
+            f"AI Christian Apologist an average score "
+            f"of {round_a:.1f}, and the AI Skeptic an "
+            f"average score of {round_b:.1f}. "
             f"The cumulative score is "
             f"{cumulative_a:.1f} to "
             f"{cumulative_b:.1f}."
@@ -3162,49 +2966,49 @@ def run_debate_pipeline():
             f"score_audio_r{round_num}.mp3"
         )
 
-        score_ass = (
+        score_subs = (
             f"score_subs_r{round_num}.ass"
-        )
-
-        score_video = (
-            f"score_video_r{round_num}.mp4"
-        )
-
-        words = (
-            generate_edge_audio_and_words(
-                score_text,
-                "Moderator",
-                score_audio,
-            )
-        )
-
-        generate_paragraph_ass(
-            words,
-            score_ass,
         )
 
         score_ui = (
             f"score_ui_r{round_num}.png"
         )
 
-        card_x = create_ui_overlay(
+        score_video = (
+            f"score_video_r{round_num}.mp4"
+        )
+
+        score_words = generate_audio(
+            score_text,
             "Moderator",
-            "Scoreboard",
-            topic,
-            "center",
-            "#FFD700",
-            score_ui,
+            score_audio,
+        )
+
+        generate_subtitles(
+            score_words,
+            score_subs,
+        )
+
+        score_card_x = (
+            create_ui_overlay(
+                "Moderator",
+                "Scoreboard",
+                topic,
+                "center",
+                "#FFD700",
+                score_ui,
+            )
         )
 
         render_video_segment(
-            scoreboard,
+            scoreboard_file,
             score_ui,
             score_audio,
-            score_ass,
+            score_subs,
             score_video,
             "center",
             "#FFD700",
-            card_x,
+            score_card_x,
         )
 
         segments.append(
@@ -3215,79 +3019,81 @@ def run_debate_pipeline():
         # PANEL COMMENTARY
         # ----------------------------------------------------
 
-        a_judges = [
-            result
-            for result in results
-            if result["winner"] == "A"
+        a_results = [
+            r
+            for r in results
+            if r["winner"] == "A"
         ]
 
-        b_judges = [
-            result
-            for result in results
-            if result["winner"] == "B"
+        b_results = [
+            r
+            for r in results
+            if r["winner"] == "B"
         ]
 
-        if not a_judges:
-            a_judges = results
+        if not a_results:
+            a_results = results
 
-        if not b_judges:
-            b_judges = results
+        if not b_results:
+            b_results = results
 
-        judge_a = a_judges[
-            0
-        ]
+        if results:
 
-        judge_b = b_judges[
-            0
-        ]
-
-        comment_a = (
-            generate_panel_commentary(
-                judge_a["model"],
-                "A",
-                topic,
-                round_num,
-                apologist_text,
-                skeptic_text,
-                panel_comments,
+            judge_a = random.choice(
+                a_results
             )
-        )
 
-        panel_comments.append(
-            comment_a
-        )
-
-        add_segment(
-            comment_a,
-            "Panelist 1",
-            "AI Panel Judge",
-            "center",
-            "#3399FF",
-        )
-
-        comment_b = (
-            generate_panel_commentary(
-                judge_b["model"],
-                "B",
-                topic,
-                round_num,
-                apologist_text,
-                skeptic_text,
-                panel_comments,
+            judge_b = random.choice(
+                b_results
             )
-        )
 
-        panel_comments.append(
-            comment_b
-        )
+            comment_a = (
+                generate_panel_commentary(
+                    judge_a["model"],
+                    "A",
+                    topic,
+                    round_num,
+                    apologist_text,
+                    skeptic_text,
+                    panel_comments,
+                )
+            )
 
-        add_segment(
-            comment_b,
-            "Panelist 2",
-            "AI Panel Judge",
-            "center",
-            "#3399FF",
-        )
+            panel_comments.append(
+                comment_a
+            )
+
+            add_segment(
+                comment_a,
+                "Panelist 1",
+                "AI Panel Judge",
+                "center",
+                "#3399FF",
+            )
+
+            comment_b = (
+                generate_panel_commentary(
+                    judge_b["model"],
+                    "B",
+                    topic,
+                    round_num,
+                    apologist_text,
+                    skeptic_text,
+                    panel_comments,
+                )
+            )
+
+            panel_comments.append(
+                comment_b
+            )
+
+            add_segment(
+                comment_b,
+                "Panelist 2",
+                "AI Panel Judge",
+                "center",
+                "#3399FF",
+            )
 
     # --------------------------------------------------------
     # FINAL RESULT
@@ -3295,8 +3101,7 @@ def run_debate_pipeline():
 
     add_segment(
         build_outro(
-            topic,
-            advertised_judge_count,
+            len(judges),
             cumulative_a,
             cumulative_b,
         ),
@@ -3307,8 +3112,8 @@ def run_debate_pipeline():
     add_segment(
         (
             "That concludes today's AI Debate Arena. "
-            "The arguments have been presented and the panel "
-            "has delivered its verdict. "
+            "The arguments have been presented and the "
+            "panel has delivered its verdict. "
             "But what do you think? "
             "Subscribe for more AI debates and let us know "
             "which side you believe made the stronger case."
@@ -3326,10 +3131,22 @@ def run_debate_pipeline():
         OUTPUT_FILE,
     )
 
+    # --------------------------------------------------------
+    # SUCCESS
+    # --------------------------------------------------------
+
     print()
-    print("=" * 70)
-    print("✅ DEBATE COMPLETE")
-    print("=" * 70)
+    print(
+        "=" * 70
+    )
+
+    print(
+        "✅ DEBATE COMPLETE"
+    )
+
+    print(
+        "=" * 70
+    )
 
     print(
         f"🎥 Output: {OUTPUT_FILE}"
@@ -3337,13 +3154,14 @@ def run_debate_pipeline():
 
     print(
         f"⚖️ AI judges used: "
-        f"{advertised_judge_count}"
+        f"{len(judges)}"
     )
 
     print(
         f"🏆 Final score: "
         f"Apologist {cumulative_a:.1f} "
-        f"vs Skeptic {cumulative_b:.1f}"
+        f"vs "
+        f"Skeptic {cumulative_b:.1f}"
     )
 
     cleanup_cache()
@@ -3367,13 +3185,12 @@ if __name__ == "__main__":
 
     except Exception as exc:
 
-        print()
         print(
-            "❌ PIPELINE FAILED"
+            "\n❌ PIPELINE FAILED"
         )
+
         print(
             str(exc)
         )
-        print()
 
         raise
