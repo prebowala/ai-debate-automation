@@ -31,9 +31,9 @@ MAX_JUDGES = 7
 JUDGE_WORKERS = 7
 MAX_VISUALS_PER_SEGMENT = 4
 MIN_VISUAL_GAP = 0.8
-VISUAL_W = 480
-VISUAL_H = 480
-VISUAL_Y = 180
+VISUAL_W = 520
+VISUAL_H = 520
+VISUAL_Y = 160
 
 VOICES = {
     "A": "en-US-BrianMultilingualNeural",
@@ -43,13 +43,14 @@ VOICES = {
 JUDGE_VOICES = ["en-US-ChristopherNeural","en-US-EmmaMultilingualNeural","en-US-GuyNeural","en-US-JennyNeural"]
 
 FALLBACK_MODELS = [
-    "openai/gpt-4o-mini",
-    "google/gemini-2.0-flash-001",
-    "anthropic/claude-3.5-haiku",
-    "mistralai/mistral-small",
-    "meta-llama/llama-3.1-70b-instruct",
-    "qwen/qwen-2.5-72b-instruct",
-    "deepseek/deepseek-chat",
+    "meta-llama/llama-3.2-3b-instruct:free",
+    "meta-llama/llama-3.1-8b-instruct:free",
+    "google/gemma-2-9b-it:free",
+    "qwen/qwen-2.5-7b-instruct:free",
+    "mistralai/mistral-7b-instruct:free",
+    "huggingfaceh4/zephyr-7b-beta:free",
+    "openchat/openchat-7b:free",
+    "google/gemini-flash-1.5-8b:free",
 ]
 
 PROVIDER_ALIASES = {
@@ -112,16 +113,22 @@ def discover_models():
     if not OPENROUTER_API_KEY: raise RuntimeError("OPENROUTER_API_KEY missing")
     try:
         r=requests.get(OPENROUTER_MODELS_URL,headers=openrouter_headers(),timeout=20)
-        ms=[]
+        free_ms=[]
         for it in r.json().get("data",[]):
             mid=it.get("id")
             if not mid: continue
             if any(x in mid.lower() for x in ["embed","tts","whisper","audio","moderation","guard"]): continue
-            ms.append(mid)
-        return list(dict.fromkeys(ms))
+            if ":free" in mid.lower():
+                free_ms.append(mid)
+        if len(free_ms) >= 4:
+            print(f"Found {len(free_ms)} free models, using only free to save credits")
+            return list(dict.fromkeys(free_ms))
+        else:
+            print(f"Only {len(free_ms)} free models found, using fallback free list")
+            return FALLBACK_MODELS.copy()
     except Exception as e:
-        print(f"discover fail {e}")
-        return []
+        print(f"discover fail {e}, using fallback free models")
+        return FALLBACK_MODELS.copy()
 
 def query_openrouter(prompt,model_id,timeout=60,max_tokens=1200,temperature=0.7):
     if not OPENROUTER_API_KEY: return None
@@ -138,13 +145,16 @@ def query_openrouter(prompt,model_id,timeout=60,max_tokens=1200,temperature=0.7)
     return None
 
 def choose_primary_models(avail):
-    pref=["openai/gpt-4o","openai/gpt-4o-mini","anthropic/claude-3.5-sonnet","anthropic/claude-3.5-haiku","google/gemini-2.5-flash","google/gemini-2.0-flash-001","deepseek/deepseek-chat","qwen/qwen-2.5-72b-instruct"]
-    found=[m for m in pref if m in set(avail)]
+    free_avail = [m for m in avail if ":free" in m]
+    if not free_avail:
+        free_avail = avail
+    pref_free=["meta-llama/llama-3.2-3b-instruct:free","meta-llama/llama-3.1-8b-instruct:free","google/gemma-2-9b-it:free","qwen/qwen-2.5-7b-instruct:free","mistralai/mistral-7b-instruct:free","google/gemini-flash-1.5-8b:free","huggingfaceh4/zephyr-7b-beta:free"]
+    found=[m for m in pref_free if m in set(free_avail)]
     if len(found)>=2: return found[0],found[1]
     if len(found)==1:
-        rem=[m for m in avail if m!=found[0]]
+        rem=[m for m in free_avail if m!=found[0]]
         if rem: return found[0],rem[0]
-    if len(avail)>=2: return avail[0],avail[1]
+    if len(free_avail)>=2: return free_avail[0],free_avail[1]
     return FALLBACK_MODELS[0],FALLBACK_MODELS[1]
 
 def choose_judges(avail,primary):
@@ -162,12 +172,8 @@ def choose_judges(avail,primary):
     sel.sort(key=lambda x:(pri.index(x[0]) if x[0] in pri else 999,x[0]))
     return [m for _,m in sel[:MAX_JUDGES]]
 
-# ============================================================
-# DYNAMIC ROLE LABELING - NOW GOD TOLD TRUTH vs SERPENT TOLD TRUTH
-# ============================================================
 def get_debate_roles(topic, model):
     topic_lower = (topic or "").lower()
-    # Exact labels requested by user for current topic
     if "god" in topic_lower and "serpent" in topic_lower:
         return {
             "side_a_label": "GOD TOLD TRUTH",
@@ -175,16 +181,12 @@ def get_debate_roles(topic, model):
             "side_b_label": "SERPENT TOLD TRUTH",
             "side_b_desc": "Defends that the serpent told the truth and God did not",
         }
-    # Generic LLM labeling for any other topic.txt
-    prompt = f"""
-Topic: "{topic}"
-Return ONLY JSON: {{"side_a_label":"SHORT LABEL","side_a_desc":"sentence","side_b_label":"SHORT LABEL","side_b_desc":"sentence"}}
-Rules: labels 2-4 words uppercase, opposites specific to topic.
-"""
-    resp = query_openrouter(prompt, model, timeout=30, max_tokens=250, temperature=0.3)
+    prompt = f"""Topic: "{topic}" Return ONLY JSON: {{"side_a_label":"SHORT LABEL","side_a_desc":"sentence","side_b_label":"SHORT LABEL","side_b_desc":"sentence"}} Rules: labels 2-4 words uppercase, opposites specific to topic."""
+    resp = query_openrouter(prompt, model, timeout=25, max_tokens=250, temperature=0.3)
     if resp:
         try:
-            m = re.search(r"\{.*\}", resp, re.DOTALL)
+            import re as re2
+            m = re2.search(r"\{.*\}", resp, re2.DOTALL)
             if m:
                 data = json.loads(m.group(0))
                 a_label = str(data.get("side_a_label","SIDE A")).strip().upper()[:30]
@@ -203,7 +205,6 @@ Rules: labels 2-4 words uppercase, opposites specific to topic.
     }
 
 def strip_filler_phrases(text):
-    # Remove common debate openers
     patterns = [
         r"^(ladies and gentlemen[,.]?\s*)",
         r"^(my friends[,.]?\s*)",
@@ -217,15 +218,14 @@ def strip_filler_phrases(text):
         r"^(dear audience[,.]?\s*)",
     ]
     cleaned = text.strip()
-    for _ in range(3):  # loop in case multiple fillers
+    for _ in range(3):
         for pat in patterns:
             cleaned = re.sub(pat, "", cleaned, flags=re.IGNORECASE).strip()
     return cleaned
 
 def generate_turn(side, topic, round_num, turn_num, previous_exchange, model, role_label, role_desc, opponent_label, opponent_desc):
     instruction = "Opening - establish foundation. Start directly with argument." if round_num==1 and turn_num==1 else f"Turn {turn_num} round {round_num} - respond directly to opponent's last point. Start immediately with rebuttal."
-    prompt = f"""
-You are {role_label} in a debate.
+    prompt = f"""You are {role_label} in a debate.
 Your position: {role_desc}
 Opponent is {opponent_label}: {opponent_desc}
 Topic: {topic}
@@ -313,12 +313,11 @@ async def generate_audio_async(text,voice,filename):
 def generate_audio(text,role,filename,judge_voice_index=None):
     if "JUDGE" in role.upper():
         voice=JUDGE_VOICES[(judge_voice_index or 0)%len(JUDGE_VOICES)]
-    elif role=="A" or "GOD TOLD TRUTH" in role.upper():
+    elif "GOD TOLD TRUTH" in role.upper():
         voice=VOICES["A"]
-    elif role=="B" or "SERPENT TOLD TRUTH" in role.upper():
+    elif "SERPENT TOLD TRUTH" in role.upper():
         voice=VOICES["B"]
     else:
-        # generic mapping for dynamic labels
         if "GOD" in role.upper(): voice=VOICES["A"]
         elif "SERPENT" in role.upper(): voice=VOICES["B"]
         else: voice=VOICES["A"] if role=="A" else VOICES["B"] if role=="B" else VOICES["Moderator"]
@@ -333,13 +332,12 @@ def format_ass_time(s):
     s=max(0.0,float(s)); h=int(s//3600); m=int((s%3600)//60); sec=s%60
     return f"{h}:{m:02d}:{sec:05.2f}"
 def ass_escape(t):
-    return str(t).replace("\\",r"\\").replace("{",r"\{").replace("}",r"\}").replace("\n"," ")
+    return str(t).replace("\\","\\\\").replace("{","\\{").replace("}","\\}").replace("\n"," ")
 
 def generate_subtitles(words,filename,scorecard=False):
-    # Smooth rolling subtitles - 3 lines visible, updates every line for better sync
     margin_v=90 if scorecard else 200
-    font_size=34 if not scorecard else 36
-    header=f"""[Script Info]
+    font_size=36 if scorecard else 34
+    header="""[Script Info]
 ScriptType: v4.00+
 PlayResX: 1920
 PlayResY: 1080
@@ -352,60 +350,86 @@ Style: DebateSub,DejaVu Sans,{font_size},&H00FFFFFF,&H00FFFFFF,&H00000000,&HCC00
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
-"""
+""".format(font_size=font_size, margin_v=margin_v)
     if not words:
         with open(filename,"w",encoding="utf-8") as f: f.write(header); return
-    
-    # Split into lines of 7-8 words
-    lines_data = []
-    cur_line = []
+    clean_words=[]
     for w in words:
-        cur_line.append(w)
-        ends=str(w["text"]).strip().endswith(('.', '?', '!'))
-        if len(cur_line)>=8 or (ends and len(cur_line)>=5):
-            lines_data.append(cur_line)
-            cur_line=[]
-    if cur_line:
-        lines_data.append(cur_line)
-    
-    # Create sliding window of 3 lines for smooth following
+        t=str(w.get("text","")).strip()
+        if not t: continue
+        clean_words.append({"text":t,"start":float(w["start"]),"end":float(w["end"])})
+    if not clean_words:
+        with open(filename,"w",encoding="utf-8") as f: f.write(header); return
+    WORDS_PER_CHUNK=20
+    chunks=[]
+    cur=[]
+    for w in clean_words:
+        cur.append(w)
+        if str(w["text"]).strip().endswith(('.', '?', '!')) and len(cur)>=12:
+            chunks.append(cur); cur=[]
+        elif len(cur)>=WORDS_PER_CHUNK:
+            chunks.append(cur); cur=[]
+    if cur: chunks.append(cur)
     events=[]
-    for i in range(len(lines_data)):
-        # Show up to 3 lines at a time (current + next 2, or previous context)
-        window_start = max(0, i-1)  # include previous line for context
-        window_end = min(len(lines_data), i+2)  # current + next 1
-        window_lines = lines_data[window_start:window_end]
-        
-        if not window_lines:
-            continue
-            
-        # Timing: start at first word of current line -0.15s early, end at last word of window +0.2s
-        s = float(lines_data[i][0]["start"]) - 0.15
-        # End at end of window, but at least 1.2s for readability
-        e = float(window_lines[-1][-1]["end"]) + 0.2
-        if e - s < 1.2:
-            e = s + 1.2
-        
-        # Build text for window - highlight current line? No highlight per request, just plain
-        txt_lines = []
-        for line_words in window_lines:
-            txt_lines.append(" ".join([ass_escape(w["text"]) for w in line_words]))
-        
-        txt = r"\N".join(txt_lines)
-        # Quick fade for smooth transition
-        ass_text=f"{{\an2\pos(960,820)\q2\fad(80,80)}}{txt}"
+    last_end=0.0
+    for chunk in chunks:
+        if not chunk: continue
+        s=float(chunk[0]["start"])-0.05
+        e=float(chunk[-1]["end"])+0.25
+        if s < last_end:
+            s=last_end+0.01
+        if e <= s:
+            e=s+1.0
+        last_end=e
+        txt_words=[ass_escape(w["text"]) for w in chunk]
+        lines=[]
+        for i in range(0,len(txt_words),8):
+            lines.append(" ".join(txt_words[i:i+8]))
+        if len(lines)>3: lines=lines[:3]
+        # Use simple backslash N for ASS line break - build string without regex issues
+        txt="\\N".join(lines)
+        # Fix double escaping for ASS - we want \N in file
+        txt=txt.replace("\\\\N","\\N")
+        ass_text="{\\an2\\pos(960,820)\\q2\\fad(80,80)}"+txt
         events.append(f"Dialogue: 0,{format_ass_time(s)},{format_ass_time(e)},DebateSub,,0,0,0,,{ass_text}")
-    
     with open(filename,"w",encoding="utf-8") as f:
         f.write(header+"\n".join(events)+"\n")
 
+def fallback_visual_plan(text):
+    text_low=text.lower()
+    visuals=[]
+    keywords=[
+        ("apple","Apple on branch","red apple hanging from tree branch, minimalist doodle"),
+        ("fruit","Eating fruit","stick figure eating fruit, simple doodle"),
+        ("tree","Tree in garden","simple tree with green leaves, minimalist"),
+        ("garden","Garden of Eden","garden with trees and leaves, simple watercolor"),
+        ("serpent","Serpent","simple snake coiled on branch, doodle style"),
+        ("snake","Snake","simple snake, minimalist line art"),
+        ("god","God speaking","light from above, simple rays, minimalist"),
+        ("adam","Adam","simple stick figure man, beige blob"),
+        ("eve","Eve","simple stick figure woman, beige blob, fully clothed"),
+        ("eat","Eating","person eating, apple near mouth, simple animation"),
+        ("know","Knowing","person thinking, scribble thought bubble"),
+        ("death","Death warning","skull simple icon, minimalist"),
+        ("lie","Lie","two speech bubbles conflicting, simple"),
+    ]
+    for kw,label,desc in keywords:
+        if kw in text_low and len(visuals) < MAX_VISUALS_PER_SEGMENT:
+            idx=text_low.find(kw)
+            phrase=text[max(0,idx-10):idx+len(kw)+20].strip()
+            if len(phrase)<5: phrase=kw
+            visuals.append({"phrase":phrase,"label":label,"description":desc,"kind":"concept"})
+    return visuals
+
 def plan_visuals(text,model):
-    prompt=f"""You are visual director. Read: {text}\nFind up to {MAX_VISUALS_PER_SEGMENT} simple visual moments like man eating fruit, apple on tree, tree in garden, serpent on branch, person thinking, hands holding apple. CRITICAL: Must be simple actions that can be animated in 2-3 sec minimalist style, fully clothed simple stick figures, no nudity, no photorealism. Return ONLY JSON: [{{"phrase":"exact phrase","label":"2-4 words","description":"detailed prompt","kind":"person"}}]"""
-    resp=query_openrouter(prompt,model,timeout=35,max_tokens=500,temperature=0.2)
-    if not resp: return []
+    prompt=f"You are visual director. Read: {text}\nFind up to {MAX_VISUALS_PER_SEGMENT} simple visual moments like man eating fruit, apple on tree, tree in garden, serpent on branch, person thinking, hands holding apple. CRITICAL: Must be simple actions that can be animated in 2-3 sec minimalist style, fully clothed simple stick figures, no nudity, no photorealism. Return ONLY JSON: [{{\"phrase\":\"exact phrase\",\"label\":\"2-4 words\",\"description\":\"detailed prompt\",\"kind\":\"person\"}}]"
+    resp=query_openrouter(prompt,model,timeout=25,max_tokens=400,temperature=0.2)
+    if not resp:
+        print("   Visual LLM failed (low credits?), using keyword fallback")
+        return fallback_visual_plan(text)
     try:
         m=re.search(r"\[.*\]",resp,re.DOTALL)
-        if not m: return []
+        if not m: return fallback_visual_plan(text)
         data=json.loads(m.group(0))
         out=[]
         for item in data:
@@ -415,8 +439,9 @@ def plan_visuals(text,model):
             if phrase.lower() not in text.lower(): continue
             out.append({"phrase":phrase,"label":label[:30],"description":desc[:220],"kind":item.get("kind","concept")})
             if len(out)>=MAX_VISUALS_PER_SEGMENT: break
-        return out
-    except: return []
+        return out if out else fallback_visual_plan(text)
+    except:
+        return fallback_visual_plan(text)
 
 def find_phrase_timing(phrase,words):
     if not phrase or not words: return None
@@ -426,7 +451,7 @@ def find_phrase_timing(phrase,words):
     if not pw: return None
     for i in range(len(sw)-len(pw)+1):
         if sw[i:i+len(pw)]==pw:
-            s=float(words[i]["start"]); e=float(words[min(len(words)-1,i+len(pw)-1)]["end"])+2.5
+            s=float(words[i]["start"]); e=float(words[min(len(words)-1,i+len(pw)-1)]["end"])+4.5
             return {"start":max(0.0,s-0.15),"end":max(s+4.5,e+1.5)}
     for p in pw:
         if len(p)<4: continue
@@ -463,12 +488,10 @@ SAFE_CLOTHING_SUFFIX = "minimalist watercolor illustration, simple beige waterco
 def build_visual_prompt(v):
     base_desc = v.get('description','')
     low = base_desc.lower()
-    # Minimalist doodle style like reference - avoids nudity by being abstract
     minimalist_prefix = "minimalist line drawing, simple watercolor wash in beige, black scribble hair, white background, childlike doodle art, simple shapes, "
     if any(k in low for k in ["adam", "eve", "eden", "apple", "fruit", "eating", "tree", "garden", "serpent", "snake"]):
         base_desc = f"simple stick figure person looking at red apple hanging from branch, {base_desc}, minimalist, no nudity, fully clothed in simple shapes"
     return f"{minimalist_prefix}{base_desc}, {v.get('label','')}, {SAFE_CLOTHING_SUFFIX}, simple doodle, no text, no words, no watermark, flat illustration"
-
 
 def fetch_topic_image(v):
     try:
@@ -484,81 +507,48 @@ def fetch_topic_image(v):
     return None
 
 def create_visual_asset(visual,index):
-    # Simple minimalist animated GIF - 2-3 sec movement, not photorealistic
-    # Style: like reference image - beige blobs, black scribble, red apple
     filename=f"visual_{index}.gif"
     real=fetch_topic_image(visual)
     if real is None:
         print(f"   No image for {visual.get('label')} - skipping visual")
         return None
-    
-    # Ensure base image is in minimalist style - resize
-    base_size = VISUAL_W
-    real = real.resize((base_size, base_size), Image.LANCZOS).convert("RGBA")
-    
-    # Create animation frames - simple 2-3 sec loop
-    # Based on label, create appropriate simple movement
-    label_lower = visual.get('label','').lower() + " " + visual.get('description','').lower()
-    frames = []
-    num_frames = 18  # 3 seconds at 6 fps - simple, not overwhelming
-    
-    # Create white background
-    bg = Image.new("RGBA", (VISUAL_W, VISUAL_H), (255,255,255,0))
-    
+    base_size=VISUAL_W
+    real=real.resize((base_size, base_size), Image.LANCZOS).convert("RGBA")
+    label_lower=visual.get('label','').lower()+" "+visual.get('description','').lower()
+    frames=[]
+    num_frames=18
     for f in range(num_frames):
-        # Gentle float / bob for YouTube style
-        progress = f / num_frames
-        # Simple sine wave for bobbing - very subtle
-        bob_y = int(3 * math.sin(2 * math.pi * progress))
-        # Slight scale pulse for eating effect
+        progress=f/num_frames
+        bob_y=int(3*math.sin(2*math.pi*progress))
         if "eat" in label_lower or "apple" in label_lower or "fruit" in label_lower:
-            # Apple moves slightly down as if being eaten
-            apple_offset = int(8 * progress) if progress < 0.5 else int(8 * (1-progress))
+            apple_offset=int(8*progress) if progress<0.5 else int(8*(1-progress))
         else:
-            apple_offset = 0
-        
-        # Create frame
-        frame = Image.new("RGBA", (VISUAL_W, VISUAL_H), (255,255,255,0))
-        
-        # Paste base image with bob
-        y_pos = bob_y
-        # For apple eating animation, shift apple part (simulate by cropping)
-        if "eat" in label_lower and f % 3 == 0:
-            # Slight squash/stretch to simulate bite
-            scale = 1.0 + 0.03 * math.sin(4 * math.pi * progress)
-            w = int(VISUAL_W * scale)
-            h = int(VISUAL_H * (2 - scale))
-            scaled = real.resize((w, h), Image.LANCZOS)
-            x = (VISUAL_W - w)//2
-            y = (VISUAL_H - h)//2 + y_pos + apple_offset
-            frame.paste(scaled, (x, y), scaled)
+            apple_offset=0
+        frame=Image.new("RGBA", (VISUAL_W, VISUAL_H), (255,255,255,0))
+        y_pos=bob_y
+        if "eat" in label_lower and f%3==0:
+            scale=1.0+0.03*math.sin(4*math.pi*progress)
+            w=int(VISUAL_W*scale); h=int(VISUAL_H*(2-scale))
+            scaled=real.resize((w,h), Image.LANCZOS)
+            x=(VISUAL_W-w)//2; y=(VISUAL_H-h)//2+y_pos+apple_offset
+            frame.paste(scaled,(x,y),scaled)
         else:
-            frame.paste(real, (0, y_pos + apple_offset), real)
-        
-        # Add simple floating leaf for garden/tree scenes
-        if any(k in label_lower for k in ["tree", "garden", "leaf", "eden"]):
-            leaf_progress = (f + num_frames//3) / num_frames
-            leaf_x = int(VISUAL_W * 0.7 + 20 * math.sin(2*math.pi*leaf_progress))
-            leaf_y = int(VISUAL_H * 0.4 + 60 * leaf_progress) % VISUAL_H
-            # Draw simple green leaf dot
-            draw = ImageDraw.Draw(frame)
-            draw.ellipse([leaf_x, leaf_y, leaf_x+12, leaf_y+18], fill=(120, 180, 120, 180))
-        
-        # Rounded corners mask
-        mask = Image.new("L", (VISUAL_W, VISUAL_H), 0)
+            frame.paste(real,(0,y_pos+apple_offset),real)
+        if any(k in label_lower for k in ["tree","garden","leaf","eden"]):
+            leaf_progress=(f+num_frames//3)/num_frames
+            leaf_x=int(VISUAL_W*0.7+20*math.sin(2*math.pi*leaf_progress))
+            leaf_y=int(VISUAL_H*0.4+60*leaf_progress)%VISUAL_H
+            draw=ImageDraw.Draw(frame)
+            draw.ellipse([leaf_x,leaf_y,leaf_x+12,leaf_y+18],fill=(120,180,120,180))
+        mask=Image.new("L", (VISUAL_W, VISUAL_H), 0)
         ImageDraw.Draw(mask).rounded_rectangle((0,0,VISUAL_W,VISUAL_H), radius=32, fill=255)
-        final = Image.new("RGBA", (VISUAL_W, VISUAL_H), (0,0,0,0))
-        final.paste(frame, (0,0), frame)
+        final=Image.new("RGBA", (VISUAL_W, VISUAL_H), (0,0,0,0))
+        final.paste(frame,(0,0),frame)
         final.putalpha(mask)
-        
-        # Subtle border
-        border = Image.new("RGBA", (VISUAL_W, VISUAL_H), (0,0,0,0))
+        border=Image.new("RGBA", (VISUAL_W, VISUAL_H), (0,0,0,0))
         ImageDraw.Draw(border).rounded_rectangle((1,1,VISUAL_W-2,VISUAL_H-2), radius=32, outline=(200,200,200,50), width=1)
-        final = Image.alpha_composite(final, border)
-        
+        final=Image.alpha_composite(final, border)
         frames.append(final)
-    
-    # Save as GIF with longer duration for slower, less distracting playback
     frames[0].save(filename, format='GIF', save_all=True, append_images=frames[1:], duration=160, loop=0, disposal=2, optimize=True)
     return filename
 
@@ -583,16 +573,11 @@ def create_ui_overlay(speaker_name,topic,position,glow_color,filename):
     draw=ImageDraw.Draw(image)
     title_font=load_font(30,bold=True); name_font=load_font(26,bold=True)
     title=f"TOPIC: {topic}"
-    # Truncate long topic for display
-    if len(title)>85:
-        title=title[:82]+"..."
+    if len(title)>85: title=title[:82]+"..."
     box=draw.textbbox((0,0),title,font=title_font)
     draw.text(((VIDEO_W-(box[2]-box[0]))//2,24),title,fill="white",font=title_font)
-    # Wider card for longer labels like GOD TOLD TRUTH
     cw=750; ch=110; cy=885
-    cx=75 if position=="left" else 1195 if position=="right" else (VIDEO_W-cw)//2
-    if position=="right":
-        cx=VIDEO_W-cw-75
+    cx=75 if position=="left" else VIDEO_W-cw-75 if position=="right" else (VIDEO_W-cw)//2
     draw.rounded_rectangle([cx,cy,cx+cw,cy+ch],radius=18,fill=(18,26,46,235),outline=glow_color,width=4)
     draw.ellipse([cx+22,cy+27,cx+47,cy+52],fill=glow_color)
     draw.text((cx+65,cy+22),speaker_name,fill="white",font=name_font)
@@ -624,8 +609,6 @@ def render_video_segment(background,ui,audio,subtitles,output,position,glow_colo
     cur="[withwave]"; idx_in=3
     for i,(asset,vis) in enumerate(vassets):
         s=max(0.0,float(vis["start"])); e=max(s+3.5,float(vis["end"]))
-        # YouTube style: slow fade 0.8s + very subtle Ken Burns zoom (1.0 -> 1.06)
-        # For PNG: apply zoompan for slow zoom in
         if asset.lower().endswith(".png"):
             parts.append(f"[{idx_in}:v]scale=iw*1.1:ih*1.1,zoompan=z='min(1+0.0006*on,1.08)':x='iw/2-(iw/zoom)/2':y='ih/2-(ih/zoom)/2':d=1:s={VISUAL_W}x{VISUAL_H}:fps={FPS},format=rgba,fade=t=in:st={s}:d=0.8:alpha=1,fade=t=out:st={e-0.8}:d=0.8:alpha=1[vf{i}];")
         else:
@@ -637,7 +620,6 @@ def render_video_segment(background,ui,audio,subtitles,output,position,glow_colo
     fc="".join(parts)
     cmd=["ffmpeg","-y","-loop","1","-framerate",str(FPS),"-i",background,"-i",ui,"-i",audio]
     for a,_ in vassets:
-        # PNG static images need loop, GIFs need ignore_loop
         if a.lower().endswith(".gif"):
             cmd+=["-ignore_loop","0","-i",a]
         else:
@@ -753,11 +735,9 @@ def run_debate_pipeline():
     if not avail:
         avail=FALLBACK_MODELS.copy()
     ap_model,sk_model=choose_primary_models(avail)
-
     roles = get_debate_roles(topic, ap_model)
-    print(f"🏷️ Roles: {roles['side_a_label']} VS {roles['side_b_label']}")
+    print(f"Roles: {roles['side_a_label']} VS {roles['side_b_label']}")
     print(f"Apologist: {get_judge_short_name(ap_model)}  Skeptic: {get_judge_short_name(sk_model)}")
-
     judges=choose_judges(avail,(ap_model,sk_model))
     if not judges:
         used=set(); judges=[]
@@ -774,7 +754,6 @@ def run_debate_pipeline():
         v=create_segment(text,role,name,topic,sid,vm,position,glow,judge_voice_index); segs.append(v); sid+=1
     def add_seg(text,role,name,position=None,glow=None,judge_voice_index=None):
         return add_segment(text,role,name,position,glow,judge_voice_index)
-
     add_segment(build_intro(topic,len(judges),roles),"Moderator","MODERATOR")
     prev=""; cum_a=0.0; cum_b=0.0; pcom=[]
     for rn in range(1,ROUNDS+1):
