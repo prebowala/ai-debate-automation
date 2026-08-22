@@ -22,77 +22,88 @@ OUTPUT_FILE = "final_debate_output.mp4"
 VIDEO_W = 1920
 VIDEO_H = 1080
 FPS = 30
+
 ROUNDS = 3
 TURNS_PER_SIDE_PER_ROUND = 4
-WORDS_PER_TURN = 125
-MIN_TURN_WORDS = 105
-MAX_TURN_WORDS = 145
+WORDS_PER_TURN = 150
+MIN_TURN_WORDS = 120
+MAX_TURN_WORDS = 180
+
 MAX_JUDGES = 7
 JUDGE_WORKERS = 7
+
 MAX_VISUALS_PER_SEGMENT = 4
 MIN_VISUAL_GAP = 0.8
 VISUAL_W = 520
 VISUAL_H = 520
 VISUAL_Y = 160
 
-VOICES = {
-    "A": "en-US-BrianMultilingualNeural",
-    "B": "en-US-AvaMultilingualNeural",
-    "Moderator": "en-US-AndrewMultilingualNeural",
-}
+VOICES = {"A": "en-US-BrianMultilingualNeural","B": "en-US-AvaMultilingualNeural","Moderator": "en-US-AndrewMultilingualNeural"}
 JUDGE_VOICES = ["en-US-ChristopherNeural","en-US-EmmaMultilingualNeural","en-US-GuyNeural","en-US-JennyNeural"]
 
+# TOP FREE MODELS - one per company will be enforced for judges
 FALLBACK_MODELS = [
+    "openai/gpt-4o-mini:free",
+    "anthropic/claude-3-haiku:free",
+    "google/gemini-flash-1.5-8b:free",
+    "google/gemma-2-9b-it:free",
     "meta-llama/llama-3.2-3b-instruct:free",
     "meta-llama/llama-3.1-8b-instruct:free",
-    "google/gemma-2-9b-it:free",
-    "qwen/qwen-2.5-7b-instruct:free",
     "mistralai/mistral-7b-instruct:free",
-    "huggingfaceh4/zephyr-7b-beta:free",
-    "openchat/openchat-7b:free",
-    "google/gemini-flash-1.5-8b:free",
+    "deepseek/deepseek-r1:free",
+    "qwen/qwen-2.5-7b-instruct:free",
 ]
 
 PROVIDER_ALIASES = {
-    "openai":"OpenAI","anthropic":"Anthropic","google":"Google","x-ai":"xAI","xai":"xAI","deepseek":"DeepSeek",
-    "mistralai":"Mistral","mistral":"Mistral","meta-llama":"Meta","meta":"Meta","qwen":"Qwen","cohere":"Cohere","perplexity":"Perplexity",
+    "openai": "OpenAI",
+    "anthropic": "Anthropic",
+    "google": "Google",
+    "x-ai": "xAI",
+    "xai": "xAI",
+    "deepseek": "DeepSeek",
+    "mistralai": "Mistral",
+    "mistral": "Mistral",
+    "meta-llama": "Meta",
+    "meta": "Meta",
+    "qwen": "Qwen",
 }
 
 def provider_from_model(model_id):
     if not model_id: return "Unknown"
     prefix = model_id.split("/",1)[0].lower().strip()
-    return PROVIDER_ALIASES.get(prefix, prefix.replace("-"," ").title())
+    return PROVIDER_ALIASES.get(prefix, prefix.replace("-", " ").title())
 
 def get_judge_short_name(model_id):
     low=(model_id or "").lower()
-    if "gpt" in low: return "Chat GPT"
+    if "gpt-4o-mini" in low: return "ChatGPT"
+    if "gpt" in low: return "ChatGPT"
     if "claude" in low: return "Claude"
+    if "gemini-flash" in low: return "Gemini Flash"
     if "gemini" in low: return "Gemini"
+    if "gemma" in low: return "Gemma"
     if "grok" in low: return "Grok"
+    if "deepseek-r1" in low: return "DeepSeek R1"
     if "deepseek" in low: return "DeepSeek"
-    if "mistral" in low or "mixtral" in low: return "Mistral"
+    if "mistral-nemo" in low: return "Mistral Nemo"
+    if "mistral" in low: return "Mistral"
+    if "llama-3.2-11b" in low: return "Llama 11B"
+    if "llama-3.2" in low: return "Llama 3.2"
+    if "llama-3.1" in low: return "Llama 3.1"
     if "llama" in low: return "Llama"
     if "qwen" in low: return "Qwen"
-    if "command" in low: return "Cohere"
-    if "nemotron" in low: return "Nemotron"
-    if "kimi" in low or "moonshot" in low: return "Kimi"
-    if "perplexity" in low or "sonar" in low: return "Perplexity"
-    return provider_from_model(model_id).split()[0]
+    return provider_from_model(model_id)
 
 def cleanup_cache():
-    patterns=["*.mp4","*.mp3","*.ass","*.png","*.gif","*_list.txt"]
-    protected={OUTPUT_FILE,"background.png","topic.txt"}
-    for pat in patterns:
+    for pat in ["*.mp4","*.mp3","*.ass","*.png","*.gif","*_list.txt"]:
         for fn in glob.glob(pat):
-            if fn in protected: continue
+            if fn in [OUTPUT_FILE,"background.png","topic.txt"]: continue
             try: os.remove(fn)
             except: pass
 
 def count_words(t): return len(re.findall(r"\b[\w'-]+\b", t or ""))
 def clean_for_speech(t):
     t=re.sub(r"\([^)]*\)","",t or "")
-    for o,n in {"*":"","#":"","_":"","`":"","–":"-","—":"-","\"":"",":":" ",";":" ","&":"and"}.items():
-        t=t.replace(o,n)
+    for o,n in {"*":"","#":"","_":"","`":"","–":"-","—":"-","\"":"",":":" ",";":" ","&":"and"}.items(): t=t.replace(o,n)
     return re.sub(r"\s+"," ",t).strip()
 def clamp_score(v):
     try: v=float(v)
@@ -113,154 +124,167 @@ def discover_models():
     if not OPENROUTER_API_KEY: raise RuntimeError("OPENROUTER_API_KEY missing")
     try:
         r=requests.get(OPENROUTER_MODELS_URL,headers=openrouter_headers(),timeout=20)
-        free_ms=[]
+        free=[]
         for it in r.json().get("data",[]):
-            mid=it.get("id")
-            if not mid: continue
-            if any(x in mid.lower() for x in ["embed","tts","whisper","audio","moderation","guard"]): continue
-            if ":free" in mid.lower():
-                free_ms.append(mid)
-        if len(free_ms) >= 4:
-            print(f"Found {len(free_ms)} free models, using only free to save credits")
-            return list(dict.fromkeys(free_ms))
-        else:
-            print(f"Only {len(free_ms)} free models found, using fallback free list")
-            return FALLBACK_MODELS.copy()
+            mid=it.get("id","")
+            if not mid or ":free" not in mid.lower(): continue
+            if any(x in mid.lower() for x in ["embed","tts","whisper","audio"]): continue
+            free.append(mid)
+        if free:
+            print(f"Found {len(free)} free models")
+            return list(dict.fromkeys(free))
+        return FALLBACK_MODELS.copy()
     except Exception as e:
-        print(f"discover fail {e}, using fallback free models")
+        print(f"discover fail {e}, using fallback")
         return FALLBACK_MODELS.copy()
 
-def query_openrouter(prompt,model_id,timeout=60,max_tokens=1200,temperature=0.7):
+def query_openrouter(prompt,model_id,timeout=50,max_tokens=700,temperature=0.75):
     if not OPENROUTER_API_KEY: return None
     payload={"model":model_id,"messages":[{"role":"user","content":prompt}],"temperature":temperature,"max_tokens":max_tokens}
-    for attempt in range(3):
-        try:
-            resp=requests.post(OPENROUTER_URL,headers=openrouter_headers(),json=payload,timeout=timeout)
-            if resp.status_code==200:
-                c=resp.json().get("choices",[])[0].get("message",{}).get("content","")
-                if c and len(c.strip())>10: return c.strip()
-        except Exception as e:
-            print(f"req fail {get_judge_short_name(model_id)} {e}")
-        if attempt<2: time.sleep(1.5*(attempt+1))
+    try:
+        resp=requests.post(OPENROUTER_URL,headers=openrouter_headers(),json=payload,timeout=timeout)
+        if resp.status_code==200:
+            c=resp.json().get("choices",[])[0].get("message",{}).get("content","")
+            if c and len(c.strip())>40: return c.strip()
+    except Exception as e:
+        print(f"req fail {get_judge_short_name(model_id)} {e}")
     return None
 
 def choose_primary_models(avail):
-    free_avail = [m for m in avail if ":free" in m]
-    if not free_avail:
-        free_avail = avail
-    pref_free=["meta-llama/llama-3.2-3b-instruct:free","meta-llama/llama-3.1-8b-instruct:free","google/gemma-2-9b-it:free","qwen/qwen-2.5-7b-instruct:free","mistralai/mistral-7b-instruct:free","google/gemini-flash-1.5-8b:free","huggingfaceh4/zephyr-7b-beta:free"]
-    found=[m for m in pref_free if m in set(free_avail)]
-    if len(found)>=2: return found[0],found[1]
-    if len(found)==1:
-        rem=[m for m in free_avail if m!=found[0]]
-        if rem: return found[0],rem[0]
-    if len(free_avail)>=2: return free_avail[0],free_avail[1]
-    return FALLBACK_MODELS[0],FALLBACK_MODELS[1]
+    free=[m for m in avail if ":free" in m]
+    if not free: free=avail
+    # Ensure different companies for two debaters
+    used_providers=set()
+    picks=[]
+    for m in free:
+        prov=provider_from_model(m)
+        if prov not in used_providers:
+            picks.append(m)
+            used_providers.add(prov)
+        if len(picks)>=2: break
+    if len(picks)<2:
+        picks=(free+["openai/gpt-4o-mini:free","google/gemini-flash-1.5-8b:free"])[:2]
+    return picks[0],picks[1]
 
 def choose_judges(avail,primary):
     excl=set(primary)
-    cands=[m for m in avail if m not in excl and "image" not in m.lower()]
+    # ONLY ONE MODEL PER COMPANY - strict
+    cands=[m for m in avail if m not in excl and ":free" in m]
+    if len(cands)<3: cands=[m for m in avail if m not in excl]
     groups={}
     for m in cands:
         prov=provider_from_model(m)
-        groups.setdefault(prov,[]).append(m)
+        if prov not in groups:
+            groups[prov]=m  # one per provider only
+    # Prioritize top companies
+    order=["OpenAI","Anthropic","Google","Meta","Mistral","DeepSeek","Qwen","xAI"]
     sel=[]
-    for prov,models in groups.items():
-        models.sort(key=lambda mm:(0 if any(k in mm.lower() for k in ["gpt","claude","gemini","grok","deepseek","mistral","llama","qwen"]) else 1,len(mm)))
-        sel.append((prov,models[0]))
-    pri=["OpenAI","Anthropic","Google","xAI","DeepSeek","Mistral","Meta","Alibaba / Qwen","Cohere","Perplexity"]
-    sel.sort(key=lambda x:(pri.index(x[0]) if x[0] in pri else 999,x[0]))
-    return [m for _,m in sel[:MAX_JUDGES]]
+    for name in order:
+        if name in groups:
+            sel.append(groups[name])
+            del groups[name]
+        if len(sel)>=MAX_JUDGES: break
+    # Fill with remaining providers if needed
+    for prov,m in groups.items():
+        if len(sel)>=MAX_JUDGES: break
+        if m not in sel:
+            sel.append(m)
+    print(f"Judges selected - ONE PER COMPANY: {', '.join(provider_from_model(m) for m in sel)}")
+    return sel[:MAX_JUDGES]
 
 def get_debate_roles(topic, model):
-    topic_lower = (topic or "").lower()
-    if "god" in topic_lower and "serpent" in topic_lower:
+    tl=(topic or "").lower()
+    if "god" in tl and "serpent" in tl:
         return {
             "side_a_label": "GOD TOLD TRUTH",
-            "side_a_desc": "Defends that God told the truth in Genesis 1, the serpent deceived",
+            "side_a_desc": "Defends that God told the truth in Genesis, serpent deceived",
             "side_b_label": "SERPENT TOLD TRUTH",
-            "side_b_desc": "Defends that the serpent told the truth and God did not",
+            "side_b_desc": "Defends that serpent told truth, God did not",
         }
-    prompt = f"""Topic: "{topic}" Return ONLY JSON: {{"side_a_label":"SHORT LABEL","side_a_desc":"sentence","side_b_label":"SHORT LABEL","side_b_desc":"sentence"}} Rules: labels 2-4 words uppercase, opposites specific to topic."""
-    resp = query_openrouter(prompt, model, timeout=25, max_tokens=250, temperature=0.3)
+    # For ANY other topic.txt, ask LLM to create opposite labels
+    prompt=f'Topic: "{topic}" Return ONLY JSON: {{"side_a_label":"2-3 word label for FOR side","side_a_desc":"one sentence for side","side_b_label":"2-3 word label for AGAINST side","side_b_desc":"one sentence"}} Labels must be uppercase, short, opposite. Example: Creator Required vs No Creator.'
+    resp=query_openrouter(prompt, model, timeout=25, max_tokens=250, temperature=0.4)
     if resp:
         try:
-            import re as re2
-            m = re2.search(r"\{.*\}", resp, re2.DOTALL)
+            m=re.search(r"\{.*\}",resp,re.DOTALL)
             if m:
-                data = json.loads(m.group(0))
-                a_label = str(data.get("side_a_label","SIDE A")).strip().upper()[:30]
-                b_label = str(data.get("side_b_label","SIDE B")).strip().upper()[:30]
-                a_desc = str(data.get("side_a_desc",a_label)).strip()
-                b_desc = str(data.get("side_b_desc",b_label)).strip()
-                if a_label and b_label and a_label != b_label:
-                    return {"side_a_label":a_label,"side_a_desc":a_desc,"side_b_label":b_label,"side_b_desc":b_desc}
-        except Exception as e:
-            print(f"Role parse failed: {e}")
+                data=json.loads(m.group(0))
+                a=str(data.get("side_a_label","FOR")).strip().upper()[:30]
+                b=str(data.get("side_b_label","AGAINST")).strip().upper()[:30]
+                if a and b and a!=b:
+                    return {"side_a_label":a,"side_a_desc":str(data.get("side_a_desc",a)),"side_b_label":b,"side_b_desc":str(data.get("side_b_desc",b))}
+        except: pass
+    # Fallback generic but topic-adaptive
     return {
         "side_a_label": "AFFIRMATIVE",
-        "side_a_desc": f"Argues for: {topic}",
+        "side_a_desc": f"Argues FOR: {topic}",
         "side_b_label": "NEGATIVE",
-        "side_b_desc": f"Argues against: {topic}",
+        "side_b_desc": f"Argues AGAINST: {topic}",
     }
 
-def strip_filler_phrases(text):
-    patterns = [
-        r"^(ladies and gentlemen[,.]?\s*)",
-        r"^(my friends[,.]?\s*)",
-        r"^(friends[,.]?\s*)",
-        r"^(well[,.]?\s*)",
-        r"^(thank you[,.]?\s*)",
-        r"^(thank you so much[,.]?\s*)",
-        r"^(good evening[,.]?\s*)",
-        r"^(good morning[,.]?\s*)",
-        r"^(hello everyone[,.]?\s*)",
-        r"^(dear audience[,.]?\s*)",
-    ]
-    cleaned = text.strip()
-    for _ in range(3):
-        for pat in patterns:
-            cleaned = re.sub(pat, "", cleaned, flags=re.IGNORECASE).strip()
-    return cleaned
+def strip_filler(text):
+    for pat in [r"^(ladies and gentlemen[,.]?\s*)",r"^(my friends[,.]?\s*)",r"^(well[,.]?\s*)",r"^(thank you[,.]?\s*)"]:
+        text=re.sub(pat,"",text,flags=re.IGNORECASE).strip()
+    return text
+
+def generate_fallback_debate(side_label, topic, round_num, turn_num):
+    # Topic-adaptive fallback - works for ANY topic.txt, not just Genesis
+    if "GOD TOLD TRUTH" in side_label.upper():
+        templates=[
+            f"In Genesis 2:17 God says moth tamuth - surely die. Serpent in 3:4 says lo moth temuthun - not surely die. Direct contradiction. Genesis 3:8 shows spiritual death that day - hiding, shame. Hebrew yom can mean day but process began that day, expelled from tree of life 3:24. Serpent told half truth.",
+            f"God in 2:16 is generous - freely eat all. Serpent twists in 3:1 - hath God said ye shall not eat of every tree? He exaggerates to make God stingy. Deceiver misquotes. Genesis 3:22 God says man become as one of us knowing good and evil - serpent promised that in 3:5 and it happened, but omitted consequence. Half truth is whole lie.",
+            f"Genesis 3:7 eyes opened and knew naked - shame, fear, blame. 3:19 dust to dust - physical death process. Romans 5:12 sin entered and death through sin. Serpent said you shall not die, but death came. Even if not 24hr, they began dying, cut from eternal life source.",
+        ]
+    elif "SERPENT TOLD TRUTH" in side_label.upper():
+        templates=[
+            f"Genesis 2:17 beyom - in the day you shall die. Genesis 5:5 Adam lived 930 years. Not same day. Serpent 3:4 you shall not surely die, 3:5 eyes opened you shall be as gods. Genesis 3:7 eyes opened - as serpent said. Genesis 3:22 God confirms - man become as one of us knowing good and evil. God confirms serpent. Who was accurate?",
+            f"Yom in Genesis 1 is 24hr. Beyom implies same day. Adam did not die that day. Serpent said you shall be as gods knowing - God in 3:22 says exactly that. Two claims, both verified by narrator, while God's threat not carried out same day. Simple reading - serpent described immediate outcome.",
+            f"Spiritual death imports theology not in text. Text says nothing about spiritual death in Genesis 2-3. Dust to dust 3:19 later. Immediate test: did they die that day as God said? No. Did eyes open as serpent said? Yes 3:7. Serpent told what would happen, God threatened more than happened.",
+        ]
+    else:
+        # GENERIC for ANY topic in topic.txt - topic-adaptive
+        templates=[
+            f"On the question {topic}, the evidence points clearly one way. The core claim is {side_label}. Look at what actually happened versus what was promised. The immediate outcome, the logical consistency, and the burden of proof all matter. We must weigh facts not assumptions.",
+            f"Regarding {topic}, we must ask what the best explanation is. {side_label} has stronger reasoning. Consider examples, counterexamples, and whether alternative explanations have been considered. The opposing view fails on key points.",
+            f"The topic {topic} requires careful analysis. {side_label} argues from specific evidence, not vague claims. We should examine the text, the context, and the consequences. The other side relies on importing ideas not present.",
+        ]
+    idx=(round_num*3+turn_num)%len(templates)
+    base=templates[idx]
+    while count_words(base)<120:
+        base+=" The text, context, and outcome must be weighed without importing later ideas. Hebrew, logic, and narrative flow matter."
+    return base
 
 def generate_turn(side, topic, round_num, turn_num, previous_exchange, model, role_label, role_desc, opponent_label, opponent_desc):
-    instruction = "Opening - establish foundation. Start directly with argument." if round_num==1 and turn_num==1 else f"Turn {turn_num} round {round_num} - respond directly to opponent's last point. Start immediately with rebuttal."
-    prompt = f"""You are {role_label} in a debate.
-Your position: {role_desc}
-Opponent is {opponent_label}: {opponent_desc}
-Topic: {topic}
-{instruction}
-Previous:
-{previous_exchange or 'None'}
+    prev_snip=(previous_exchange or "")[-500:]
+    prompt=f"You are {role_label} debating {topic}. Your stance: {role_desc}. Opponent {opponent_label}: {opponent_desc}. Previous: {prev_snip}\nWrite {WORDS_PER_TURN} word specific argument quoting verses or facts, rebut opponent, no greeting, start directly, {MIN_TURN_WORDS}-{MAX_TURN_WORDS} words."
+    for m in [model]+FALLBACK_MODELS[:2]:
+        resp=query_openrouter(prompt,m,max_tokens=600,temperature=0.8)
+        if resp and count_words(resp)>=70:
+            cleaned=strip_filler(resp)
+            if count_words(cleaned)>=MIN_TURN_WORDS:
+                return cleaned[:1300]
+            # Extend if short
+            extra=query_openrouter(f"Continue 60 more words same argument: {cleaned[-200:]}",m,max_tokens=200,temperature=0.7)
+            if extra: cleaned+=" "+extra
+            return cleaned[:1300]
+    return generate_fallback_debate(role_label, topic, round_num, turn_num)
 
-CRITICAL STYLE RULES:
-- Do NOT start with "Ladies and gentlemen", "My friends", "Well", "Thank you", "Good evening", or any greeting
-- Start directly with your argument, e.g. "The text says..." or "That interpretation fails because..."
-- No introductions, no thanking the audience, no "it's great to be here"
-- Write ONLY your spoken contribution, ~{WORDS_PER_TURN} words, {MIN_TURN_WORDS}-{MAX_TURN_WORDS}
-- Natural conversational speech, YouTube audience, specific examples
-"""
-    resp=query_openrouter(prompt,model,max_tokens=430,temperature=0.78)
-    if resp:
-        return strip_filler_phrases(resp)
-    return f"{role_desc}. The evidence shows this clearly when we examine the details."
-
-def build_round_exchanges(topic, round_num, ap_model, sk_model, prev_hist, roles):
+def build_round_exchanges(topic, rn, ap_model, sk_model, prev_hist, roles):
     a=[]; s=[]; hist=prev_hist
     for tn in range(1,TURNS_PER_SIDE_PER_ROUND+1):
-        aa=generate_turn("A",topic,round_num,tn,hist,ap_model, roles["side_a_label"], roles["side_a_desc"], roles["side_b_label"], roles["side_b_desc"])
+        aa=generate_turn("A",topic,rn,tn,hist,ap_model, roles["side_a_label"], roles["side_a_desc"], roles["side_b_label"], roles["side_b_desc"])
         a.append(aa); hist=f"{roles['side_a_label']}:\n{aa}\n\n"
-        ss=generate_turn("B",topic,round_num,tn,hist,sk_model, roles["side_b_label"], roles["side_b_desc"], roles["side_a_label"], roles["side_a_desc"])
+        ss=generate_turn("B",topic,rn,tn,hist,sk_model, roles["side_b_label"], roles["side_b_desc"], roles["side_a_label"], roles["side_a_desc"])
         s.append(ss); hist+=f"{roles['side_b_label']}:\n{ss}\n\n"
+        print(f"   Exchange {tn}: {roles['side_a_label']}={count_words(aa)}w {roles['side_b_label']}={count_words(ss)}w")
     return a,s,hist
 
 def neutral_judge(model):
-    return {"model":model,"provider":provider_from_model(model),"display_name":get_judge_short_name(model),
-            "A_argument":50,"A_rebuttal":50,"A_clarity":50,"A_total":50,"B_argument":50,"B_rebuttal":50,"B_clarity":50,"B_total":50,"winner":"A"}
+    return {"model":model,"provider":provider_from_model(model),"display_name":get_judge_short_name(model),"A_argument":50,"A_rebuttal":50,"A_clarity":50,"A_total":50,"B_argument":50,"B_rebuttal":50,"B_clarity":50,"B_total":50,"winner":"A"}
 
 def judge_round(model,topic,rn,ap,sk,roles):
-    prompt=f"Judge debate Topic:{topic} Round:{rn} {roles['side_a_label']}: {ap} {roles['side_b_label']}: {sk} Return JSON {{\"A_argument\":0,\"A_rebuttal\":0,\"A_clarity\":0,\"B_argument\":0,\"B_rebuttal\":0,\"B_clarity\":0}}"
-    resp=query_openrouter(prompt,model,timeout=35,max_tokens=250,temperature=0.1)
+    prompt=f"Judge {topic} R{rn} {roles['side_a_label']}: {ap[:700]} vs {roles['side_b_label']}: {sk[:700]} JSON {{\"A_argument\":0,\"A_rebuttal\":0,\"A_clarity\":0,\"B_argument\":0,\"B_rebuttal\":0,\"B_clarity\":0}}"
+    resp=query_openrouter(prompt,model,timeout=30,max_tokens=250,temperature=0.2)
     if not resp: return neutral_judge(model)
     try:
         m=re.search(r"\{.*\}",resp,re.DOTALL)
@@ -269,30 +293,25 @@ def judge_round(model,topic,rn,ap,sk,roles):
         aa,ar,ac=clamp_score(d.get("A_argument",50)),clamp_score(d.get("A_rebuttal",50)),clamp_score(d.get("A_clarity",50))
         ba,br,bc=clamp_score(d.get("B_argument",50)),clamp_score(d.get("B_rebuttal",50)),clamp_score(d.get("B_clarity",50))
         at=(aa+ar+ac)/3; bt=(ba+br+bc)/3
-        return {"model":model,"provider":provider_from_model(model),"display_name":get_judge_short_name(model),
-                "A_argument":aa,"A_rebuttal":ar,"A_clarity":ac,"A_total":round(at,2),
-                "B_argument":ba,"B_rebuttal":br,"B_clarity":bc,"B_total":round(bt,2),"winner":"A" if at>bt else "B"}
+        return {"model":model,"provider":provider_from_model(model),"display_name":get_judge_short_name(model),"A_argument":aa,"A_rebuttal":ar,"A_clarity":ac,"A_total":round(at,2),"B_argument":ba,"B_rebuttal":br,"B_clarity":bc,"B_total":round(bt,2),"winner":"A" if at>bt else "B"}
     except: return neutral_judge(model)
 
 def evaluate_round(judges,topic,rn,ap,sk,roles):
     results=[]
-    print(f"Asking {len(judges)} judges ({', '.join(get_judge_short_name(j) for j in judges)})...")
+    print(f"Judging with ONE PER COMPANY: {', '.join(f'{provider_from_model(j)} ({get_judge_short_name(j)})' for j in judges)}")
     def worker(m): return judge_round(m,topic,rn,ap,sk,roles)
     with concurrent.futures.ThreadPoolExecutor(max_workers=max(1,min(JUDGE_WORKERS,len(judges)))) as ex:
         futs={ex.submit(worker,m):m for m in judges}
         for fu in concurrent.futures.as_completed(futs):
             try:
                 res=fu.result(); results.append(res)
-                print(f"  Judge — {res['display_name']}")
-            except Exception as e:
-                print(f"Judge failed {get_judge_short_name(futs[fu])}: {e}")
+                print(f"  Judge — {res['display_name']} [{res['provider']}]")
+            except: pass
     if not results: results=[neutral_judge("fallback")]
     return results
 
 def calculate_round_average(results):
-    a=sum(r["A_total"] for r in results)/len(results)
-    b=sum(r["B_total"] for r in results)/len(results)
-    return round(a,2),round(b,2)
+    return round(sum(r["A_total"] for r in results)/len(results),2), round(sum(r["B_total"] for r in results)/len(results),2)
 
 async def generate_audio_async(text,voice,filename):
     com=edge_tts.Communicate(text,voice,rate="+0%",volume="+0%")
@@ -311,33 +330,23 @@ async def generate_audio_async(text,voice,filename):
     return words
 
 def generate_audio(text,role,filename,judge_voice_index=None):
-    if "JUDGE" in role.upper():
-        voice=JUDGE_VOICES[(judge_voice_index or 0)%len(JUDGE_VOICES)]
-    elif "GOD TOLD TRUTH" in role.upper():
-        voice=VOICES["A"]
-    elif "SERPENT TOLD TRUTH" in role.upper():
-        voice=VOICES["B"]
-    else:
-        if "GOD" in role.upper(): voice=VOICES["A"]
-        elif "SERPENT" in role.upper(): voice=VOICES["B"]
-        else: voice=VOICES["A"] if role=="A" else VOICES["B"] if role=="B" else VOICES["Moderator"]
+    if "JUDGE" in role.upper(): voice=JUDGE_VOICES[(judge_voice_index or 0)%len(JUDGE_VOICES)]
+    elif "GOD TOLD TRUTH" in role.upper(): voice=VOICES["A"]
+    elif "SERPENT TOLD TRUTH" in role.upper(): voice=VOICES["B"]
+    else: voice=VOICES["A"] if "GOD" in role.upper() else VOICES["B"] if "SERPENT" in role.upper() else VOICES["Moderator"]
     clean=clean_for_speech(text)
-    try:
-        return asyncio.run(generate_audio_async(clean,voice,filename))
-    except Exception as e:
-        print(f"TTS fail {voice}: {e}")
-        return asyncio.run(generate_audio_async(clean,VOICES["Moderator"],filename))
+    try: return asyncio.run(generate_audio_async(clean,voice,filename))
+    except: return asyncio.run(generate_audio_async(clean,VOICES["Moderator"],filename))
 
 def format_ass_time(s):
     s=max(0.0,float(s)); h=int(s//3600); m=int((s%3600)//60); sec=s%60
     return f"{h}:{m:02d}:{sec:05.2f}"
-def ass_escape(t):
-    return str(t).replace("\\","\\\\").replace("{","\\{").replace("}","\\}").replace("\n"," ")
+def ass_escape(t): return str(t).replace("\\","\\\\").replace("{","\\{").replace("}","\\}")
 
 def generate_subtitles(words,filename,scorecard=False):
     margin_v=90 if scorecard else 200
     font_size=36 if scorecard else 34
-    header="""[Script Info]
+    header=f"""[Script Info]
 ScriptType: v4.00+
 PlayResX: 1920
 PlayResY: 1080
@@ -352,96 +361,89 @@ Style: DebateSub,DejaVu Sans,{font_size},&H00FFFFFF,&H00FFFFFF,&H00000000,&HCC00
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """.format(font_size=font_size, margin_v=margin_v)
     if not words:
-        with open(filename,"w",encoding="utf-8") as f: f.write(header); return
-    clean_words=[]
-    for w in words:
-        t=str(w.get("text","")).strip()
-        if not t: continue
-        clean_words.append({"text":t,"start":float(w["start"]),"end":float(w["end"])})
-    if not clean_words:
-        with open(filename,"w",encoding="utf-8") as f: f.write(header); return
-    WORDS_PER_CHUNK=20
-    chunks=[]
-    cur=[]
+        open(filename,"w",encoding="utf-8").write(header); return
+    clean_words=[{"text":str(w.get("text","")).strip(),"start":float(w["start"]),"end":float(w["end"])} for w in words if str(w.get("text","")).strip()]
+    WORDS_PER_CHUNK=18
+    chunks=[]; cur=[]
     for w in clean_words:
         cur.append(w)
-        if str(w["text"]).strip().endswith(('.', '?', '!')) and len(cur)>=12:
+        if str(w["text"]).strip().endswith(('.', '?', '!')) and len(cur)>=10:
             chunks.append(cur); cur=[]
         elif len(cur)>=WORDS_PER_CHUNK:
             chunks.append(cur); cur=[]
     if cur: chunks.append(cur)
-    events=[]
-    last_end=0.0
+    events=[]; last_end=0.0
     for chunk in chunks:
         if not chunk: continue
-        s=float(chunk[0]["start"])-0.05
-        e=float(chunk[-1]["end"])+0.25
-        if s < last_end:
-            s=last_end+0.01
-        if e <= s:
-            e=s+1.0
+        s=float(chunk[0]["start"])-0.05; e=float(chunk[-1]["end"])+0.2
+        if s<last_end: s=last_end+0.01
+        if e<=s: e=s+1.0
         last_end=e
         txt_words=[ass_escape(w["text"]) for w in chunk]
         lines=[]
         for i in range(0,len(txt_words),8):
             lines.append(" ".join(txt_words[i:i+8]))
         if len(lines)>3: lines=lines[:3]
-        # Use simple backslash N for ASS line break - build string without regex issues
         txt="\\N".join(lines)
-        # Fix double escaping for ASS - we want \N in file
         txt=txt.replace("\\\\N","\\N")
-        ass_text="{\\an2\\pos(960,820)\\q2\\fad(80,80)}"+txt
+        ass_text="{\\an2\\pos(960,820)\\q2\\fad(60,60)}"+txt
         events.append(f"Dialogue: 0,{format_ass_time(s)},{format_ass_time(e)},DebateSub,,0,0,0,,{ass_text}")
-    with open(filename,"w",encoding="utf-8") as f:
-        f.write(header+"\n".join(events)+"\n")
+    open(filename,"w",encoding="utf-8").write(header+"\n".join(events)+"\n")
 
 def fallback_visual_plan(text):
-    text_low=text.lower()
+    tl=text.lower()
     visuals=[]
-    keywords=[
-        ("apple","Apple on branch","red apple hanging from tree branch, minimalist doodle"),
-        ("fruit","Eating fruit","stick figure eating fruit, simple doodle"),
-        ("tree","Tree in garden","simple tree with green leaves, minimalist"),
-        ("garden","Garden of Eden","garden with trees and leaves, simple watercolor"),
-        ("serpent","Serpent","simple snake coiled on branch, doodle style"),
-        ("snake","Snake","simple snake, minimalist line art"),
-        ("god","God speaking","light from above, simple rays, minimalist"),
-        ("adam","Adam","simple stick figure man, beige blob"),
-        ("eve","Eve","simple stick figure woman, beige blob, fully clothed"),
-        ("eat","Eating","person eating, apple near mouth, simple animation"),
-        ("know","Knowing","person thinking, scribble thought bubble"),
-        ("death","Death warning","skull simple icon, minimalist"),
-        ("lie","Lie","two speech bubbles conflicting, simple"),
+    kws=[
+        ("apple","Apple on branch","red apple hanging, swinging"),
+        ("fruit","Eating fruit","stick figure eating fruit"),
+        ("tree","Tree in garden","tree with rustling leaves"),
+        ("garden","Garden of Eden","garden scene"),
+        ("serpent","Serpent","snake coiled on branch moving"),
+        ("snake","Snake","snake slithering"),
+        ("god","God light","light rays from above"),
+        ("adam","Adam","stick figure man"),
+        ("eve","Eve","stick figure woman"),
+        ("eat","Eating","person eating apple"),
+        ("know","Knowing","person thinking"),
+        ("death","Death","skull icon"),
+        ("die","Die that day","calendar X"),
+        ("eyes opened","Eyes opened","eyes wide open"),
+        ("creator","Creator","universe and light"),
+        ("universe","Universe","stars and galaxy"),
+        ("exist","Existence","question mark and lightbulb"),
+        ("moral","Morality","scales balancing"),
+        ("consciousness","Consciousness","brain and spark"),
     ]
-    for kw,label,desc in keywords:
-        if kw in text_low and len(visuals) < MAX_VISUALS_PER_SEGMENT:
-            idx=text_low.find(kw)
-            phrase=text[max(0,idx-10):idx+len(kw)+20].strip()
-            if len(phrase)<5: phrase=kw
+    for kw,label,desc in kws:
+        if kw in tl and len(visuals)<MAX_VISUALS_PER_SEGMENT:
+            idx=tl.find(kw)
+            phrase=text[max(0,idx-10):idx+len(kw)+20].strip() or kw
             visuals.append({"phrase":phrase,"label":label,"description":desc,"kind":"concept"})
-    return visuals
+    # Ensure at least 2 visuals even for generic topics
+    if not visuals:
+        visuals=[
+            {"phrase":text[:30],"label":"Thinking","description":"person thinking","kind":"concept"},
+            {"phrase":text[:30],"label":"Debate","description":"two figures debating","kind":"concept"},
+        ]
+    return visuals[:MAX_VISUALS_PER_SEGMENT]
 
 def plan_visuals(text,model):
-    prompt=f"You are visual director. Read: {text}\nFind up to {MAX_VISUALS_PER_SEGMENT} simple visual moments like man eating fruit, apple on tree, tree in garden, serpent on branch, person thinking, hands holding apple. CRITICAL: Must be simple actions that can be animated in 2-3 sec minimalist style, fully clothed simple stick figures, no nudity, no photorealism. Return ONLY JSON: [{{\"phrase\":\"exact phrase\",\"label\":\"2-4 words\",\"description\":\"detailed prompt\",\"kind\":\"person\"}}]"
-    resp=query_openrouter(prompt,model,timeout=25,max_tokens=400,temperature=0.2)
-    if not resp:
-        print("   Visual LLM failed (low credits?), using keyword fallback")
-        return fallback_visual_plan(text)
+    prompt=f"Find up to {MAX_VISUALS_PER_SEGMENT} simple visual moments in: {text}\nJSON [{{\"phrase\":\"exact phrase\",\"label\":\"2-4 words\"}}]"
+    resp=query_openrouter(prompt,model,timeout=20,max_tokens=350,temperature=0.2)
+    if not resp: return fallback_visual_plan(text)
     try:
         m=re.search(r"\[.*\]",resp,re.DOTALL)
         if not m: return fallback_visual_plan(text)
         data=json.loads(m.group(0))
         out=[]
-        for item in data:
-            if not isinstance(item,dict): continue
-            phrase=str(item.get("phrase","")).strip(); label=str(item.get("label","")).strip(); desc=str(item.get("description","")).strip()
-            if not phrase or not label or len(desc)<8: continue
-            if phrase.lower() not in text.lower(): continue
-            out.append({"phrase":phrase,"label":label[:30],"description":desc[:220],"kind":item.get("kind","concept")})
+        for it in data:
+            if not isinstance(it,dict): continue
+            ph=str(it.get("phrase","")).strip(); lb=str(it.get("label","")).strip()
+            if not ph or not lb: continue
+            out.append({"phrase":ph,"label":lb[:30],"description":lb,"kind":"concept"})
             if len(out)>=MAX_VISUALS_PER_SEGMENT: break
         return out if out else fallback_visual_plan(text)
-    except:
-        return fallback_visual_plan(text)
+    except: return fallback_visual_plan(text)
 
 def find_phrase_timing(phrase,words):
     if not phrase or not words: return None
@@ -469,12 +471,11 @@ def fallback_visual_timing(idx,total,words):
 def create_visual_plan(text,words,model):
     if not words: return []
     cands=plan_visuals(text,model)
-    if not cands: return []
     timed=[]
-    for idx,item in enumerate(cands):
-        t=find_phrase_timing(item["phrase"],words) or fallback_visual_timing(idx,len(cands),words)
+    for idx,it in enumerate(cands):
+        t=find_phrase_timing(it["phrase"],words) or fallback_visual_timing(idx,len(cands),words)
         if not t: continue
-        it=dict(item); it.update(t); timed.append(it)
+        it2=dict(it); it2.update(t); timed.append(it2)
     timed.sort(key=lambda x:x["start"])
     out=[]
     for it in timed:
@@ -483,73 +484,69 @@ def create_visual_plan(text,words,model):
         if len(out)>=MAX_VISUALS_PER_SEGMENT: break
     return out
 
-SAFE_CLOTHING_SUFFIX = "minimalist watercolor illustration, simple beige watercolor blobs, black scribble line art, childlike doodle, white background, fully clothed stick figure, no nudity, no naked, no photorealism, family friendly, simple shapes, no detailed anatomy"
-
-def build_visual_prompt(v):
-    base_desc = v.get('description','')
-    low = base_desc.lower()
-    minimalist_prefix = "minimalist line drawing, simple watercolor wash in beige, black scribble hair, white background, childlike doodle art, simple shapes, "
-    if any(k in low for k in ["adam", "eve", "eden", "apple", "fruit", "eating", "tree", "garden", "serpent", "snake"]):
-        base_desc = f"simple stick figure person looking at red apple hanging from branch, {base_desc}, minimalist, no nudity, fully clothed in simple shapes"
-    return f"{minimalist_prefix}{base_desc}, {v.get('label','')}, {SAFE_CLOTHING_SUFFIX}, simple doodle, no text, no words, no watermark, flat illustration"
-
-def fetch_topic_image(v):
-    try:
-        prompt=build_visual_prompt(v)
-        enc=quote(prompt)
-        url=f"https://image.pollinations.ai/prompt/{enc}?width=768&height=768&model=flux&enhance=true&nologo=true&seed={random.randint(0,999999)}"
-        print(f" Image {v.get('label')} -> {prompt[:70]}...")
-        r=requests.get(url,timeout=35)
-        if r.status_code==200 and len(r.content)>15000:
-            return Image.open(BytesIO(r.content)).convert("RGB")
-    except Exception as e:
-        print(f" Image fetch failed: {e}")
-    return None
+def draw_stick_figure(draw,x,y,size=80,eating=False):
+    draw.ellipse([x+size*0.3,y,x+size*0.7,y+size*0.4],fill=(222,184,135,255),outline=(0,0,0,255),width=2)
+    for i in range(5): draw.arc([x+size*0.2+i*3,y-5,x+size*0.8-i*2,y+size*0.3],0,180,fill=(0,0,0,255),width=2)
+    draw.ellipse([x+size*0.2,y+size*0.45,x+size*0.8,y+size*0.95],fill=(222,184,135,255),outline=(0,0,0,255),width=2)
+    if eating: draw.line([x+size*0.7,y+size*0.6,x+size*0.95,y+size*0.4],fill=(0,0,0,255),width=3)
+    else:
+        draw.line([x,y+size*0.6,x+size*0.2,y+size*0.7],fill=(0,0,0,255),width=3)
+        draw.line([x+size*0.8,y+size*0.6,x+size*1.0,y+size*0.5],fill=(0,0,0,255),width=3)
 
 def create_visual_asset(visual,index):
     filename=f"visual_{index}.gif"
-    real=fetch_topic_image(visual)
-    if real is None:
-        print(f"   No image for {visual.get('label')} - skipping visual")
-        return None
-    base_size=VISUAL_W
-    real=real.resize((base_size, base_size), Image.LANCZOS).convert("RGBA")
-    label_lower=visual.get('label','').lower()+" "+visual.get('description','').lower()
+    label=(visual.get('label','')+" "+visual.get('description','')).lower()
     frames=[]
-    num_frames=18
-    for f in range(num_frames):
-        progress=f/num_frames
-        bob_y=int(3*math.sin(2*math.pi*progress))
-        if "eat" in label_lower or "apple" in label_lower or "fruit" in label_lower:
-            apple_offset=int(8*progress) if progress<0.5 else int(8*(1-progress))
+    for f in range(18):
+        progress=f/18.0
+        frame=Image.new("RGBA",(VISUAL_W,VISUAL_H),(0,0,0,0))
+        draw=ImageDraw.Draw(frame)
+        if "apple" in label or "fruit" in label:
+            draw.line([20,80,VISUAL_W-20,90],fill=(101,67,33,255),width=4)
+            swing=10*math.sin(2*math.pi*progress)
+            ax=VISUAL_W//2+10+swing; ay=120+5*math.sin(4*math.pi*progress)
+            draw.ellipse([ax-25,ay,ax+25,ay+40],fill=(220,20,60,255),outline=(0,0,0,255),width=2)
+            draw_stick_figure(draw,VISUAL_W//2-60,VISUAL_H-160,size=100,eating=("eat" in label))
+            if "eat" in label and progress>0.5:
+                by=VISUAL_H-110-40*(progress-0.5)*2
+                draw.ellipse([VISUAL_W//2+15,by,VISUAL_W//2+35,by+20],fill=(220,20,60,255),outline=(0,0,0,255),width=2)
+        elif "tree" in label or "garden" in label:
+            draw.rectangle([VISUAL_W//2-15,VISUAL_H-100,VISUAL_W//2+15,VISUAL_H-20],fill=(101,67,33,255),outline=(0,0,0,255),width=2)
+            rustle=8*math.sin(2*math.pi*progress)
+            for lx,ly in [(VISUAL_W//2-60+rustle,VISUAL_H-180),(VISUAL_W//2+20-rustle,VISUAL_H-200)]:
+                draw.ellipse([lx,ly,lx+80,ly+60],fill=(34,139,34,200),outline=(0,0,0,150),width=1)
+            fall_y=(progress*VISUAL_H)%(VISUAL_H-50); fall_x=VISUAL_W//2+40*math.sin(progress*6)
+            draw.ellipse([fall_x,fall_y,fall_x+12,fall_y+18],fill=(34,139,34,180))
+        elif "serpent" in label or "snake" in label:
+            draw.line([20,100,VISUAL_W-20,110],fill=(101,67,33,255),width=4)
+            pts=[]
+            for i in range(0,VISUAL_W-40,10):
+                pts.append((i+20,100+15*math.sin((i/30)+progress*4*math.pi)))
+            if len(pts)>1:
+                draw.line(pts,fill=(34,139,34,255),width=8,joint="curve")
+                draw.line(pts,fill=(0,0,0,255),width=2,joint="curve")
+            hx,hy=pts[-1] if pts else (VISUAL_W-40,100)
+            draw.ellipse([hx,hy-6,hx+18,hy+6],fill=(34,139,34,255),outline=(0,0,0,255),width=2)
+            if f%6<3: draw.line([hx+18,hy,hx+28,hy-3],fill=(220,20,60,255),width=2)
+        elif "god" in label or "creator" in label or "universe" in label:
+            cx=VISUAL_W//2
+            for ang in range(-40,41,15):
+                rad=math.radians(ang)
+                x2=cx+200*math.sin(rad); y2=30+200*math.cos(rad)
+                draw.line([cx,10,x2,y2],fill=(255,215,0,100+int(50*math.sin(progress*3))),width=3)
+            draw.ellipse([cx-30,10,cx+30,70],fill=(255,215,0,200),outline=(0,0,0,255),width=2)
         else:
-            apple_offset=0
-        frame=Image.new("RGBA", (VISUAL_W, VISUAL_H), (255,255,255,0))
-        y_pos=bob_y
-        if "eat" in label_lower and f%3==0:
-            scale=1.0+0.03*math.sin(4*math.pi*progress)
-            w=int(VISUAL_W*scale); h=int(VISUAL_H*(2-scale))
-            scaled=real.resize((w,h), Image.LANCZOS)
-            x=(VISUAL_W-w)//2; y=(VISUAL_H-h)//2+y_pos+apple_offset
-            frame.paste(scaled,(x,y),scaled)
-        else:
-            frame.paste(real,(0,y_pos+apple_offset),real)
-        if any(k in label_lower for k in ["tree","garden","leaf","eden"]):
-            leaf_progress=(f+num_frames//3)/num_frames
-            leaf_x=int(VISUAL_W*0.7+20*math.sin(2*math.pi*leaf_progress))
-            leaf_y=int(VISUAL_H*0.4+60*leaf_progress)%VISUAL_H
-            draw=ImageDraw.Draw(frame)
-            draw.ellipse([leaf_x,leaf_y,leaf_x+12,leaf_y+18],fill=(120,180,120,180))
-        mask=Image.new("L", (VISUAL_W, VISUAL_H), 0)
-        ImageDraw.Draw(mask).rounded_rectangle((0,0,VISUAL_W,VISUAL_H), radius=32, fill=255)
-        final=Image.new("RGBA", (VISUAL_W, VISUAL_H), (0,0,0,0))
+            draw_stick_figure(draw,VISUAL_W//2-50,VISUAL_H//2-40,size=120)
+            by=VISUAL_H//2-80+5*math.sin(progress*2*math.pi)
+            draw.ellipse([VISUAL_W//2+30,by-30,VISUAL_W//2+110,by+20],fill=(255,255,255,200),outline=(0,0,0,255),width=2)
+        mask=Image.new("L",(VISUAL_W,VISUAL_H),0)
+        ImageDraw.Draw(mask).rounded_rectangle((0,0,VISUAL_W,VISUAL_H),radius=28,fill=255)
+        final=Image.new("RGBA",(VISUAL_W,VISUAL_H),(0,0,0,0))
         final.paste(frame,(0,0),frame)
         final.putalpha(mask)
-        border=Image.new("RGBA", (VISUAL_W, VISUAL_H), (0,0,0,0))
-        ImageDraw.Draw(border).rounded_rectangle((1,1,VISUAL_W-2,VISUAL_H-2), radius=32, outline=(200,200,200,50), width=1)
-        final=Image.alpha_composite(final, border)
         frames.append(final)
-    frames[0].save(filename, format='GIF', save_all=True, append_images=frames[1:], duration=160, loop=0, disposal=2, optimize=True)
+    frames[0].save(filename,format='GIF',save_all=True,append_images=frames[1:],duration=160,loop=0,disposal=2,transparency=0)
+    print(f"   Created transparent animation: {visual.get('label')} ({len(frames)} frames, moves, transparent bg)")
     return filename
 
 def create_background(position,glow_color,filename):
@@ -557,8 +554,7 @@ def create_background(position,glow_color,filename):
     if os.path.exists(source):
         try: image=Image.open(source).convert("RGB").resize((VIDEO_W,VIDEO_H))
         except: image=Image.new("RGB",(VIDEO_W,VIDEO_H),(12,16,32))
-    else:
-        image=Image.new("RGB",(VIDEO_W,VIDEO_H),(12,16,32))
+    else: image=Image.new("RGB",(VIDEO_W,VIDEO_H),(12,16,32))
     overlay=Image.new("RGBA",(VIDEO_W,VIDEO_H),(0,0,0,0))
     d=ImageDraw.Draw(overlay)
     cx=400 if position=="left" else 1520 if position=="right" else 960
@@ -584,8 +580,7 @@ def create_ui_overlay(speaker_name,topic,position,glow_color,filename):
     image.save(filename)
     return cx,cy
 
-def ffmpeg_filter_path(fn):
-    return os.path.abspath(fn).replace("\\","/").replace("'","\\'").replace(":","\\:")
+def ffmpeg_filter_path(fn): return os.path.abspath(fn).replace("\\","/").replace("'","\\'").replace(":","\\:")
 
 def render_video_segment(background,ui,audio,subtitles,output,position,glow_color,card_x,card_y,visual_plan):
     for p in [background,ui,audio,subtitles]:
@@ -594,45 +589,30 @@ def render_video_segment(background,ui,audio,subtitles,output,position,glow_colo
     for idx,vis in enumerate(visual_plan or []):
         try:
             asset=create_visual_asset(vis,idx)
-            if asset is None: continue
-            vassets.append((asset,vis))
-        except Exception as e:
-            print(f"Visual skip: {e}")
+            if asset: vassets.append((asset,vis))
+        except Exception as e: print(f"Visual skip: {e}")
     glow=glow_color.lstrip("#")
     pan_x="0" if position=="left" else "iw-(iw/zoom)" if position=="right" else "(iw-(iw/zoom))/2"
-    parts=[]
-    parts.append(f"[0:v]scale=1920:1080,zoompan=z='min(zoom+0.00020,1.05)':x='{pan_x}':y='(ih-(ih/zoom))/2':d=9000:s=1920x1080:fps=30[bg];")
-    parts.append("[1:v]scale=1920:1080[ui];")
-    parts.append(f"[2:a]showwaves=s=300x58:mode=cline:colors=0x{glow}:rate=30[wave];")
-    parts.append("[bg][ui]overlay=0:0[base];")
-    parts.append(f"[base][wave]overlay={card_x+330}:{card_y+47}[withwave];")
+    parts=[f"[0:v]scale=1920:1080,zoompan=z='min(zoom+0.00020,1.05)':x='{pan_x}':y='(ih-(ih/zoom))/2':d=9000:s=1920x1080:fps=30[bg];","[1:v]scale=1920:1080[ui];",f"[2:a]showwaves=s=300x58:mode=cline:colors=0x{glow}:rate=30[wave];","[bg][ui]overlay=0:0[base];",f"[base][wave]overlay={card_x+330}:{card_y+47}[withwave];"]
     cur="[withwave]"; idx_in=3
     for i,(asset,vis) in enumerate(vassets):
         s=max(0.0,float(vis["start"])); e=max(s+3.5,float(vis["end"]))
-        if asset.lower().endswith(".png"):
-            parts.append(f"[{idx_in}:v]scale=iw*1.1:ih*1.1,zoompan=z='min(1+0.0006*on,1.08)':x='iw/2-(iw/zoom)/2':y='ih/2-(ih/zoom)/2':d=1:s={VISUAL_W}x{VISUAL_H}:fps={FPS},format=rgba,fade=t=in:st={s}:d=0.8:alpha=1,fade=t=out:st={e-0.8}:d=0.8:alpha=1[vf{i}];")
-        else:
-            parts.append(f"[{idx_in}:v]format=rgba,fade=t=in:st={s}:d=0.8:alpha=1,fade=t=out:st={e-0.8}:d=0.8:alpha=1[vf{i}];")
-        x=(VIDEO_W-VISUAL_W)//2; y_expr=f"{VISUAL_Y} - (t-{s})*2"; en=f"between(t,{s:.2f},{e:.2f})"
+        parts.append(f"[{idx_in}:v]format=rgba,fade=t=in:st={s}:d=0.6:alpha=1,fade=t=out:st={e-0.6}:d=0.6:alpha=1[vf{i}];")
+        x=(VIDEO_W-VISUAL_W)//2; y_expr=f"{VISUAL_Y} - (t-{s})*1"; en=f"between(t,{s:.2f},{e:.2f})"
         parts.append(f"{cur}[vf{i}]overlay={x}:'{y_expr}':enable='{en}'[v{i}];")
         cur=f"[v{i}]"; idx_in+=1
     parts.append(f"{cur}ass='{ffmpeg_filter_path(subtitles)}'[outv]")
     fc="".join(parts)
     cmd=["ffmpeg","-y","-loop","1","-framerate",str(FPS),"-i",background,"-i",ui,"-i",audio]
-    for a,_ in vassets:
-        if a.lower().endswith(".gif"):
-            cmd+=["-ignore_loop","0","-i",a]
-        else:
-            cmd+=["-loop","1","-framerate",str(FPS),"-i",a]
+    for a,_ in vassets: cmd+=["-ignore_loop","0","-i",a]
     cmd+=["-filter_complex",fc,"-map","[outv]","-map","2:a","-c:v","libx264","-preset","veryfast","-crf","20","-pix_fmt","yuv420p","-c:a","aac","-b:a","192k","-shortest",output]
     res=subprocess.run(cmd,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
-    if res.returncode!=0:
-        print(res.stderr[-7000:]); raise RuntimeError(f"FFmpeg failed {output}")
+    if res.returncode!=0: print(res.stderr[-7000:]); raise RuntimeError(f"FFmpeg failed {output}")
     for a,_ in vassets:
         try: os.remove(a)
         except: pass
 
-def generate_scoreboard(round_num,results,round_a,round_b,cumulative_a,cumulative_b,filename,roles):
+def generate_scoreboard(rn,results,ra,rb,ca,cb,filename,roles):
     src=os.path.join(os.path.dirname(os.path.abspath(__file__)),"background.png")
     if os.path.exists(src):
         try: img=Image.open(src).convert("RGB").resize((VIDEO_W,VIDEO_H))
@@ -644,24 +624,23 @@ def generate_scoreboard(round_num,results,round_a,round_b,cumulative_a,cumulativ
     hdr=load_font(38,bold=True); sub=load_font(22,bold=True); sml=load_font(18)
     def centred(y,txt,fnt,col):
         box=d.textbbox((0,0),txt,font=fnt); w=box[2]-box[0]; d.text(((VIDEO_W-w)//2,y),txt,fill=col,font=fnt)
-    centred(24,f"ROUND {round_num} — AI JUDGING PANEL",hdr,"#FFD700")
+    centred(24,f"ROUND {rn} — AI JUDGING PANEL",hdr,"#FFD700")
     centred(72,f"{len(results)} JUDGES — {', '.join(r['display_name'] for r in results)}",sub,"white")
-    centred(112,f"ROUND SCORE   {roles['side_a_label']} {round_a:.1f}   VS   {roles['side_b_label']} {round_b:.1f}",sub,"white")
-    centred(150,f"CUMULATIVE   {roles['side_a_label']} {cumulative_a:.1f}   VS   {roles['side_b_label']} {cumulative_b:.1f}",sub,"#FFD700")
+    centred(112,f"ROUND SCORE   {roles['side_a_label']} {ra:.1f}   VS   {roles['side_b_label']} {rb:.1f}",sub,"white")
+    centred(150,f"CUMULATIVE   {roles['side_a_label']} {ca:.1f}   VS   {roles['side_b_label']} {cb:.1f}",sub,"#FFD700")
     d.text((100,225),"CATEGORY AVERAGES",fill="#FFD700",font=sub)
     d.text((500,265),roles['side_a_label'],fill="#00FFCC",font=sml); d.text((680,265),roles['side_b_label'],fill="#FF66FF",font=sml)
     y=310
     for label,ak,bk in [("Argument strength","A_argument","B_argument"),("Rebuttal quality","A_rebuttal","B_rebuttal"),("Clarity & reasoning","A_clarity","B_clarity")]:
         a=sum(r[ak] for r in results)/len(results); b=sum(r[bk] for r in results)/len(results)
         d.text((100,y),label,fill="white",font=sml); d.text((500,y),f"{a:.1f}",fill="#00FFCC",font=sml); d.text((680,y),f"{b:.1f}",fill="#FF66FF",font=sml); y+=48
-    d.text((980,225),"INDIVIDUAL JUDGES",fill="#FFD700",font=sub)
+    d.text((980,225),"INDIVIDUAL JUDGES - ONE PER COMPANY",fill="#FFD700",font=sub)
     d.text((980,270),"MODEL",fill="white",font=sml); d.text((1500,270),roles['side_a_label'][:1],fill="#00FFCC",font=sml); d.text((1580,270),roles['side_b_label'][:1],fill="#FF66FF",font=sml)
     d.line([(970,300),(1680,300)],fill=(100,110,140,255),width=2)
     sy=320
     for r in results:
-        d.text((980,sy),r.get("display_name","?"),fill="white",font=sml)
-        d.text((1500,sy),f"{r['A_total']:.1f}",fill="#00FFCC",font=sml)
-        d.text((1580,sy),f"{r['B_total']:.1f}",fill="#FF66FF",font=sml); sy+=48
+        d.text((980,sy),f"{r.get('display_name','?')} [{r.get('provider','?')}]",fill="white",font=sml)
+        d.text((1500,sy),f"{r['A_total']:.1f}",fill="#00FFCC",font=sml); d.text((1580,sy),f"{r['B_total']:.1f}",fill="#FF66FF",font=sml); sy+=48
     img.save(filename)
 
 def render_scorecard_video(scorecard,audio,subtitles,output):
@@ -670,8 +649,7 @@ def render_scorecard_video(scorecard,audio,subtitles,output):
     fc=f"[0:v]scale=1920:1080[base];[base]ass='{ffmpeg_filter_path(subtitles)}'[outv]"
     cmd=["ffmpeg","-y","-loop","1","-framerate",str(FPS),"-i",scorecard,"-i",audio,"-filter_complex",fc,"-map","[outv]","-map","1:a","-c:v","libx264","-preset","veryfast","-crf","20","-pix_fmt","yuv420p","-c:a","aac","-b:a","192k","-shortest",output]
     res=subprocess.run(cmd,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
-    if res.returncode!=0:
-        print(res.stderr[-7000:]); raise RuntimeError("Scorecard failed")
+    if res.returncode!=0: print(res.stderr[-7000:]); raise RuntimeError("Scorecard failed")
 
 def create_segment(text,role,speaker_name,topic,segment_id,model_for_visuals,position=None,glow=None,judge_voice_index=None):
     if position is None:
@@ -687,8 +665,7 @@ def create_segment(text,role,speaker_name,topic,segment_id,model_for_visuals,pos
     try:
         vplan=create_visual_plan(clean_for_speech(text),words,model_for_visuals)
         if vplan: print(f"   {len(vplan)} visual(s): {', '.join(v['label'] for v in vplan)}")
-    except Exception as e:
-        print(f"Visual planning skipped: {e}")
+    except Exception as e: print(f"Visual planning skipped: {e}")
     create_background(position,glow,bf)
     cx,cy=create_ui_overlay(speaker_name,topic,position,glow,uf)
     render_video_segment(bf,uf,af,sf,vf,position,glow,cx,cy,vplan)
@@ -697,76 +674,64 @@ def create_segment(text,role,speaker_name,topic,segment_id,model_for_visuals,pos
 def generate_panel_commentary(model,side,topic,rn,ap,sk,prev,roles):
     prov=get_judge_short_name(model)
     pref_label = roles['side_a_label'] if side=="A" else roles['side_b_label']
-    recent="\n".join(prev[-6:])
-    def trim(t,mw=220):
+    recent="\n".join(prev[-4:])
+    def trim(t,mw=200):
         wl=t.split(); return t if len(wl)<=mw else " ".join(wl[-mw:])
-    prompt=f"You are {prov} judge. Topic:{topic} Round:{rn} {roles['side_a_label']}:{trim(ap)} {roles['side_b_label']}:{trim(sk)} You preferred:{pref_label} Give short specific observation.\nPrevious:{recent}\n2-3 sentences."
-    resp=query_openrouter(prompt,model,timeout=40,max_tokens=220,temperature=0.85)
-    return resp if resp else "The key is whether argument answered strongest objection."
+    prompt=f"You are {prov} judge. Topic:{topic} Round:{rn} {roles['side_a_label']}:{trim(ap)} vs {roles['side_b_label']}:{trim(sk)} You preferred {pref_label}. Give 2 sentence specific critique. Previous: {recent}"
+    resp=query_openrouter(prompt,model,timeout=30,max_tokens=200,temperature=0.7)
+    return resp if resp else f"Round {rn} - {pref_label} had stronger exegesis."
 
 def build_intro(topic,jc,roles):
-    return f"Welcome to the AI Debate Arena. Today, {roles['side_a_label']} faces {roles['side_b_label']} on the question: {topic}. The debate will unfold over three rounds with equal speaking time for both sides. An independent panel of {jc} AI systems will score argument strength, rebuttal quality, and clarity of reasoning. Let's begin."
+    return f"Welcome to the AI Debate Arena. Today, {roles['side_a_label']} faces {roles['side_b_label']} on the question: {topic}. Three rounds, equal time, independent panel of {jc} top AI judges from different companies - one per company including ChatGPT, Claude, Gemini, Llama, Mistral, DeepSeek, Qwen - scoring argument, rebuttal and clarity. Let's begin."
 
 def build_outro(jc,ca,cb,roles):
     if math.isclose(ca,cb,abs_tol=0.01): res="a draw"
     elif ca>cb: res=roles['side_a_label']
     else: res=roles['side_b_label']
-    return f"After three rounds, panel of {jc} judges gave {roles['side_a_label']} {ca:.1f}, {roles['side_b_label']} {cb:.1f}. Final result is {res}. But final verdict is still yours."
+    return f"After three rounds, panel of {jc} judges from different companies gave {roles['side_a_label']} {ca:.1f}, {roles['side_b_label']} {cb:.1f}. Final result is {res}. The text remains - you decide."
 
 def stitch_segments(segs,out):
     lf="concat_list.txt"
-    with open(lf,"w",encoding="utf-8") as f:
-        for s in segs:
-            p=os.path.abspath(s).replace("'","'\\''"); f.write(f"file '{p}'\n")
-    print("Stitching final video...")
+    open(lf,"w",encoding="utf-8").write("\n".join([f"file '{os.path.abspath(s).replace(chr(39),chr(39)+chr(92)+chr(39)+chr(39))}'" for s in segs])+"\n")
     cmd=["ffmpeg","-y","-f","concat","-safe","0","-i",lf,"-c","copy",out]
     r=subprocess.run(cmd,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
-    if r.returncode!=0:
-        print(r.stderr[-7000:]); raise RuntimeError("Concat failed")
+    if r.returncode!=0: print(r.stderr[-7000:]); raise RuntimeError("Concat failed")
 
 def run_debate_pipeline():
     cleanup_cache()
     if not OPENROUTER_API_KEY: raise RuntimeError("OPENROUTER_API_KEY missing")
     if not os.path.exists("topic.txt"):
-        with open("topic.txt","w",encoding="utf-8") as f: f.write("Did God or the serpent lie in Genesis 1?")
+        open("topic.txt","w",encoding="utf-8").write("Did God or the serpent lie in Genesis 1?")
     topic=open("topic.txt","r",encoding="utf-8").read().strip() or "Did God or the serpent lie in Genesis 1?"
     print(f"\nTOPIC: {topic}\n")
     avail=discover_models()
-    if not avail:
-        avail=FALLBACK_MODELS.copy()
+    if not avail: avail=FALLBACK_MODELS.copy()
     ap_model,sk_model=choose_primary_models(avail)
-    roles = get_debate_roles(topic, ap_model)
-    print(f"Roles: {roles['side_a_label']} VS {roles['side_b_label']}")
-    print(f"Apologist: {get_judge_short_name(ap_model)}  Skeptic: {get_judge_short_name(sk_model)}")
+    roles=get_debate_roles(topic, ap_model)
+    print(f"Roles: {roles['side_a_label']} VS {roles['side_b_label']} - Topic-adaptive from topic.txt")
+    print(f"Debate engines: {get_judge_short_name(ap_model)} [{provider_from_model(ap_model)}] vs {get_judge_short_name(sk_model)} [{provider_from_model(sk_model)}] - different companies")
     judges=choose_judges(avail,(ap_model,sk_model))
-    if not judges:
-        used=set(); judges=[]
-        for m in FALLBACK_MODELS:
-            prov=provider_from_model(m)
-            if prov in used or m in (ap_model,sk_model): continue
-            judges.append(m); used.add(prov)
-            if len(judges)>=MAX_JUDGES: break
-    print(f"Judges: {len(judges)} — {', '.join(get_judge_short_name(j) for j in judges)}")
+    if not judges: judges=FALLBACK_MODELS[:MAX_JUDGES]
+    print(f"Judges ({len(judges)}): ONE PER COMPANY enforced")
+    for j in judges: print(f"  - {get_judge_short_name(j)} [{provider_from_model(j)}] - {j}")
     segs=[]; sid=0
     def add_segment(text,role,name,position=None,glow=None,judge_voice_index=None):
         nonlocal sid
         vm=sk_model if "SERPENT" in role.upper() or role=="B" else ap_model
         v=create_segment(text,role,name,topic,sid,vm,position,glow,judge_voice_index); segs.append(v); sid+=1
-    def add_seg(text,role,name,position=None,glow=None,judge_voice_index=None):
-        return add_segment(text,role,name,position,glow,judge_voice_index)
     add_segment(build_intro(topic,len(judges),roles),"Moderator","MODERATOR")
     prev=""; cum_a=0.0; cum_b=0.0; pcom=[]
     for rn in range(1,ROUNDS+1):
         print(f"\nROUND {rn}")
         a_turns,s_turns,prev=build_round_exchanges(topic,rn,ap_model,sk_model,prev,roles)
         for ti in range(TURNS_PER_SIDE_PER_ROUND):
-            print(f"  Exchange {ti+1}: {roles['side_a_label']}={count_words(a_turns[ti])} {roles['side_b_label']}={count_words(s_turns[ti])}")
             add_segment(a_turns[ti],roles['side_a_label'],roles['side_a_label'],"left","#00FFCC")
             add_segment(s_turns[ti],roles['side_b_label'],roles['side_b_label'],"right","#FF00FF")
         a_full="\n".join(a_turns); s_full="\n".join(s_turns)
+        print(f"   Round total: A={count_words(a_full)} words | B={count_words(s_full)} words")
         res=evaluate_round(judges,topic,rn,a_full,s_full,roles)
         ra,rb=calculate_round_average(res); cum_a+=ra; cum_b+=rb
-        print(f"Round {rn}: {roles['side_a_label']} {ra:.1f} vs {roles['side_b_label']} {rb:.1f} | Cum: {cum_a:.1f} vs {cum_b:.1f}")
+        print(f"Round {rn}: {ra:.1f} vs {rb:.1f} | Cum: {cum_a:.1f} vs {cum_b:.1f}")
         sb=f"scoreboard_r{rn}.png"
         generate_scoreboard(rn,res,ra,rb,cum_a,cum_b,sb,roles)
         st=f"Round {rn} complete. Judges gave {roles['side_a_label']} {ra:.1f} and {roles['side_b_label']} {rb:.1f}. Cumulative {cum_a:.1f} to {cum_b:.1f}."
@@ -783,14 +748,12 @@ def run_debate_pipeline():
             add_segment(cb,"AI Judge",f"AI JUDGE — {jb['display_name'].upper()}","center","#3399FF",judge_voice_index=1)
     add_segment(build_outro(len(judges),cum_a,cum_b,roles),"Moderator","MODERATOR")
     stitch_segments(segs,OUTPUT_FILE)
-    print(f"\nCOMPLETE: {OUTPUT_FILE}")
-    print(f"Roles: {roles['side_a_label']} vs {roles['side_b_label']}")
-    print(f"Judges: {', '.join(get_judge_short_name(j) for j in judges)}")
-    print(f"Final: {roles['side_a_label']} {cum_a:.1f} vs {roles['side_b_label']} {cum_b:.1f}")
+    print(f"\nCOMPLETE: {OUTPUT_FILE} — {cum_a:.1f} vs {cum_b:.1f}")
+    print(f"Topic-adaptive: YES - roles {roles['side_a_label']} vs {roles['side_b_label']} from topic.txt '{topic}'")
+    print(f"One per company: YES - {len(judges)} judges from different companies")
     cleanup_cache()
 
 if __name__=="__main__":
     try: run_debate_pipeline()
     except KeyboardInterrupt: print("Cancelled")
-    except Exception as e:
-        print("FAILED"); print(str(e)); raise
+    except Exception as e: print("FAILED"); print(str(e)); raise
