@@ -10,7 +10,6 @@ import requests
 import subprocess
 import concurrent.futures
 import time
-from typing import List, Dict, Optional
 from urllib.parse import quote
 from io import BytesIO
 import edge_tts
@@ -24,7 +23,6 @@ VIDEO_W = 1920
 VIDEO_H = 1080
 FPS = 30
 ROUNDS = 3
-WORDS_PER_SIDE_PER_ROUND = 500
 TURNS_PER_SIDE_PER_ROUND = 4
 WORDS_PER_TURN = 125
 MIN_TURN_WORDS = 105
@@ -35,13 +33,12 @@ MAX_VISUALS_PER_SEGMENT = 2
 MIN_VISUAL_GAP = 2.0
 VISUAL_W = 480
 VISUAL_H = 480
-VISUAL_X = (VIDEO_W - VISUAL_W) // 2
 VISUAL_Y = 180
 
 VOICES = {
+    "A": "en-US-BrianMultilingualNeural",
+    "B": "en-US-AvaMultilingualNeural",
     "Moderator": "en-US-AndrewMultilingualNeural",
-    "AI Christian Apologist": "en-US-BrianMultilingualNeural",
-    "AI Skeptic": "en-US-AvaMultilingualNeural",
 }
 JUDGE_VOICES = ["en-US-ChristopherNeural","en-US-EmmaMultilingualNeural","en-US-GuyNeural","en-US-JennyNeural"]
 
@@ -57,8 +54,7 @@ FALLBACK_MODELS = [
 
 PROVIDER_ALIASES = {
     "openai":"OpenAI","anthropic":"Anthropic","google":"Google","x-ai":"xAI","xai":"xAI","deepseek":"DeepSeek",
-    "mistralai":"Mistral","mistral":"Mistral","meta-llama":"Meta","meta":"Meta","qwen":"Alibaba / Qwen","cohere":"Cohere",
-    "perplexity":"Perplexity",
+    "mistralai":"Mistral","mistral":"Mistral","meta-llama":"Meta","meta":"Meta","qwen":"Qwen","cohere":"Cohere","perplexity":"Perplexity",
 }
 
 def provider_from_model(model_id):
@@ -85,31 +81,26 @@ def get_judge_short_name(model_id):
 def cleanup_cache():
     patterns=["*.mp4","*.mp3","*.ass","*.png","*.gif","*_list.txt"]
     protected={OUTPUT_FILE,"background.png","topic.txt"}
-    for pattern in patterns:
-        for filename in glob.glob(pattern):
-            if filename in protected: continue
-            try: os.remove(filename)
+    for pat in patterns:
+        for fn in glob.glob(pat):
+            if fn in protected: continue
+            try: os.remove(fn)
             except: pass
 
-def count_words(text): return len(re.findall(r"\b[\w'-]+\b", text or ""))
-def clean_for_speech(text):
-    text=re.sub(r"\([^)]*\)","",text or "")
-    for old,new in {"*":"","#":"","_":"","`":"","–":"-","—":"-","\"":"",":":" ",";":" ","&":"and"}.items():
-        text=text.replace(old,new)
-    return re.sub(r"\s+"," ",text).strip()
+def count_words(t): return len(re.findall(r"\b[\w'-]+\b", t or ""))
+def clean_for_speech(t):
+    t=re.sub(r"\([^)]*\)","",t or "")
+    for o,n in {"*":"","#":"","_":"","`":"","–":"-","—":"-","\"":"",":":" ",";":" ","&":"and"}.items():
+        t=t.replace(o,n)
+    return re.sub(r"\s+"," ",t).strip()
 def clamp_score(v):
     try: v=float(v)
     except: v=50.0
     return max(0.0,min(100.0,v))
-def load_font(size,bold=False):
-    paths=[
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        "C:\\Windows\\Fonts\\arialbd.ttf" if bold else "C:\\Windows\\Fonts\\arial.ttf",
-    ]
-    for p in paths:
-        try: return ImageFont.truetype(p,size)
-        except: continue
-    return ImageFont.load_default()
+def load_font(sz,bold=False):
+    p="/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+    try: return ImageFont.truetype(p,sz)
+    except: return ImageFont.load_default()
 def hex_to_rgba(h,a):
     h=h.lstrip("#")
     return (int(h[0:2],16),int(h[2:4],16),int(h[4:6],16),a)
@@ -118,18 +109,18 @@ def openrouter_headers():
     return {"Authorization":f"Bearer {OPENROUTER_API_KEY}","Content-Type":"application/json","HTTP-Referer":"https://openrouter.ai/","X-Title":"AI Debate Arena"}
 
 def discover_models():
-    if not OPENROUTER_API_KEY: raise RuntimeError("OPENROUTER_API_KEY is missing.")
+    if not OPENROUTER_API_KEY: raise RuntimeError("OPENROUTER_API_KEY missing")
     try:
         r=requests.get(OPENROUTER_MODELS_URL,headers=openrouter_headers(),timeout=20)
-        models=[]
-        for item in r.json().get("data",[]):
-            mid=item.get("id")
+        ms=[]
+        for it in r.json().get("data",[]):
+            mid=it.get("id")
             if not mid: continue
             if any(x in mid.lower() for x in ["embed","tts","whisper","audio","moderation","guard"]): continue
-            models.append(mid)
-        return list(dict.fromkeys(models))
-    except Exception as exc:
-        print(f"Model discovery failed: {exc}")
+            ms.append(mid)
+        return list(dict.fromkeys(ms))
+    except Exception as e:
+        print(f"discover fail {e}")
         return []
 
 def query_openrouter(prompt,model_id,timeout=60,max_tokens=1200,temperature=0.7):
@@ -141,24 +132,24 @@ def query_openrouter(prompt,model_id,timeout=60,max_tokens=1200,temperature=0.7)
             if resp.status_code==200:
                 c=resp.json().get("choices",[])[0].get("message",{}).get("content","")
                 if c and len(c.strip())>10: return c.strip()
-        except Exception as exc:
-            print(f"Request failed {get_judge_short_name(model_id)}: {exc}")
+        except Exception as e:
+            print(f"req fail {get_judge_short_name(model_id)} {e}")
         if attempt<2: time.sleep(1.5*(attempt+1))
     return None
 
-def choose_primary_models(available_models):
+def choose_primary_models(avail):
     pref=["openai/gpt-4o","openai/gpt-4o-mini","anthropic/claude-3.5-sonnet","anthropic/claude-3.5-haiku","google/gemini-2.5-flash","google/gemini-2.0-flash-001","deepseek/deepseek-chat","qwen/qwen-2.5-72b-instruct"]
-    found=[m for m in pref if m in set(available_models)]
+    found=[m for m in pref if m in set(avail)]
     if len(found)>=2: return found[0],found[1]
     if len(found)==1:
-        rem=[m for m in available_models if m!=found[0]]
+        rem=[m for m in avail if m!=found[0]]
         if rem: return found[0],rem[0]
-    if len(available_models)>=2: return available_models[0],available_models[1]
+    if len(avail)>=2: return avail[0],avail[1]
     return FALLBACK_MODELS[0],FALLBACK_MODELS[1]
 
-def choose_judges(available_models,primary_models):
-    excl=set(primary_models)
-    cands=[m for m in available_models if m not in excl and "image" not in m.lower()]
+def choose_judges(avail,primary):
+    excl=set(primary)
+    cands=[m for m in avail if m not in excl and "image" not in m.lower()]
     groups={}
     for m in cands:
         prov=provider_from_model(m)
@@ -167,31 +158,80 @@ def choose_judges(available_models,primary_models):
     for prov,models in groups.items():
         models.sort(key=lambda mm:(0 if any(k in mm.lower() for k in ["gpt","claude","gemini","grok","deepseek","mistral","llama","qwen"]) else 1,len(mm)))
         sel.append((prov,models[0]))
-    priority=["OpenAI","Anthropic","Google","xAI","DeepSeek","Mistral","Meta","Alibaba / Qwen","Cohere","Perplexity"]
-    sel.sort(key=lambda x:(priority.index(x[0]) if x[0] in priority else 999,x[0]))
+    pri=["OpenAI","Anthropic","Google","xAI","DeepSeek","Mistral","Meta","Alibaba / Qwen","Cohere","Perplexity"]
+    sel.sort(key=lambda x:(pri.index(x[0]) if x[0] in pri else 999,x[0]))
     return [m for _,m in sel[:MAX_JUDGES]]
 
-def generate_turn(side,topic,round_num,turn_num,previous_exchange,model):
-    side_name="AI Christian Apologist" if side=="A" else "AI Skeptic"
-    opponent="AI Skeptic" if side=="A" else "AI Christian Apologist"
-    instr="Opening - establish foundation." if round_num==1 and turn_num==1 else f"Turn {turn_num} round {round_num} - respond directly."
-    prompt=f"You are {side_name} debating {opponent} on {topic}. {instr}\nPrevious:\n{previous_exchange or 'None'}\nWrite ONLY spoken contribution, {WORDS_PER_TURN} words, {MIN_TURN_WORDS}-{MAX_TURN_WORDS}."
-    resp=query_openrouter(prompt,model,max_tokens=430,temperature=0.78)
-    return resp if resp else "We need to examine whether evidence supports this conclusion."
+# ============================================================
+# DYNAMIC ROLE LABELING - NOW GOD TOLD TRUTH vs SERPENT TOLD TRUTH
+# ============================================================
+def get_debate_roles(topic, model):
+    topic_lower = (topic or "").lower()
+    # Exact labels requested by user for current topic
+    if "god" in topic_lower and "serpent" in topic_lower:
+        return {
+            "side_a_label": "GOD TOLD TRUTH",
+            "side_a_desc": "Defends that God told the truth in Genesis 1, the serpent deceived",
+            "side_b_label": "SERPENT TOLD TRUTH",
+            "side_b_desc": "Defends that the serpent told the truth and God did not",
+        }
+    # Generic LLM labeling for any other topic.txt
+    prompt = f"""
+Topic: "{topic}"
+Return ONLY JSON: {{"side_a_label":"SHORT LABEL","side_a_desc":"sentence","side_b_label":"SHORT LABEL","side_b_desc":"sentence"}}
+Rules: labels 2-4 words uppercase, opposites specific to topic.
+"""
+    resp = query_openrouter(prompt, model, timeout=30, max_tokens=250, temperature=0.3)
+    if resp:
+        try:
+            m = re.search(r"\{.*\}", resp, re.DOTALL)
+            if m:
+                data = json.loads(m.group(0))
+                a_label = str(data.get("side_a_label","SIDE A")).strip().upper()[:30]
+                b_label = str(data.get("side_b_label","SIDE B")).strip().upper()[:30]
+                a_desc = str(data.get("side_a_desc",a_label)).strip()
+                b_desc = str(data.get("side_b_desc",b_label)).strip()
+                if a_label and b_label and a_label != b_label:
+                    return {"side_a_label":a_label,"side_a_desc":a_desc,"side_b_label":b_label,"side_b_desc":b_desc}
+        except Exception as e:
+            print(f"Role parse failed: {e}")
+    return {
+        "side_a_label": "AFFIRMATIVE",
+        "side_a_desc": f"Argues for: {topic}",
+        "side_b_label": "NEGATIVE",
+        "side_b_desc": f"Argues against: {topic}",
+    }
 
-def build_round_exchanges(topic,round_num,ap_model,sk_model,prev_hist):
-    a_turns=[]; s_turns=[]; hist=prev_hist
+def generate_turn(side, topic, round_num, turn_num, previous_exchange, model, role_label, role_desc, opponent_label, opponent_desc):
+    instruction = "Opening - establish foundation." if round_num==1 and turn_num==1 else f"Turn {turn_num} round {round_num} - respond directly."
+    prompt = f"""
+You are {role_label} in a debate.
+Your position: {role_desc}
+Opponent is {opponent_label}: {opponent_desc}
+Topic: {topic}
+{instruction}
+Previous:
+{previous_exchange or 'None'}
+Write ONLY your spoken contribution, ~{WORDS_PER_TURN} words, {MIN_TURN_WORDS}-{MAX_TURN_WORDS}. Natural speech, YouTube audience.
+"""
+    resp=query_openrouter(prompt,model,max_tokens=430,temperature=0.78)
+    return resp if resp else f"As {role_label}, {role_desc.lower()}."
+
+def build_round_exchanges(topic, round_num, ap_model, sk_model, prev_hist, roles):
+    a=[]; s=[]; hist=prev_hist
     for tn in range(1,TURNS_PER_SIDE_PER_ROUND+1):
-        a=generate_turn("A",topic,round_num,tn,hist,ap_model); a_turns.append(a); hist=f"Apologist:\n{a}\n\n"
-        s=generate_turn("B",topic,round_num,tn,hist,sk_model); s_turns.append(s); hist+=f"Skeptic:\n{s}\n\n"
-    return a_turns,s_turns,hist
+        aa=generate_turn("A",topic,round_num,tn,hist,ap_model, roles["side_a_label"], roles["side_a_desc"], roles["side_b_label"], roles["side_b_desc"])
+        a.append(aa); hist=f"{roles['side_a_label']}:\n{aa}\n\n"
+        ss=generate_turn("B",topic,round_num,tn,hist,sk_model, roles["side_b_label"], roles["side_b_desc"], roles["side_a_label"], roles["side_a_desc"])
+        s.append(ss); hist+=f"{roles['side_b_label']}:\n{ss}\n\n"
+    return a,s,hist
 
 def neutral_judge(model):
     return {"model":model,"provider":provider_from_model(model),"display_name":get_judge_short_name(model),
             "A_argument":50,"A_rebuttal":50,"A_clarity":50,"A_total":50,"B_argument":50,"B_rebuttal":50,"B_clarity":50,"B_total":50,"winner":"A"}
 
-def judge_round(model,topic,round_num,apologist,skeptic):
-    prompt=f"Judge debate Topic:{topic} Round:{round_num} A:{apologist} B:{skeptic} Return JSON {{'A_argument':0,'A_rebuttal':0,'A_clarity':0,'B_argument':0,'B_rebuttal':0,'B_clarity':0}}"
+def judge_round(model,topic,rn,ap,sk,roles):
+    prompt=f"Judge debate Topic:{topic} Round:{rn} {roles['side_a_label']}: {ap} {roles['side_b_label']}: {sk} Return JSON {{\"A_argument\":0,\"A_rebuttal\":0,\"A_clarity\":0,\"B_argument\":0,\"B_rebuttal\":0,\"B_clarity\":0}}"
     resp=query_openrouter(prompt,model,timeout=35,max_tokens=250,temperature=0.1)
     if not resp: return neutral_judge(model)
     try:
@@ -206,10 +246,10 @@ def judge_round(model,topic,round_num,apologist,skeptic):
                 "B_argument":ba,"B_rebuttal":br,"B_clarity":bc,"B_total":round(bt,2),"winner":"A" if at>bt else "B"}
     except: return neutral_judge(model)
 
-def evaluate_round(judges,topic,round_num,apologist,skeptic):
+def evaluate_round(judges,topic,rn,ap,sk,roles):
     results=[]
     print(f"Asking {len(judges)} judges ({', '.join(get_judge_short_name(j) for j in judges)})...")
-    def worker(m): return judge_round(m,topic,round_num,apologist,skeptic)
+    def worker(m): return judge_round(m,topic,rn,ap,sk,roles)
     with concurrent.futures.ThreadPoolExecutor(max_workers=max(1,min(JUDGE_WORKERS,len(judges)))) as ex:
         futs={ex.submit(worker,m):m for m in judges}
         for fu in concurrent.futures.as_completed(futs):
@@ -243,15 +283,22 @@ async def generate_audio_async(text,voice,filename):
     return words
 
 def generate_audio(text,role,filename,judge_voice_index=None):
-    if role=="AI Judge":
+    if "JUDGE" in role.upper():
         voice=JUDGE_VOICES[(judge_voice_index or 0)%len(JUDGE_VOICES)]
+    elif role=="A" or "GOD TOLD TRUTH" in role.upper():
+        voice=VOICES["A"]
+    elif role=="B" or "SERPENT TOLD TRUTH" in role.upper():
+        voice=VOICES["B"]
     else:
-        voice=VOICES.get(role,VOICES["Moderator"])
+        # generic mapping for dynamic labels
+        if "GOD" in role.upper(): voice=VOICES["A"]
+        elif "SERPENT" in role.upper(): voice=VOICES["B"]
+        else: voice=VOICES["A"] if role=="A" else VOICES["B"] if role=="B" else VOICES["Moderator"]
     clean=clean_for_speech(text)
     try:
         return asyncio.run(generate_audio_async(clean,voice,filename))
     except Exception as e:
-        print(f"TTS failed {voice}: {e}")
+        print(f"TTS fail {voice}: {e}")
         return asyncio.run(generate_audio_async(clean,VOICES["Moderator"],filename))
 
 def format_ass_time(s):
@@ -301,7 +348,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         f.write(header+"\n".join(events)+"\n")
 
 def plan_visuals(text,model):
-    prompt=f"""You are visual director. Read: {text}\nFind up to {MAX_VISUALS_PER_SEGMENT} concrete visual moments like Adam eating apple, Garden of Eden. Return ONLY JSON: [{{"phrase":"exact phrase","label":"2-4 words","description":"detailed prompt like Adam and Eve in Garden of Eden Adam biting red apple cinematic","kind":"person"}}]"""
+    prompt=f"""You are visual director. Read: {text}\nFind up to {MAX_VISUALS_PER_SEGMENT} concrete moments like serpent in garden, God speaking. Return ONLY JSON: [{{"phrase":"exact phrase","label":"2-4 words","description":"detailed prompt","kind":"person"}}]"""
     resp=query_openrouter(prompt,model,timeout=35,max_tokens=500,temperature=0.2)
     if not resp: return []
     try:
@@ -415,12 +462,18 @@ def create_background(position,glow_color,filename):
 def create_ui_overlay(speaker_name,topic,position,glow_color,filename):
     image=Image.new("RGBA",(VIDEO_W,VIDEO_H),(0,0,0,0))
     draw=ImageDraw.Draw(image)
-    title_font=load_font(30,bold=True); name_font=load_font(30,bold=True)
+    title_font=load_font(30,bold=True); name_font=load_font(26,bold=True)
     title=f"TOPIC: {topic}"
+    # Truncate long topic for display
+    if len(title)>85:
+        title=title[:82]+"..."
     box=draw.textbbox((0,0),title,font=title_font)
     draw.text(((VIDEO_W-(box[2]-box[0]))//2,24),title,fill="white",font=title_font)
-    cw=650; ch=110; cy=885
+    # Wider card for longer labels like GOD TOLD TRUTH
+    cw=750; ch=110; cy=885
     cx=75 if position=="left" else 1195 if position=="right" else (VIDEO_W-cw)//2
+    if position=="right":
+        cx=VIDEO_W-cw-75
     draw.rounded_rectangle([cx,cy,cx+cw,cy+ch],radius=18,fill=(18,26,46,235),outline=glow_color,width=4)
     draw.ellipse([cx+22,cy+27,cx+47,cy+52],fill=glow_color)
     draw.text((cx+65,cy+22),speaker_name,fill="white",font=name_font)
@@ -468,7 +521,7 @@ def render_video_segment(background,ui,audio,subtitles,output,position,glow_colo
         try: os.remove(a)
         except: pass
 
-def generate_scoreboard(round_num,results,round_a,round_b,cumulative_a,cumulative_b,filename):
+def generate_scoreboard(round_num,results,round_a,round_b,cumulative_a,cumulative_b,filename,roles):
     src=os.path.join(os.path.dirname(os.path.abspath(__file__)),"background.png")
     if os.path.exists(src):
         try: img=Image.open(src).convert("RGB").resize((VIDEO_W,VIDEO_H))
@@ -477,21 +530,21 @@ def generate_scoreboard(round_num,results,round_a,round_b,cumulative_a,cumulativ
     over=Image.new("RGBA",(VIDEO_W,VIDEO_H),(0,0,0,235))
     img=Image.alpha_composite(img.convert("RGBA"),over).convert("RGB")
     d=ImageDraw.Draw(img)
-    hdr=load_font(38,bold=True); sub=load_font(22,bold=True); sml=load_font(20)
+    hdr=load_font(38,bold=True); sub=load_font(22,bold=True); sml=load_font(18)
     def centred(y,txt,fnt,col):
         box=d.textbbox((0,0),txt,font=fnt); w=box[2]-box[0]; d.text(((VIDEO_W-w)//2,y),txt,fill=col,font=fnt)
     centred(24,f"ROUND {round_num} — AI JUDGING PANEL",hdr,"#FFD700")
     centred(72,f"{len(results)} JUDGES — {', '.join(r['display_name'] for r in results)}",sub,"white")
-    centred(112,f"ROUND SCORE   APOLOGIST {round_a:.1f}   VS   SKEPTIC {round_b:.1f}",sub,"white")
-    centred(150,f"CUMULATIVE   APOLOGIST {cumulative_a:.1f}   VS   SKEPTIC {cumulative_b:.1f}",sub,"#FFD700")
+    centred(112,f"ROUND SCORE   {roles['side_a_label']} {round_a:.1f}   VS   {roles['side_b_label']} {round_b:.1f}",sub,"white")
+    centred(150,f"CUMULATIVE   {roles['side_a_label']} {cumulative_a:.1f}   VS   {roles['side_b_label']} {cumulative_b:.1f}",sub,"#FFD700")
     d.text((100,225),"CATEGORY AVERAGES",fill="#FFD700",font=sub)
-    d.text((500,265),"APOLOGIST",fill="#00FFCC",font=sml); d.text((680,265),"SKEPTIC",fill="#FF66FF",font=sml)
+    d.text((500,265),roles['side_a_label'],fill="#00FFCC",font=sml); d.text((680,265),roles['side_b_label'],fill="#FF66FF",font=sml)
     y=310
     for label,ak,bk in [("Argument strength","A_argument","B_argument"),("Rebuttal quality","A_rebuttal","B_rebuttal"),("Clarity & reasoning","A_clarity","B_clarity")]:
         a=sum(r[ak] for r in results)/len(results); b=sum(r[bk] for r in results)/len(results)
         d.text((100,y),label,fill="white",font=sml); d.text((500,y),f"{a:.1f}",fill="#00FFCC",font=sml); d.text((680,y),f"{b:.1f}",fill="#FF66FF",font=sml); y+=48
     d.text((980,225),"INDIVIDUAL JUDGES",fill="#FFD700",font=sub)
-    d.text((980,270),"MODEL",fill="white",font=sml); d.text((1500,270),"A",fill="#00FFCC",font=sml); d.text((1580,270),"B",fill="#FF66FF",font=sml)
+    d.text((980,270),"MODEL",fill="white",font=sml); d.text((1500,270),roles['side_a_label'][:1],fill="#00FFCC",font=sml); d.text((1580,270),roles['side_b_label'][:1],fill="#FF66FF",font=sml)
     d.line([(970,300),(1680,300)],fill=(100,110,140,255),width=2)
     sy=320
     for r in results:
@@ -511,9 +564,11 @@ def render_scorecard_video(scorecard,audio,subtitles,output):
 
 def create_segment(text,role,speaker_name,topic,segment_id,model_for_visuals,position=None,glow=None,judge_voice_index=None):
     if position is None:
-        position="left" if role=="AI Christian Apologist" else "right" if role=="AI Skeptic" else "center"
+        if "GOD" in role.upper(): position="left"
+        elif "SERPENT" in role.upper(): position="right"
+        else: position="center" if "JUDGE" in role.upper() or role=="Moderator" else "left"
     if glow is None:
-        glow="#00FFCC" if role=="AI Christian Apologist" else "#FF00FF" if role=="AI Skeptic" else "#3399FF" if role=="AI Judge" else "#FFD700"
+        glow="#00FFCC" if "GOD" in role.upper() else "#FF00FF" if "SERPENT" in role.upper() else "#3399FF" if "JUDGE" in role.upper() else "#FFD700"
     af=f"audio_{segment_id}.mp3"; sf=f"subs_{segment_id}.ass"; bf=f"bg_{segment_id}.png"; uf=f"ui_{segment_id}.png"; vf=f"segment_{segment_id}.mp4"
     words=generate_audio(text,role,af,judge_voice_index)
     generate_subtitles(words,sf)
@@ -528,24 +583,24 @@ def create_segment(text,role,speaker_name,topic,segment_id,model_for_visuals,pos
     render_video_segment(bf,uf,af,sf,vf,position,glow,cx,cy,vplan)
     return vf
 
-def generate_panel_commentary(model,side,topic,round_num,apologist,skeptic,previous_comments):
+def generate_panel_commentary(model,side,topic,rn,ap,sk,prev,roles):
     prov=get_judge_short_name(model)
-    pref="AI Christian Apologist" if side=="A" else "AI Skeptic"
-    recent="\n".join(previous_comments[-6:])
+    pref_label = roles['side_a_label'] if side=="A" else roles['side_b_label']
+    recent="\n".join(prev[-6:])
     def trim(t,mw=220):
         wl=t.split(); return t if len(wl)<=mw else " ".join(wl[-mw:])
-    prompt=f"You are {prov} judge. Topic:{topic} Round:{round_num} Apologist:{trim(apologist)} Skeptic:{trim(skeptic)} You preferred:{pref} Give short specific observation.\nPrevious:{recent}\n2-3 sentences."
+    prompt=f"You are {prov} judge. Topic:{topic} Round:{rn} {roles['side_a_label']}:{trim(ap)} {roles['side_b_label']}:{trim(sk)} You preferred:{pref_label} Give short specific observation.\nPrevious:{recent}\n2-3 sentences."
     resp=query_openrouter(prompt,model,timeout=40,max_tokens=220,temperature=0.85)
     return resp if resp else "The key is whether argument answered strongest objection."
 
-def build_intro(topic,jc):
-    return f"Welcome to the AI Debate Arena. Today, an AI Christian Apologist faces an AI Skeptic on {topic}. Three rounds, equal time. Panel of {jc} AIs will score argument, rebuttal, clarity. Let's begin."
+def build_intro(topic,jc,roles):
+    return f"Welcome to the AI Debate Arena. Today, {roles['side_a_label']} faces {roles['side_b_label']} on the question: {topic}. The debate will unfold over three rounds with equal speaking time for both sides. An independent panel of {jc} AI systems will score argument strength, rebuttal quality, and clarity of reasoning. Let's begin."
 
-def build_outro(jc,ca,cb):
+def build_outro(jc,ca,cb,roles):
     if math.isclose(ca,cb,abs_tol=0.01): res="a draw"
-    elif ca>cb: res="the AI Christian Apologist"
-    else: res="the AI Skeptic"
-    return f"After three rounds, panel of {jc} judges gave Apologist {ca:.1f}, Skeptic {cb:.1f}. Final result is {res}. But final verdict is yours."
+    elif ca>cb: res=roles['side_a_label']
+    else: res=roles['side_b_label']
+    return f"After three rounds, panel of {jc} judges gave {roles['side_a_label']} {ca:.1f}, {roles['side_b_label']} {cb:.1f}. Final result is {res}. But final verdict is still yours."
 
 def stitch_segments(segs,out):
     lf="concat_list.txt"
@@ -562,14 +617,18 @@ def run_debate_pipeline():
     cleanup_cache()
     if not OPENROUTER_API_KEY: raise RuntimeError("OPENROUTER_API_KEY missing")
     if not os.path.exists("topic.txt"):
-        with open("topic.txt","w",encoding="utf-8") as f: f.write("Does the universe require a creator?")
-    topic=open("topic.txt","r",encoding="utf-8").read().strip() or "Does the universe require a creator?"
+        with open("topic.txt","w",encoding="utf-8") as f: f.write("Did God or the serpent lie in Genesis 1?")
+    topic=open("topic.txt","r",encoding="utf-8").read().strip() or "Did God or the serpent lie in Genesis 1?"
     print(f"\nTOPIC: {topic}\n")
     avail=discover_models()
     if not avail:
         avail=FALLBACK_MODELS.copy()
     ap_model,sk_model=choose_primary_models(avail)
+
+    roles = get_debate_roles(topic, ap_model)
+    print(f"🏷️ Roles: {roles['side_a_label']} VS {roles['side_b_label']}")
     print(f"Apologist: {get_judge_short_name(ap_model)}  Skeptic: {get_judge_short_name(sk_model)}")
+
     judges=choose_judges(avail,(ap_model,sk_model))
     if not judges:
         used=set(); judges=[]
@@ -580,26 +639,29 @@ def run_debate_pipeline():
             if len(judges)>=MAX_JUDGES: break
     print(f"Judges: {len(judges)} — {', '.join(get_judge_short_name(j) for j in judges)}")
     segs=[]; sid=0
-    def add_seg(text,role,name,pos=None,glow=None,jvi=None):
+    def add_segment(text,role,name,position=None,glow=None,judge_voice_index=None):
         nonlocal sid
-        vm=sk_model if role=="AI Skeptic" else ap_model
-        v=create_segment(text,role,name,topic,sid,vm,pos,glow,jvi); segs.append(v); sid+=1
-    add_seg(build_intro(topic,len(judges)),"Moderator","MODERATOR")
+        vm=sk_model if "SERPENT" in role.upper() or role=="B" else ap_model
+        v=create_segment(text,role,name,topic,sid,vm,position,glow,judge_voice_index); segs.append(v); sid+=1
+    def add_seg(text,role,name,position=None,glow=None,judge_voice_index=None):
+        return add_segment(text,role,name,position,glow,judge_voice_index)
+
+    add_segment(build_intro(topic,len(judges),roles),"Moderator","MODERATOR")
     prev=""; cum_a=0.0; cum_b=0.0; pcom=[]
     for rn in range(1,ROUNDS+1):
         print(f"\nROUND {rn}")
-        a_turns,s_turns,prev=build_round_exchanges(topic,rn,ap_model,sk_model,prev)
+        a_turns,s_turns,prev=build_round_exchanges(topic,rn,ap_model,sk_model,prev,roles)
         for ti in range(TURNS_PER_SIDE_PER_ROUND):
-            print(f"  Exchange {ti+1}: A={count_words(a_turns[ti])} B={count_words(s_turns[ti])}")
-            add_seg(a_turns[ti],"AI Christian Apologist","AI CHRISTIAN APOLOGIST","left","#00FFCC")
-            add_seg(s_turns[ti],"AI Skeptic","AI SKEPTIC","right","#FF00FF")
+            print(f"  Exchange {ti+1}: {roles['side_a_label']}={count_words(a_turns[ti])} {roles['side_b_label']}={count_words(s_turns[ti])}")
+            add_segment(a_turns[ti],roles['side_a_label'],roles['side_a_label'],"left","#00FFCC")
+            add_segment(s_turns[ti],roles['side_b_label'],roles['side_b_label'],"right","#FF00FF")
         a_full="\n".join(a_turns); s_full="\n".join(s_turns)
-        res=evaluate_round(judges,topic,rn,a_full,s_full)
+        res=evaluate_round(judges,topic,rn,a_full,s_full,roles)
         ra,rb=calculate_round_average(res); cum_a+=ra; cum_b+=rb
-        print(f"Round {rn}: A {ra:.1f} vs B {rb:.1f} | Cum: {cum_a:.1f} vs {cum_b:.1f}")
+        print(f"Round {rn}: {roles['side_a_label']} {ra:.1f} vs {roles['side_b_label']} {rb:.1f} | Cum: {cum_a:.1f} vs {cum_b:.1f}")
         sb=f"scoreboard_r{rn}.png"
-        generate_scoreboard(rn,res,ra,rb,cum_a,cum_b,sb)
-        st=f"Round {rn} complete. Judges gave Apologist {ra:.1f} and Skeptic {rb:.1f}. Cumulative {cum_a:.1f} to {cum_b:.1f}."
+        generate_scoreboard(rn,res,ra,rb,cum_a,cum_b,sb,roles)
+        st=f"Round {rn} complete. Judges gave {roles['side_a_label']} {ra:.1f} and {roles['side_b_label']} {rb:.1f}. Cumulative {cum_a:.1f} to {cum_b:.1f}."
         sa=f"score_audio_r{rn}.mp3"; ss=f"score_subs_r{rn}.ass"; sv=f"score_video_r{rn}.mp4"
         sw=generate_audio(st,"Moderator",sa); generate_subtitles(sw,ss,scorecard=True)
         render_scorecard_video(sb,sa,ss,sv); segs.append(sv)
@@ -607,15 +669,16 @@ def run_debate_pipeline():
             a_res=[r for r in res if r["winner"]=="A"] or res
             b_res=[r for r in res if r["winner"]=="B"] or res
             ja=random.choice(a_res); jb=random.choice(b_res)
-            ca=generate_panel_commentary(ja["model"],"A",topic,rn,a_full,s_full,pcom); pcom.append(ca)
-            add_seg(ca,"AI Judge",f"AI JUDGE — {ja['display_name'].upper()}","center","#3399FF",judge_voice_index=0)
-            cb=generate_panel_commentary(jb["model"],"B",topic,rn,a_full,s_full,pcom); pcom.append(cb)
-            add_seg(cb,"AI Judge",f"AI JUDGE — {jb['display_name'].upper()}","center","#3399FF",judge_voice_index=1)
-    add_seg(build_outro(len(judges),cum_a,cum_b),"Moderator","MODERATOR")
+            ca=generate_panel_commentary(ja["model"],"A",topic,rn,a_full,s_full,pcom,roles); pcom.append(ca)
+            add_segment(ca,"AI Judge",f"AI JUDGE — {ja['display_name'].upper()}","center","#3399FF",judge_voice_index=0)
+            cb=generate_panel_commentary(jb["model"],"B",topic,rn,a_full,s_full,pcom,roles); pcom.append(cb)
+            add_segment(cb,"AI Judge",f"AI JUDGE — {jb['display_name'].upper()}","center","#3399FF",judge_voice_index=1)
+    add_segment(build_outro(len(judges),cum_a,cum_b,roles),"Moderator","MODERATOR")
     stitch_segments(segs,OUTPUT_FILE)
     print(f"\nCOMPLETE: {OUTPUT_FILE}")
+    print(f"Roles: {roles['side_a_label']} vs {roles['side_b_label']}")
     print(f"Judges: {', '.join(get_judge_short_name(j) for j in judges)}")
-    print(f"Final: Apologist {cum_a:.1f} vs Skeptic {cum_b:.1f}")
+    print(f"Final: {roles['side_a_label']} {cum_a:.1f} vs {roles['side_b_label']} {cum_b:.1f}")
     cleanup_cache()
 
 if __name__=="__main__":
