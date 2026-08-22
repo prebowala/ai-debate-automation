@@ -582,7 +582,7 @@ def render_video_segment(background,ui,audio,subtitles,output,position,glow_colo
     parts.append("[bg][ui]overlay=0:0[base];")
     parts.append(f"[base][wave]overlay={card_x+330}:{card_y+47}[withwave];")
     cur="[withwave]"; idx_in=3
-        for i,(asset,vis) in enumerate(vassets):
+    for i,(asset,vis) in enumerate(vassets):
         s=max(0.0,float(vis["start"])); e=max(s+3.5,float(vis["end"]))
         # YouTube style: slow fade 0.8s + very subtle Ken Burns zoom (1.0 -> 1.06)
         # For PNG: apply zoompan for slow zoom in
@@ -596,7 +596,7 @@ def render_video_segment(background,ui,audio,subtitles,output,position,glow_colo
     parts.append(f"{cur}ass='{ffmpeg_filter_path(subtitles)}'[outv]")
     fc="".join(parts)
     cmd=["ffmpeg","-y","-loop","1","-framerate",str(FPS),"-i",background,"-i",ui,"-i",audio]
-        for a,_ in vassets:
+    for a,_ in vassets:
         # PNG static images need loop, GIFs need ignore_loop
         if a.lower().endswith(".gif"):
             cmd+=["-ignore_loop","0","-i",a]
