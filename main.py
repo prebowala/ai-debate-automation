@@ -29,8 +29,8 @@ MIN_TURN_WORDS = 105
 MAX_TURN_WORDS = 145
 MAX_JUDGES = 7
 JUDGE_WORKERS = 7
-MAX_VISUALS_PER_SEGMENT = 3
-MIN_VISUAL_GAP = 1.2
+MAX_VISUALS_PER_SEGMENT = 4
+MIN_VISUAL_GAP = 0.8
 VISUAL_W = 480
 VISUAL_H = 480
 VISUAL_Y = 180
@@ -336,9 +336,9 @@ def ass_escape(t):
     return str(t).replace("\\",r"\\").replace("{",r"\{").replace("}",r"\}").replace("\n"," ")
 
 def generate_subtitles(words,filename,scorecard=False):
-    # 3-4 lines at a time to reduce sync lag visibility
-    margin_v=90 if scorecard else 180  # higher up for 4 lines
-    font_size=32 if not scorecard else 36
+    # Smooth rolling subtitles - 3 lines visible, updates every line for better sync
+    margin_v=90 if scorecard else 200
+    font_size=34 if not scorecard else 36
     header=f"""[Script Info]
 ScriptType: v4.00+
 PlayResX: 1920
@@ -356,53 +356,51 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     if not words:
         with open(filename,"w",encoding="utf-8") as f: f.write(header); return
     
-    # Group into larger chunks: 28-36 words = 3-4 lines
-    chunks=[]; cur=[]
-    WORDS_PER_CHUNK = 32
+    # Split into lines of 7-8 words
+    lines_data = []
+    cur_line = []
     for w in words:
-        cur.append(w)
+        cur_line.append(w)
         ends=str(w["text"]).strip().endswith(('.', '?', '!'))
-        # Break on sentence end if we have enough words, or hard break at max
-        if (ends and len(cur)>=22) or len(cur)>=WORDS_PER_CHUNK:
-            chunks.append(cur); cur=[]
-    if cur: chunks.append(cur)
+        if len(cur_line)>=8 or (ends and len(cur_line)>=5):
+            lines_data.append(cur_line)
+            cur_line=[]
+    if cur_line:
+        lines_data.append(cur_line)
     
+    # Create sliding window of 3 lines for smooth following
     events=[]
-    for chunk in chunks:
-        if not chunk: continue
-        s=float(chunk[0]["start"])
-        e=float(chunk[-1]["end"])+0.35  # extra hold time
-        txt_words=[ass_escape(w["text"]) for w in chunk]
+    for i in range(len(lines_data)):
+        # Show up to 3 lines at a time (current + next 2, or previous context)
+        window_start = max(0, i-1)  # include previous line for context
+        window_end = min(len(lines_data), i+2)  # current + next 1
+        window_lines = lines_data[window_start:window_end]
         
-        # Split into 3-4 lines of ~8 words each
-        lines=[]
-        for i in range(0, len(txt_words), 8):
-            lines.append(" ".join(txt_words[i:i+8]))
-        # Limit to 4 lines max per event, split further if needed
-        if len(lines)>4:
-            # Create two events if too many lines
-            mid = len(lines)//2
-            lines1 = lines[:mid]
-            lines2 = lines[mid:]
-            txt1 = r"\N".join(lines1)
-            txt2 = r"\N".join(lines2)
-            mid_time = s + (e-s)/2
-            ass_text1=f"{{\an2\pos(960,800)\q2\fad(100,150)}}{txt1}"
-            ass_text2=f"{{\an2\pos(960,800)\q2\fad(100,150)}}{txt2}"
-            events.append(f"Dialogue: 0,{format_ass_time(s)},{format_ass_time(mid_time)},DebateSub,,0,0,0,,{ass_text1}")
-            events.append(f"Dialogue: 0,{format_ass_time(mid_time)},{format_ass_time(e)},DebateSub,,0,0,0,,{ass_text2}")
+        if not window_lines:
             continue
-        else:
-            txt = r"\N".join(lines)
+            
+        # Timing: start at first word of current line -0.15s early, end at last word of window +0.2s
+        s = float(lines_data[i][0]["start"]) - 0.15
+        # End at end of window, but at least 1.2s for readability
+        e = float(window_lines[-1][-1]["end"]) + 0.2
+        if e - s < 1.2:
+            e = s + 1.2
         
-        ass_text=f"{{\an2\pos(960,800)\q2\fad(100,150)}}{txt}"
+        # Build text for window - highlight current line? No highlight per request, just plain
+        txt_lines = []
+        for line_words in window_lines:
+            txt_lines.append(" ".join([ass_escape(w["text"]) for w in line_words]))
+        
+        txt = r"\N".join(txt_lines)
+        # Quick fade for smooth transition
+        ass_text=f"{{\an2\pos(960,820)\q2\fad(80,80)}}{txt}"
         events.append(f"Dialogue: 0,{format_ass_time(s)},{format_ass_time(e)},DebateSub,,0,0,0,,{ass_text}")
     
     with open(filename,"w",encoding="utf-8") as f:
         f.write(header+"\n".join(events)+"\n")
 
 def plan_visuals(text,model):
-    prompt=f"""You are visual director. Read: {text}\nFind up to {MAX_VISUALS_PER_SEGMENT} concrete moments like serpent in garden, God speaking. CRITICAL: All people must be fully clothed, modest biblical robes, no nudity, no naked, family friendly, decent attire. Return ONLY JSON: [{{"phrase":"exact phrase","label":"2-4 words","description":"detailed prompt","kind":"person"}}]"""
+    prompt=f"""You are visual director. Read: {text}\nFind up to {MAX_VISUALS_PER_SEGMENT} simple visual moments like man eating fruit, apple on tree, tree in garden, serpent on branch, person thinking, hands holding apple. CRITICAL: Must be simple actions that can be animated in 2-3 sec minimalist style, fully clothed simple stick figures, no nudity, no photorealism. Return ONLY JSON: [{{"phrase":"exact phrase","label":"2-4 words","description":"detailed prompt","kind":"person"}}]"""
     resp=query_openrouter(prompt,model,timeout=35,max_tokens=500,temperature=0.2)
     if not resp: return []
     try:
@@ -460,15 +458,16 @@ def create_visual_plan(text,words,model):
         if len(out)>=MAX_VISUALS_PER_SEGMENT: break
     return out
 
-SAFE_CLOTHING_SUFFIX = "fully clothed, modest biblical robes, decent attire, family friendly, no nudity, no naked, no nude, covered, modest clothing, historical clothing"
+SAFE_CLOTHING_SUFFIX = "minimalist watercolor illustration, simple beige watercolor blobs, black scribble line art, childlike doodle, white background, fully clothed stick figure, no nudity, no naked, no photorealism, family friendly, simple shapes, no detailed anatomy"
 
 def build_visual_prompt(v):
     base_desc = v.get('description','')
-    # Force modest clothing for biblical / Adam Eve scenes
     low = base_desc.lower()
-    if any(k in low for k in ["adam", "eve", "eden", "noah", "abraham", "moses", "jesus", "mary", "bible", "genesis"]):
-        base_desc = base_desc + ", both wearing modest ancient Hebrew clothing, fully covered, no nudity"
-    return f"{base_desc}, {v.get('label','')}, {SAFE_CLOTHING_SUFFIX}, ultra detailed, cinematic, 8k, photorealistic, no text, no words, no watermark, no border, modest"
+    # Minimalist doodle style like reference - avoids nudity by being abstract
+    minimalist_prefix = "minimalist line drawing, simple watercolor wash in beige, black scribble hair, white background, childlike doodle art, simple shapes, "
+    if any(k in low for k in ["adam", "eve", "eden", "apple", "fruit", "eating", "tree", "garden", "serpent", "snake"]):
+        base_desc = f"simple stick figure person looking at red apple hanging from branch, {base_desc}, minimalist, no nudity, fully clothed in simple shapes"
+    return f"{minimalist_prefix}{base_desc}, {v.get('label','')}, {SAFE_CLOTHING_SUFFIX}, simple doodle, no text, no words, no watermark, flat illustration"
 
 
 def fetch_topic_image(v):
@@ -485,41 +484,82 @@ def fetch_topic_image(v):
     return None
 
 def create_visual_asset(visual,index):
-    # YouTube-style: slow Ken Burns, soft fade, no distracting pulsing
-    filename=f"visual_{index}.png"
+    # Simple minimalist animated GIF - 2-3 sec movement, not photorealistic
+    # Style: like reference image - beige blobs, black scribble, red apple
+    filename=f"visual_{index}.gif"
     real=fetch_topic_image(visual)
     if real is None:
         print(f"   No image for {visual.get('label')} - skipping visual")
         return None
-    # Create a slightly larger base for subtle zoom in post (ffmpeg will handle zoom)
-    # For now save as high-quality static PNG with rounded corners + soft shadow + border
-    base_size = int(max(VISUAL_W, VISUAL_H) * 1.15)
-    real_big = real.resize((base_size, base_size), Image.LANCZOS)
     
-    # Center crop to VISUAL size
-    left = (base_size - VISUAL_W)//2
-    top = (base_size - VISUAL_H)//2
-    crop = real_big.crop((left, top, left+VISUAL_W, top+VISUAL_H))
+    # Ensure base image is in minimalist style - resize
+    base_size = VISUAL_W
+    real = real.resize((base_size, base_size), Image.LANCZOS).convert("RGBA")
     
-    # Create rounded mask
-    final = Image.new("RGBA", (VISUAL_W, VISUAL_H), (0,0,0,0))
-    mask = Image.new("L", (VISUAL_W, VISUAL_H), 0)
-    ImageDraw.Draw(mask).rounded_rectangle((0,0,VISUAL_W,VISUAL_H), radius=32, fill=255)
-    final.paste(crop, (0,0), mask)
+    # Create animation frames - simple 2-3 sec loop
+    # Based on label, create appropriate simple movement
+    label_lower = visual.get('label','').lower() + " " + visual.get('description','').lower()
+    frames = []
+    num_frames = 18  # 3 seconds at 6 fps - simple, not overwhelming
     
-    # Subtle outer glow / border for YouTube pop
-    border = Image.new("RGBA", (VISUAL_W, VISUAL_H), (0,0,0,0))
-    draw = ImageDraw.Draw(border)
-    draw.rounded_rectangle((1,1,VISUAL_W-2,VISUAL_H-2), radius=32, outline=(255,255,255,70), width=2)
-    # Add very soft drop shadow by compositing a blurred version underneath
-    shadow = Image.new("RGBA", (VISUAL_W, VISUAL_H), (0,0,0,0))
-    shadow_draw = ImageDraw.Draw(shadow)
-    shadow_draw.rounded_rectangle((4,4,VISUAL_W-4,VISUAL_H-4), radius=32, fill=(0,0,0,110))
-    shadow = shadow.filter(ImageFilter.GaussianBlur(10))
+    # Create white background
+    bg = Image.new("RGBA", (VISUAL_W, VISUAL_H), (255,255,255,0))
     
-    composed = Image.alpha_composite(shadow, final)
-    composed = Image.alpha_composite(composed, border)
-    composed.save(filename, "PNG", optimize=True)
+    for f in range(num_frames):
+        # Gentle float / bob for YouTube style
+        progress = f / num_frames
+        # Simple sine wave for bobbing - very subtle
+        bob_y = int(3 * math.sin(2 * math.pi * progress))
+        # Slight scale pulse for eating effect
+        if "eat" in label_lower or "apple" in label_lower or "fruit" in label_lower:
+            # Apple moves slightly down as if being eaten
+            apple_offset = int(8 * progress) if progress < 0.5 else int(8 * (1-progress))
+        else:
+            apple_offset = 0
+        
+        # Create frame
+        frame = Image.new("RGBA", (VISUAL_W, VISUAL_H), (255,255,255,0))
+        
+        # Paste base image with bob
+        y_pos = bob_y
+        # For apple eating animation, shift apple part (simulate by cropping)
+        if "eat" in label_lower and f % 3 == 0:
+            # Slight squash/stretch to simulate bite
+            scale = 1.0 + 0.03 * math.sin(4 * math.pi * progress)
+            w = int(VISUAL_W * scale)
+            h = int(VISUAL_H * (2 - scale))
+            scaled = real.resize((w, h), Image.LANCZOS)
+            x = (VISUAL_W - w)//2
+            y = (VISUAL_H - h)//2 + y_pos + apple_offset
+            frame.paste(scaled, (x, y), scaled)
+        else:
+            frame.paste(real, (0, y_pos + apple_offset), real)
+        
+        # Add simple floating leaf for garden/tree scenes
+        if any(k in label_lower for k in ["tree", "garden", "leaf", "eden"]):
+            leaf_progress = (f + num_frames//3) / num_frames
+            leaf_x = int(VISUAL_W * 0.7 + 20 * math.sin(2*math.pi*leaf_progress))
+            leaf_y = int(VISUAL_H * 0.4 + 60 * leaf_progress) % VISUAL_H
+            # Draw simple green leaf dot
+            draw = ImageDraw.Draw(frame)
+            draw.ellipse([leaf_x, leaf_y, leaf_x+12, leaf_y+18], fill=(120, 180, 120, 180))
+        
+        # Rounded corners mask
+        mask = Image.new("L", (VISUAL_W, VISUAL_H), 0)
+        ImageDraw.Draw(mask).rounded_rectangle((0,0,VISUAL_W,VISUAL_H), radius=32, fill=255)
+        final = Image.new("RGBA", (VISUAL_W, VISUAL_H), (0,0,0,0))
+        final.paste(frame, (0,0), frame)
+        final.putalpha(mask)
+        
+        # Subtle border
+        border = Image.new("RGBA", (VISUAL_W, VISUAL_H), (0,0,0,0))
+        ImageDraw.Draw(border).rounded_rectangle((1,1,VISUAL_W-2,VISUAL_H-2), radius=32, outline=(200,200,200,50), width=1)
+        final = Image.alpha_composite(final, border)
+        
+        frames.append(final)
+    
+    # Save as GIF with longer duration for slower, less distracting playback
+    frames[0].save(filename, format='GIF', save_all=True, append_images=frames[1:], duration=160, loop=0, disposal=2, optimize=True)
     return filename
 
 def create_background(position,glow_color,filename):
