@@ -29,8 +29,8 @@ MIN_TURN_WORDS = 105
 MAX_TURN_WORDS = 145
 MAX_JUDGES = 7
 JUDGE_WORKERS = 7
-MAX_VISUALS_PER_SEGMENT = 2
-MIN_VISUAL_GAP = 2.0
+MAX_VISUALS_PER_SEGMENT = 3
+MIN_VISUAL_GAP = 1.2
 VISUAL_W = 480
 VISUAL_H = 480
 VISUAL_Y = 180
@@ -202,8 +202,28 @@ Rules: labels 2-4 words uppercase, opposites specific to topic.
         "side_b_desc": f"Argues against: {topic}",
     }
 
+def strip_filler_phrases(text):
+    # Remove common debate openers
+    patterns = [
+        r"^(ladies and gentlemen[,.]?\s*)",
+        r"^(my friends[,.]?\s*)",
+        r"^(friends[,.]?\s*)",
+        r"^(well[,.]?\s*)",
+        r"^(thank you[,.]?\s*)",
+        r"^(thank you so much[,.]?\s*)",
+        r"^(good evening[,.]?\s*)",
+        r"^(good morning[,.]?\s*)",
+        r"^(hello everyone[,.]?\s*)",
+        r"^(dear audience[,.]?\s*)",
+    ]
+    cleaned = text.strip()
+    for _ in range(3):  # loop in case multiple fillers
+        for pat in patterns:
+            cleaned = re.sub(pat, "", cleaned, flags=re.IGNORECASE).strip()
+    return cleaned
+
 def generate_turn(side, topic, round_num, turn_num, previous_exchange, model, role_label, role_desc, opponent_label, opponent_desc):
-    instruction = "Opening - establish foundation." if round_num==1 and turn_num==1 else f"Turn {turn_num} round {round_num} - respond directly."
+    instruction = "Opening - establish foundation. Start directly with argument." if round_num==1 and turn_num==1 else f"Turn {turn_num} round {round_num} - respond directly to opponent's last point. Start immediately with rebuttal."
     prompt = f"""
 You are {role_label} in a debate.
 Your position: {role_desc}
@@ -212,10 +232,18 @@ Topic: {topic}
 {instruction}
 Previous:
 {previous_exchange or 'None'}
-Write ONLY your spoken contribution, ~{WORDS_PER_TURN} words, {MIN_TURN_WORDS}-{MAX_TURN_WORDS}. Natural speech, YouTube audience.
+
+CRITICAL STYLE RULES:
+- Do NOT start with "Ladies and gentlemen", "My friends", "Well", "Thank you", "Good evening", or any greeting
+- Start directly with your argument, e.g. "The text says..." or "That interpretation fails because..."
+- No introductions, no thanking the audience, no "it's great to be here"
+- Write ONLY your spoken contribution, ~{WORDS_PER_TURN} words, {MIN_TURN_WORDS}-{MAX_TURN_WORDS}
+- Natural conversational speech, YouTube audience, specific examples
 """
     resp=query_openrouter(prompt,model,max_tokens=430,temperature=0.78)
-    return resp if resp else f"As {role_label}, {role_desc.lower()}."
+    if resp:
+        return strip_filler_phrases(resp)
+    return f"{role_desc}. The evidence shows this clearly when we examine the details."
 
 def build_round_exchanges(topic, round_num, ap_model, sk_model, prev_hist, roles):
     a=[]; s=[]; hist=prev_hist
@@ -308,7 +336,9 @@ def ass_escape(t):
     return str(t).replace("\\",r"\\").replace("{",r"\{").replace("}",r"\}").replace("\n"," ")
 
 def generate_subtitles(words,filename,scorecard=False):
-    margin_v=90 if scorecard else 210
+    # 3-4 lines at a time to reduce sync lag visibility
+    margin_v=90 if scorecard else 180  # higher up for 4 lines
+    font_size=32 if not scorecard else 36
     header=f"""[Script Info]
 ScriptType: v4.00+
 PlayResX: 1920
@@ -318,37 +348,61 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: DebateSub,DejaVu Sans,40,&H00FFFFFF,&H00FFFFFF,&H00000000,&HCC000000,1,0,0,0,100,100,0,0,1,3.5,1,2,320,320,{margin_v},1
+Style: DebateSub,DejaVu Sans,{font_size},&H00FFFFFF,&H00FFFFFF,&H00000000,&HCC000000,1,0,0,0,100,100,0,0,1,3.0,1,2,200,200,{margin_v},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
     if not words:
         with open(filename,"w",encoding="utf-8") as f: f.write(header); return
+    
+    # Group into larger chunks: 28-36 words = 3-4 lines
     chunks=[]; cur=[]
+    WORDS_PER_CHUNK = 32
     for w in words:
         cur.append(w)
         ends=str(w["text"]).strip().endswith(('.', '?', '!'))
-        if (ends and len(cur)>=8) or len(cur)>=14:
+        # Break on sentence end if we have enough words, or hard break at max
+        if (ends and len(cur)>=22) or len(cur)>=WORDS_PER_CHUNK:
             chunks.append(cur); cur=[]
     if cur: chunks.append(cur)
+    
     events=[]
     for chunk in chunks:
         if not chunk: continue
-        s=float(chunk[0]["start"]); e=float(chunk[-1]["end"])+0.15
+        s=float(chunk[0]["start"])
+        e=float(chunk[-1]["end"])+0.35  # extra hold time
         txt_words=[ass_escape(w["text"]) for w in chunk]
-        if len(txt_words)>9:
-            mid=len(txt_words)//2
-            txt=" ".join(txt_words[:mid])+r"\N"+" ".join(txt_words[mid:])
+        
+        # Split into 3-4 lines of ~8 words each
+        lines=[]
+        for i in range(0, len(txt_words), 8):
+            lines.append(" ".join(txt_words[i:i+8]))
+        # Limit to 4 lines max per event, split further if needed
+        if len(lines)>4:
+            # Create two events if too many lines
+            mid = len(lines)//2
+            lines1 = lines[:mid]
+            lines2 = lines[mid:]
+            txt1 = r"\N".join(lines1)
+            txt2 = r"\N".join(lines2)
+            mid_time = s + (e-s)/2
+            ass_text1=f"{{\an2\pos(960,800)\q2\fad(100,150)}}{txt1}"
+            ass_text2=f"{{\an2\pos(960,800)\q2\fad(100,150)}}{txt2}"
+            events.append(f"Dialogue: 0,{format_ass_time(s)},{format_ass_time(mid_time)},DebateSub,,0,0,0,,{ass_text1}")
+            events.append(f"Dialogue: 0,{format_ass_time(mid_time)},{format_ass_time(e)},DebateSub,,0,0,0,,{ass_text2}")
+            continue
         else:
-            txt=" ".join(txt_words)
-        ass_text=f"{{\\an2\\pos(960,820)\\q2\\fad(120,180)}}{txt}"
+            txt = r"\N".join(lines)
+        
+        ass_text=f"{{\an2\pos(960,800)\q2\fad(100,150)}}{txt}"
         events.append(f"Dialogue: 0,{format_ass_time(s)},{format_ass_time(e)},DebateSub,,0,0,0,,{ass_text}")
+    
     with open(filename,"w",encoding="utf-8") as f:
         f.write(header+"\n".join(events)+"\n")
 
 def plan_visuals(text,model):
-    prompt=f"""You are visual director. Read: {text}\nFind up to {MAX_VISUALS_PER_SEGMENT} concrete moments like serpent in garden, God speaking. Return ONLY JSON: [{{"phrase":"exact phrase","label":"2-4 words","description":"detailed prompt","kind":"person"}}]"""
+    prompt=f"""You are visual director. Read: {text}\nFind up to {MAX_VISUALS_PER_SEGMENT} concrete moments like serpent in garden, God speaking. CRITICAL: All people must be fully clothed, modest biblical robes, no nudity, no naked, family friendly, decent attire. Return ONLY JSON: [{{"phrase":"exact phrase","label":"2-4 words","description":"detailed prompt","kind":"person"}}]"""
     resp=query_openrouter(prompt,model,timeout=35,max_tokens=500,temperature=0.2)
     if not resp: return []
     try:
@@ -375,19 +429,19 @@ def find_phrase_timing(phrase,words):
     for i in range(len(sw)-len(pw)+1):
         if sw[i:i+len(pw)]==pw:
             s=float(words[i]["start"]); e=float(words[min(len(words)-1,i+len(pw)-1)]["end"])+2.5
-            return {"start":max(0.0,s-0.15),"end":max(s+2.5,e)}
+            return {"start":max(0.0,s-0.15),"end":max(s+4.5,e+1.5)}
     for p in pw:
         if len(p)<4: continue
         for idx,s in enumerate(sw):
             if p==s:
-                return {"start":float(words[idx]["start"]),"end":float(words[min(len(words)-1,idx+12)]["end"])+1.5}
+                return {"start":float(words[idx]["start"]),"end":float(words[min(len(words)-1,idx+16)]["end"])+3.0}
     return None
 
 def fallback_visual_timing(idx,total,words):
     if not words: return None
     last=float(words[-1]["end"]); us=0.15*last; ue=0.85*last
     s=us if total<=1 else us + (ue-us)*idx/max(1,total-1)
-    return {"start":max(0.0,s),"end":s+3.0}
+    return {"start":max(0.0,s),"end":s+5.0}
 
 def create_visual_plan(text,words,model):
     if not words: return []
@@ -406,8 +460,16 @@ def create_visual_plan(text,words,model):
         if len(out)>=MAX_VISUALS_PER_SEGMENT: break
     return out
 
+SAFE_CLOTHING_SUFFIX = "fully clothed, modest biblical robes, decent attire, family friendly, no nudity, no naked, no nude, covered, modest clothing, historical clothing"
+
 def build_visual_prompt(v):
-    return f"{v.get('description','')}, {v.get('label','')}, ultra detailed, cinematic, 8k, photorealistic, no text, no words, no watermark, no border"
+    base_desc = v.get('description','')
+    # Force modest clothing for biblical / Adam Eve scenes
+    low = base_desc.lower()
+    if any(k in low for k in ["adam", "eve", "eden", "noah", "abraham", "moses", "jesus", "mary", "bible", "genesis"]):
+        base_desc = base_desc + ", both wearing modest ancient Hebrew clothing, fully covered, no nudity"
+    return f"{base_desc}, {v.get('label','')}, {SAFE_CLOTHING_SUFFIX}, ultra detailed, cinematic, 8k, photorealistic, no text, no words, no watermark, no border, modest"
+
 
 def fetch_topic_image(v):
     try:
@@ -423,24 +485,41 @@ def fetch_topic_image(v):
     return None
 
 def create_visual_asset(visual,index):
-    filename=f"visual_{index}.gif"
+    # YouTube-style: slow Ken Burns, soft fade, no distracting pulsing
+    filename=f"visual_{index}.png"
     real=fetch_topic_image(visual)
     if real is None:
         print(f"   No image for {visual.get('label')} - skipping visual")
         return None
-    frames=[]
-    for f in range(30):
-        prog=math.sin(math.pi*f/30); bob=int(4*math.sin(2*math.pi*f/30))
-        scale=1.0+0.12*prog; target=int(VISUAL_W*scale)
-        sc=real.resize((target,target),Image.LANCZOS)
-        left=(target-VISUAL_W)//2; top=(target-VISUAL_H)//2 + bob
-        crop=sc.crop((left,max(0,top),left+VISUAL_W,max(0,top)+VISUAL_H))
-        final=Image.new("RGBA",(VISUAL_W,VISUAL_H),(0,0,0,0))
-        mask=Image.new("L",(VISUAL_W,VISUAL_H),0)
-        ImageDraw.Draw(mask).rounded_rectangle((0,0,VISUAL_W,VISUAL_H),radius=32,fill=255)
-        final.paste(crop,(0,0),mask)
-        frames.append(final)
-    frames[0].save(filename,format='GIF',save_all=True,append_images=frames[1:],duration=36,loop=0,disposal=2)
+    # Create a slightly larger base for subtle zoom in post (ffmpeg will handle zoom)
+    # For now save as high-quality static PNG with rounded corners + soft shadow + border
+    base_size = int(max(VISUAL_W, VISUAL_H) * 1.15)
+    real_big = real.resize((base_size, base_size), Image.LANCZOS)
+    
+    # Center crop to VISUAL size
+    left = (base_size - VISUAL_W)//2
+    top = (base_size - VISUAL_H)//2
+    crop = real_big.crop((left, top, left+VISUAL_W, top+VISUAL_H))
+    
+    # Create rounded mask
+    final = Image.new("RGBA", (VISUAL_W, VISUAL_H), (0,0,0,0))
+    mask = Image.new("L", (VISUAL_W, VISUAL_H), 0)
+    ImageDraw.Draw(mask).rounded_rectangle((0,0,VISUAL_W,VISUAL_H), radius=32, fill=255)
+    final.paste(crop, (0,0), mask)
+    
+    # Subtle outer glow / border for YouTube pop
+    border = Image.new("RGBA", (VISUAL_W, VISUAL_H), (0,0,0,0))
+    draw = ImageDraw.Draw(border)
+    draw.rounded_rectangle((1,1,VISUAL_W-2,VISUAL_H-2), radius=32, outline=(255,255,255,70), width=2)
+    # Add very soft drop shadow by compositing a blurred version underneath
+    shadow = Image.new("RGBA", (VISUAL_W, VISUAL_H), (0,0,0,0))
+    shadow_draw = ImageDraw.Draw(shadow)
+    shadow_draw.rounded_rectangle((4,4,VISUAL_W-4,VISUAL_H-4), radius=32, fill=(0,0,0,110))
+    shadow = shadow.filter(ImageFilter.GaussianBlur(10))
+    
+    composed = Image.alpha_composite(shadow, final)
+    composed = Image.alpha_composite(composed, border)
+    composed.save(filename, "PNG", optimize=True)
     return filename
 
 def create_background(position,glow_color,filename):
@@ -503,16 +582,26 @@ def render_video_segment(background,ui,audio,subtitles,output,position,glow_colo
     parts.append("[bg][ui]overlay=0:0[base];")
     parts.append(f"[base][wave]overlay={card_x+330}:{card_y+47}[withwave];")
     cur="[withwave]"; idx_in=3
-    for i,(asset,vis) in enumerate(vassets):
-        s=max(0.0,float(vis["start"])); e=max(s+2.0,float(vis["end"]))
-        parts.append(f"[{idx_in}:v]format=rgba,fade=t=in:st={s}:d=0.4:alpha=1,fade=t=out:st={e-0.4}:d=0.4:alpha=1[vf{i}];")
-        x=(VIDEO_W-VISUAL_W)//2; y_expr=f"{VISUAL_Y} - (t-{s})*12"; en=f"between(t,{s:.2f},{e:.2f})"
+        for i,(asset,vis) in enumerate(vassets):
+        s=max(0.0,float(vis["start"])); e=max(s+3.5,float(vis["end"]))
+        # YouTube style: slow fade 0.8s + very subtle Ken Burns zoom (1.0 -> 1.06)
+        # For PNG: apply zoompan for slow zoom in
+        if asset.lower().endswith(".png"):
+            parts.append(f"[{idx_in}:v]scale=iw*1.1:ih*1.1,zoompan=z='min(1+0.0006*on,1.08)':x='iw/2-(iw/zoom)/2':y='ih/2-(ih/zoom)/2':d=1:s={VISUAL_W}x{VISUAL_H}:fps={FPS},format=rgba,fade=t=in:st={s}:d=0.8:alpha=1,fade=t=out:st={e-0.8}:d=0.8:alpha=1[vf{i}];")
+        else:
+            parts.append(f"[{idx_in}:v]format=rgba,fade=t=in:st={s}:d=0.8:alpha=1,fade=t=out:st={e-0.8}:d=0.8:alpha=1[vf{i}];")
+        x=(VIDEO_W-VISUAL_W)//2; y_expr=f"{VISUAL_Y} - (t-{s})*2"; en=f"between(t,{s:.2f},{e:.2f})"
         parts.append(f"{cur}[vf{i}]overlay={x}:'{y_expr}':enable='{en}'[v{i}];")
         cur=f"[v{i}]"; idx_in+=1
     parts.append(f"{cur}ass='{ffmpeg_filter_path(subtitles)}'[outv]")
     fc="".join(parts)
     cmd=["ffmpeg","-y","-loop","1","-framerate",str(FPS),"-i",background,"-i",ui,"-i",audio]
-    for a,_ in vassets: cmd+=["-ignore_loop","0","-i",a]
+        for a,_ in vassets:
+        # PNG static images need loop, GIFs need ignore_loop
+        if a.lower().endswith(".gif"):
+            cmd+=["-ignore_loop","0","-i",a]
+        else:
+            cmd+=["-loop","1","-framerate",str(FPS),"-i",a]
     cmd+=["-filter_complex",fc,"-map","[outv]","-map","2:a","-c:v","libx264","-preset","veryfast","-crf","20","-pix_fmt","yuv420p","-c:a","aac","-b:a","192k","-shortest",output]
     res=subprocess.run(cmd,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
     if res.returncode!=0:
