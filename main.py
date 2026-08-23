@@ -1035,12 +1035,16 @@ def create_ui_overlay(speaker_name,topic,position,glow,filename):
     return x,y
 
 def render_video_segment(bg_path,ui_path,audio_path,subs_path,output_path,position,glow,cx,cy,visual_plan):
+    # FIXED: Correct input indexing - was using [1:v] for visuals but input 1 is audio, causing "Stream specifier ':v' invalid"
     duration=get_audio_duration(audio_path)
     if not duration: duration=10.0
-    cmd=["ffmpeg","-y","-loop","1","-i",bg_path,"-i",audio_path]
+    # Inputs: 0:bg, 1:ui, 2:audio, 3..: visuals
+    cmd=["ffmpeg","-y","-loop","1","-i",bg_path,"-loop","1","-i",ui_path,"-i",audio_path]
     filter_parts=[]
     filter_parts.append(f"[0:v]scale={VIDEO_W}:{VIDEO_H}:flags=lanczos[bg]")
-    last_label="[bg]"
+    filter_parts.append(f"[1:v]scale={VIDEO_W}:{VIDEO_H}:flags=lanczos[ui]")
+    filter_parts.append(f"[bg][ui]overlay=0:0[bg_ui]")
+    last_label="[bg_ui]"
     visual_inputs=[]
     for idx, vis in enumerate(visual_plan):
         gif_path=create_visual_asset(vis, idx+1000+random.randint(0,9999))
@@ -1051,25 +1055,22 @@ def render_video_segment(bg_path,ui_path,audio_path,subs_path,output_path,positi
         else:
             if idx%2==0: vx=80; vy=VISUAL_Y
             else: vx=VIDEO_W-VISUAL_W-80; vy=VISUAL_Y+40
-        filter_parts.append(f"[{len(visual_inputs)}:v]scale={VISUAL_W}:{VISUAL_H}[v{idx}]")
-        last_label=f"[tmp{idx}]"
-        if idx==0:
-            filter_parts.append(f"[bg][v{idx}]overlay={vx}:{vy}:enable='gte(t,{start_time})'[tmp{idx}]")
-        else:
-            filter_parts.append(f"[tmp{idx-1}][v{idx}]overlay={vx}:{vy}:enable='gte(t,{start_time})'[tmp{idx}]")
-    if visual_plan:
-        final_bg_label=f"[tmp{len(visual_plan)-1}]"
-    else:
-        final_bg_label="[bg]"
-    filter_parts.append(f"{final_bg_label}[1:v]overlay=(W-w)/2:(H-h)/2:shortest=1,format=yuv420p,subtitles={subs_path}:force_style='FontName=DejaVu Sans,FontSize=38,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BackColour=&HCC000000,Bold=1,BorderStyle=1,Outline=3.8,Shadow=1,Alignment=2,MarginV=185'[out]")
+        # FIX: Visuals start at input 3, not 1 - offset by 2 for bg+ui+audio
+        input_idx = 3 + idx
+        filter_parts.append(f"[{input_idx}:v]scale={VISUAL_W}:{VISUAL_H}[v{idx}]")
+        next_label=f"[tmp{idx}]"
+        filter_parts.append(f"{last_label}[v{idx}]overlay={vx}:{vy}:enable='gte(t,{start_time})'{next_label}")
+        last_label=next_label
+    filter_parts.append(f"{last_label},format=yuv420p,subtitles={subs_path}:force_style='FontName=DejaVu Sans,FontSize=38,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BackColour=&HCC000000,Bold=1,BorderStyle=1,Outline=3.8,Shadow=1,Alignment=2,MarginV=185'[out]")
     filter_complex=";".join(filter_parts)
     input_args=[]
     for vp in visual_inputs: input_args.extend(["-i", vp])
     cmd.extend(input_args)
-    cmd.extend(["-filter_complex", filter_complex, "-map", "[out]", "-map", "1:a", "-c:v", "libx264", "-c:a", "aac", "-shortest", "-t", str(duration+0.5), output_path])
+    cmd.extend(["-filter_complex", filter_complex, "-map", "[out]", "-map", "2:a", "-c:v", "libx264", "-c:a", "aac", "-shortest", "-t", str(duration+0.5), output_path])
     r=subprocess.run(cmd,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
     if r.returncode!=0:
-        print(r.stderr[-5000:])
+        print("FFmpeg filter:", filter_complex[:2000])
+        print(r.stderr[-8000:])
         raise RuntimeError("Render failed")
     for vp in visual_inputs:
         try: os.remove(vp)
