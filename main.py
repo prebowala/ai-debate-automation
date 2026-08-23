@@ -10,7 +10,6 @@ import requests
 import subprocess
 import concurrent.futures
 import time
-from urllib.parse import quote
 from io import BytesIO
 import edge_tts
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
@@ -38,8 +37,21 @@ VISUAL_W = 520
 VISUAL_H = 520
 VISUAL_Y = 160
 
-VOICES = {"A": "en-US-BrianMultilingualNeural","B": "en-US-AvaMultilingualNeural","Moderator": "en-US-AndrewMultilingualNeural"}
-JUDGE_VOICES = ["en-US-ChristopherNeural","en-US-EmmaMultilingualNeural","en-US-GuyNeural","en-US-JennyNeural"]
+# Most conversational natural TTS voices - updated
+VOICES = {
+    "A": "en-US-GuyNeural",  # warm, conversational male - more natural
+    "B": "en-US-AriaNeural",  # expressive, natural female
+    "Moderator": "en-US-JennyNeural",  # most natural, friendly
+}
+JUDGE_VOICES = [
+    "en-US-DavisNeural",  # natural male
+    "en-US-JaneNeural",  # natural female
+    "en-US-JasonNeural",  # conversational
+    "en-US-NancyNeural",  # warm
+    "en-US-ChristopherNeural",
+    "en-US-EmmaNeural",
+    "en-US-AndrewNeural",
+]
 
 FALLBACK_MODELS = [
     "openai/gpt-4o-mini:free",
@@ -74,22 +86,19 @@ def provider_from_model(model_id):
 
 def get_judge_short_name(model_id):
     low=(model_id or "").lower()
-    if "gpt-4o-mini" in low: return "ChatGPT"
     if "gpt" in low: return "ChatGPT"
     if "claude" in low: return "Claude"
-    if "gemini-flash" in low: return "Gemini Flash"
     if "gemini" in low: return "Gemini"
     if "gemma" in low: return "Gemma"
     if "grok" in low: return "Grok"
-    if "deepseek-r1" in low: return "DeepSeek R1"
     if "deepseek" in low: return "DeepSeek"
-    if "mistral-nemo" in low: return "Mistral Nemo"
     if "mistral" in low: return "Mistral"
-    if "llama-3.2-11b" in low: return "Llama 11B"
-    if "llama-3.2" in low: return "Llama 3.2"
-    if "llama-3.1" in low: return "Llama 3.1"
     if "llama" in low: return "Llama"
     if "qwen" in low: return "Qwen"
+    return provider_from_model(model_id)
+
+def get_company_name(model_id):
+    # Return just company for intro, not model number
     return provider_from_model(model_id)
 
 def cleanup_cache():
@@ -100,13 +109,17 @@ def cleanup_cache():
             except: pass
 
 def count_words(t): return len(re.findall(r"\b[\w'-]+\b", t or ""))
+
 def clean_for_speech(t):
+    # Make speech natural with proper pauses, no dash reading
     t=re.sub(r"\([^)]*\)","",t or "")
     t=t.replace("–",", ").replace("—",". ").replace(" - ",". ").replace(" -",". ").replace("- ",". ")
     for o,n in {"*":"", "#":"", "_":"", "`":"", "\"":"", ":":" . ", ";":" . ", "&":" and"}.items():
         t=t.replace(o,n)
     t=re.sub(r"\s-\s", ". ", t)
     t=re.sub(r"\s+"," ",t).strip()
+    # Fix common robotic artifacts
+    t=t.replace(" . . ", ". ").replace(" , , ", ", ")
     if t and not t[-1] in ".!?":
         t+="."
     return t
@@ -115,10 +128,12 @@ def clamp_score(v):
     try: v=float(v)
     except: v=50.0
     return max(0.0,min(100.0,v))
+
 def load_font(sz,bold=False):
     p="/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
     try: return ImageFont.truetype(p,sz)
     except: return ImageFont.load_default()
+
 def hex_to_rgba(h,a):
     h=h.lstrip("#")
     return (int(h[0:2],16),int(h[2:4],16),int(h[4:6],16),a)
@@ -135,7 +150,6 @@ def discover_models():
             mid=it.get("id","")
             if not mid or ":free" not in mid.lower(): continue
             if any(x in mid.lower() for x in ["embed","tts","whisper","audio"]): continue
-            # Only top companies to avoid obscure like nvidia
             top = ["openai","anthropic","google","meta-llama","mistralai","deepseek","qwen","x-ai"]
             if not any(p in mid.lower() for p in top): continue
             free.append(mid)
@@ -147,14 +161,14 @@ def discover_models():
         print(f"discover fail {e}, using fallback")
         return FALLBACK_MODELS.copy()
 
-def query_openrouter(prompt,model_id,timeout=50,max_tokens=700,temperature=0.78):
+def query_openrouter(prompt,model_id,timeout=50,max_tokens=750,temperature=0.85):
     if not OPENROUTER_API_KEY: return None
     payload={"model":model_id,"messages":[{"role":"user","content":prompt}],"temperature":temperature,"max_tokens":max_tokens}
     try:
         resp=requests.post(OPENROUTER_URL,headers=openrouter_headers(),json=payload,timeout=timeout)
         if resp.status_code==200:
             c=resp.json().get("choices",[])[0].get("message",{}).get("content","")
-            if c and len(c.strip())>40: return c.strip()
+            if c and len(c.strip())>50: return c.strip()
     except Exception as e:
         print(f"req fail {get_judge_short_name(model_id)} {e}")
     return None
@@ -185,7 +199,7 @@ def choose_judges(avail,primary):
         prov=provider_from_model(m)
         if prov not in groups:
             groups[prov]=m
-    order=["OpenAI","Anthropic","Google","Meta","Mistral","DeepSeek","Qwen","xAI"]
+    order=["OpenAI","Anthropic","Google","Meta","Mistral","DeepSeek","Qwen"]
     sel=[]
     for name in order:
         if name in groups:
@@ -233,56 +247,79 @@ def strip_filler(text):
     return text
 
 def generate_fallback_debate(side_label, topic, round_num, turn_num):
+    # Much more human, varied per round to avoid repetition
     topic_short = topic[:130] if len(topic)>130 else topic
     if "GOD TOLD TRUTH" in side_label.upper():
-        templates=[
-            "Genesis chapter 2 verse 17 is explicit. God says, in the day you eat of it you shall surely die. The Hebrew is emphatic, moth tamuth, dying you shall die. The serpent directly contradicts this in chapter 3 verse 4. He says, you shall not surely die. That is a direct negation. What happens that day? Genesis chapter 3 verse 7 says their eyes were opened and they knew they were naked. They felt shame. Verse 8 says they hid from God's presence. That hiding is separation. That is death as the Bible defines it. Physical death began, they were barred from the tree of life in verse 24.",
-            "Notice God's generosity in chapter 2 verse 16. You may freely eat of every tree. Only one restriction. The serpent twists this in chapter 3 verse 1. He asks, did God really say you shall not eat of every tree? He makes God sound stingy and restrictive. That is deception. Then he promises in verse 5, your eyes shall be opened and you shall be as gods knowing good and evil. Genesis 3 verse 22 confirms they did become like God knowing good and evil. So his second claim came true. But his first claim, you shall not die, was false. Death entered through sin. Romans chapter 5 verse 12 says sin entered and death through sin.",
-            "Look at the immediate outcome after eating. Genesis chapter 3 verse 7 says they sewed fig leaves. They experienced self consciousness and shame. Verse 10, Adam says I was afraid because I was naked and I hid. Fear and hiding are not fullness of life. Verse 19 says to dust you shall return. Mortality is introduced. Chapter 3 verses 23 and 24 say they were sent out of Eden and cherubim guarded the way to the tree of life. On the day they ate, they lost access to eternal life. That is the beginning of death.",
-            "The phrase in the day, beyom in Hebrew, can mean when, as in chapter 2 verse 4, in the day God made the earth. It emphasizes certainty, not a 24 hour timer. The point is, when you eat, death is certain. The serpent said you will not surely die, yet death became inevitable. Even if physical death took years, spiritual death, relational rupture, happened immediately. They were cut off. That is what God warned about, and it happened exactly as He said.",
-        ]
-    elif "SERPENT TOLD TRUTH" in side_label.upper():
-        templates=[
-            "Genesis chapter 2 verse 17 says, in the day you eat you shall surely die. In Hebrew, beyom, in the day. The plain reading suggests the same day. Yet Genesis chapter 5 verse 5 tells us Adam lived 930 years and then died. He did not die that day. The serpent says in chapter 3 verse 4, you shall not surely die. That matches what actually happened. They lived. The serpent also says in verse 5, your eyes shall be opened and you shall be as gods knowing good and evil. Genesis chapter 3 verse 7 says their eyes were opened. God Himself confirms in chapter 3 verse 22, behold the man is become as one of us to know good and evil. God confirms the serpent was right.",
-            "The Hebrew word yom in Genesis chapter 1 means a literal day, evening and morning were the first day. So beyom in chapter 2 verse 17 naturally means that same day. Adam did not die that day. The serpent's prediction was more accurate about the immediate outcome. He said you shall not die, and they did not die that day. He said you shall be as gods knowing good and evil. God says in chapter 3 verse 22, they have become as one of us. Two claims by the serpent, both validated by the narrator. God's threatened death did not happen as stated.",
-            "We must not import later theology about spiritual death. The text of Genesis chapters 2 and 3 never mentions spiritual death. It mentions nakedness, shame, cursing of the ground, pain in childbirth, toil, and finally dust to dust in chapter 3 verse 19. The testable claim was death that day versus eyes opened. Chapter 3 verse 7 says eyes were opened, exactly as serpent said. The text records no death that day. On a simple reading, the serpent described what would actually happen more accurately than God's threat.",
-            "If God meant spiritual death, why did He say to dust you shall return? That is physical. If He meant they would begin dying, why say in the day? The serpent's words in chapter 3 verse 4 and 5 are precise. You shall not die, your eyes shall be opened, you shall be as gods. Verse 7, eyes opened. Verse 22, God says they have become as one of us. No one dies that day. If the serpent lied, why does God confirm his second claim? The narrative presents tension. The serpent was more accurate about immediate events.",
-        ]
-    else:
-        tl = topic_short.lower()
-        if any(w in tl for w in ["ai","artificial","regulation"]):
+        if round_num==1:
             templates=[
-                f"On {topic_short}, the key is risk versus innovation. {side_label} argues that unchecked capability without oversight leads to harm. Examples of bias, misinformation, and concentration of power show need for guardrails. Regulation does not mean banning. It means testing and transparency that builds trust.",
-                f"Regarding {topic_short}, who bears cost matters. {side_label} says developers must be accountable for foreseeable misuse. We regulate cars and medicine for safety. The precautionary principle applies when systems affect millions. Letting market decide ignores external costs.",
-                f"The issue {topic_short} is about balance. {side_label} argues for standards, not a ban. Aviation has safety checks. Medicine has trials. Why should AI, which shapes what we see, be exempt from accountability we demand elsewhere?",
+                "Genesis chapter 2 verse 17 is really clear when you read it carefully. God says, in the day you eat of it, you shall surely die. The Hebrew is emphatic, it literally says dying you shall die. Now look what the serpent says in chapter 3 verse 4. He says, you shall not surely die. That is a direct contradiction. It is not a small difference. It is the opposite. What actually happens that day? Chapter 3 verse 7 says their eyes were opened and they knew they were naked. They felt shame for the first time. Verse 8 says they hid themselves from God's presence. That hiding, that separation, is what the Bible calls death.",
+                "I want you to notice God's generosity in chapter 2 verse 16. He says, you may freely eat of every tree in the garden. Every tree, only one limit. That is incredibly generous. Then the serpent twists it in chapter 3 verse 1. He says, did God really say you shall not eat of every tree? He makes God sound stingy, like God is holding out on them. That is classic deception, misrepresenting what someone said to make them look bad. Then he promises, your eyes shall be opened and you will be as gods knowing good and evil. And yes, chapter 3 verse 22 says they did become like God in that way. But his first promise, you will not die, was completely false.",
+            ]
+        elif round_num==2:
+            templates=[
+                "My opponent said the serpent told the truth because they did not drop dead that day. But that misses the whole point of what death means in this story. Genesis chapter 3 verse 10, Adam says, I was afraid because I was naked and I hid. Fear and hiding are not full life. Verse 19 says to dust you shall return. Mortality enters the story. And verses 23 and 24, they are driven out of Eden and cherubim block the way to the tree of life. So on the very day they ate, they lost access to eternal life. The process of death started that day, exactly as God warned.",
+                "The argument that they did not die that day ignores how the phrase in the day is used elsewhere. In chapter 2 verse 4, it says in the day that the Lord God made the earth. It means when, not a 24 hour countdown. It is about certainty. When you eat, death is certain. And look, the serpent told a half truth. He said your eyes would be opened, and they were. But he left out the consequence. A half truth that omits the crucial consequence is still a lie. That is what deception is.",
             ]
         else:
             templates=[
-                f"On {topic_short}, {side_label} has the stronger case. Look at evidence and real consequences. The facts and logic point one way. The opposing view relies on assumptions that fail when tested. We should prefer coherent explanation that fits facts.",
-                f"Regarding {topic_short}, {side_label} argues from specific examples and follows logic. The other side shifts definitions or ignores counterexamples. A clear explanation that matches what we observe should be preferred.",
-                f"The question {topic_short} needs clarity. {side_label} defines terms carefully and follows argument step by step. The alternative relies on vague claims. We should choose view that is clear, consistent, and supported.",
+                "Let me pull this together. God warned, in the day you eat you shall surely die. The serpent said, you shall not surely die, you shall be as gods. What happened? Their eyes were opened, yes, as the serpent said. But they also experienced shame, fear, hiding, toil, pain, and were cut off from the tree of life. That is death in the biblical sense, separation and mortality beginning. Romans chapter 5 verse 12 says sin entered and death through sin. The serpent promised no death, but death is now the human condition. God told the truth about the consequence. The serpent did not.",
+                "So who told the truth? God said death would come when they ate. The serpent said no death, just enlightenment. The story shows both enlightenment and death entering. Eyes opened, but also shame, blame, cursing, and exile. If the serpent told the whole truth, where is the warning about losing Eden? Where is the warning about returning to dust? He omitted it. God did not. God told them the full cost. That is truth telling, even if hard to hear.",
             ]
-    idx=(round_num*4+turn_num)%len(templates)
+    elif "SERPENT TOLD TRUTH" in side_label.upper():
+        if round_num==1:
+            templates=[
+                "Let us read what the text actually says, not what we think it should say. Genesis chapter 2 verse 17, God says, in the day you eat of it you shall surely die. In Hebrew, beyom, in the day. The plain sense is that same day. Now Genesis chapter 5 verse 5 says Adam lived 930 years and then died. He did not die that day. He lived for centuries. The serpent says in chapter 3 verse 4, you shall not surely die. That is exactly what happened. They did not die that day. He also says in verse 5, your eyes shall be opened and you shall be as gods knowing good and evil. Chapter 3 verse 7 says their eyes were opened. God Himself says in verse 22, man has become as one of us to know good and evil. God confirms the serpent was right.",
+                "Think about the Hebrew word yom. In Genesis chapter 1, evening and morning were the first day, a literal 24 hour period. So when God says in the day you eat you shall die, the natural reading is that same day. Adam did not die that day. The serpent's prediction was more accurate about the immediate outcome. He said you shall not die, and they did not. He said you shall be as gods knowing good and evil. God says in chapter 3 verse 22, they have become like one of us. Two claims by the serpent, both validated by the story itself. God's threat simply did not happen as stated.",
+            ]
+        elif round_num==2:
+            templates=[
+                "My opponent talks about spiritual death, but the text of Genesis chapters 2 and 3 never mentions spiritual death. That is an idea imported from later theology. The text mentions nakedness, shame, cursing of the ground, pain in childbirth, hard work, and eventually dust to dust. The test is simple. Did they die that day as God said? No. Did their eyes open as the serpent said? Yes, chapter 3 verse 7 says their eyes were opened. On a straightforward reading, the serpent described what would actually happen that day more accurately than God's warning did.",
+                "If God meant they would begin dying, why say in the day you shall surely die? Why not say you shall become mortal? And if the serpent lied, why does God confirm his second claim? Chapter 3 verse 22, behold the man is become as one of us to know good and evil. That is almost word for word what the serpent promised in verse 5. If the serpent is the liar, why is God echoing his promise? The story presents a tension that should make us ask who was more accurate about what would happen that day.",
+            ]
+        else:
+            templates=[
+                "So let us weigh it. God said, in the day you eat you die. Serpent said, you will not die, you will be enlightened, your eyes will be opened. What does the story report? Eyes opened, yes. Enlightenment, yes. Death that day, no. Adam lives 930 years. God even acknowledges the enlightenment part in chapter 3 verse 22. No acknowledgment that they died that day. If we let the text speak for itself, without adding later ideas, the serpent's description of the immediate outcome was more accurate. That is uncomfortable, but that is what the text says.",
+                "The question is not who we want to be truthful, but what the text reports. It reports God threatening death in the day, serpent promising no death but knowledge, and then reports knowledge coming and death not coming that day. It reports God Himself saying they have become like us knowing good and evil. The serpent promised that. So two promises from the serpent, both happen. One threat from God, does not happen that day. On the immediate facts, the serpent was right about what would happen when they ate.",
+            ]
+    else:
+        templates=[
+            f"On {topic_short}, {side_label} has the stronger case when you look at the evidence. The facts and the logic point one way. The opposing view relies on assumptions that do not hold up. We should prefer the explanation that fits what we actually see.",
+            f"Regarding {topic_short}, {side_label} argues from specific examples and follows them logically. The other side shifts definitions or ignores counterexamples. A clear and consistent explanation that matches observation should be preferred.",
+        ]
+    idx=(round_num*2+turn_num)%len(templates)
     return templates[idx]
 
 def generate_turn(side, topic, round_num, turn_num, previous_exchange, model, role_label, role_desc, opponent_label, opponent_desc):
-    prev_snip=(previous_exchange or "")[-600:]
-    prompt="You are "+role_label+" debating "+topic+". Your stance: "+role_desc+". Opponent "+opponent_label+": "+opponent_desc+". Previous: "+prev_snip+"\nWrite "+str(WORDS_PER_TURN)+" words as human speaking naturally, full sentences, no dashes, quote Genesis 2:17, 3:4, 3:5, 3:22, 3:7 or relevant facts, rebut opponent, start directly, "+str(MIN_TURN_WORDS)+"-"+str(MAX_TURN_WORDS)+" words."
+    prev_snip=(previous_exchange or "")[-700:]
+    # Different prompt per round to avoid repetition
+    if round_num==1:
+        round_focus="This is opening round. Establish your foundation. What does text or evidence clearly say? Do not repeat points, give fresh opening."
+    elif round_num==2:
+        round_focus="This is rebuttal round. Directly address opponent's last argument and show why it fails. Bring new evidence, not same as round 1."
+    else:
+        round_focus="This is closing round. Summarize strongest points and show why your view best explains all evidence. No new filler, bring it together."
+
+    prompt=f"You are {role_label} in live debate about {topic}. Your view: {role_desc}. Opponent {opponent_label}: {opponent_desc}. {round_focus} Previous opponent said: {prev_snip}. Write {WORDS_PER_TURN} words as human speaking naturally with contractions, varied sentences, full stops for pauses, no dashes, quote specific verses, rebut directly, start immediately, {MIN_TURN_WORDS}-{MAX_TURN_WORDS} words."
+
+    # Try models with higher temperature for more human variation
     for m in [model]+FALLBACK_MODELS[:3]:
-        resp=query_openrouter(prompt,m,max_tokens=650,temperature=0.82)
-        if resp and count_words(resp)>=80:
+        resp=query_openrouter(prompt,m,max_tokens=700,temperature=0.88)
+        if resp and count_words(resp)>=85:
             cleaned=strip_filler(resp)
             cleaned=re.sub(r'\s*-\s*',' . ',cleaned)
             cleaned=re.sub(r'\s+',' ',cleaned).strip()
             if not cleaned.endswith(('.', '!', '?')):
                 cleaned+="."
             cleaned=cleaned.replace(" - ", ". ").replace(" -",".")
+            # Remove robotic repetition
+            if "text, context, and outcome" in cleaned.lower() or "hebrew, logic, and narrative" in cleaned.lower():
+                cleaned=re.sub(r'The text, context.*?matter\.','',cleaned,flags=re.IGNORECASE).strip()
             if count_words(cleaned)>=MIN_TURN_WORDS-10:
-                return cleaned[:1400]
-            extra=query_openrouter("Continue 70 more words same natural style: "+cleaned[-250:],m,max_tokens=220,temperature=0.75)
+                return cleaned[:1500]
+            extra=query_openrouter("Continue 70 more words same natural human style, varied sentences: "+cleaned[-250:],m,max_tokens=230,temperature=0.8)
             if extra:
                 cleaned+=" "+extra
-            return cleaned[:1400]
+            return cleaned[:1500]
     return generate_fallback_debate(role_label, topic, round_num, turn_num)
 
 def build_round_exchanges(topic, rn, ap_model, sk_model, prev_hist, roles):
@@ -300,7 +337,7 @@ def neutral_judge(model):
 
 def judge_round(model,topic,rn,ap,sk,roles):
     prompt=f"Judge {topic} R{rn} {roles['side_a_label']}: {ap[:700]} vs {roles['side_b_label']}: {sk[:700]} JSON A_argument etc 0-100"
-    resp=query_openrouter(prompt,model,timeout=30,max_tokens=250,temperature=0.2)
+    resp=query_openrouter(prompt,model,timeout=30,max_tokens=250,temperature=0.25)
     if not resp: return neutral_judge(model)
     try:
         m=re.search(r"\{.*\}",resp,re.DOTALL)
@@ -329,24 +366,40 @@ def evaluate_round(judges,topic,rn,ap,sk,roles):
 def calculate_round_average(results):
     return round(sum(r["A_total"] for r in results)/len(results),2), round(sum(r["B_total"] for r in results)/len(results),2)
 
-async def generate_audio_async(text,voice,filename):
-    com=edge_tts.Communicate(text,voice,rate="+0%",volume="+0%")
-    audio=b""; words=[]
-    async for chunk in com.stream():
-        if chunk["type"]=="audio": audio+=chunk["data"]
-        elif chunk["type"]=="WordBoundary":
-            s=chunk["offset"]/10_000_000; d=chunk["duration"]/10_000_000
-            words.append({"text":chunk["text"],"start":s,"duration":d,"end":s+d})
-    open(filename,"wb").write(audio)
-    if not words:
-        clean=clean_for_speech(text); t=0.0
-        for tok in clean.split():
-            if not tok: continue
-            words.append({"text":tok,"start":t,"duration":0.38,"end":t+0.38}); t+=0.43
-    return words
+async def generate_audio_async(text,voice,filename,style="chat"):
+    # More conversational with chat style and slightly faster, more natural
+    # Use SSML for more expressive speech
+    ssml_text = f"<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='en-US'><voice name='{voice}'><prosody rate='+8%' pitch='+0%'>{text}</prosody></voice></speak>"
+    try:
+        com=edge_tts.Communicate(ssml_text,voice)
+        audio=b""; words=[]
+        async for chunk in com.stream():
+            if chunk["type"]=="audio": audio+=chunk["data"]
+            elif chunk["type"]=="WordBoundary":
+                s=chunk["offset"]/10_000_000; d=chunk["duration"]/10_000_000
+                words.append({"text":chunk["text"],"start":s,"duration":d,"end":s+d})
+        open(filename,"wb").write(audio)
+        if not words:
+            clean=clean_for_speech(text); t=0.0
+            for tok in clean.split():
+                if not tok: continue
+                words.append({"text":tok,"start":t,"duration":0.35,"end":t+0.35}); t+=0.4
+        return words
+    except:
+        # Fallback to simple
+        com=edge_tts.Communicate(text,voice,rate="+8%")
+        audio=b""; words=[]
+        async for chunk in com.stream():
+            if chunk["type"]=="audio": audio+=chunk["data"]
+            elif chunk["type"]=="WordBoundary":
+                s=chunk["offset"]/10_000_000; d=chunk["duration"]/10_000_000
+                words.append({"text":chunk["text"],"start":s,"duration":d,"end":s+d})
+        open(filename,"wb").write(audio)
+        return words if words else [{"text":w,"start":i*0.4,"end":i*0.4+0.35} for i,w in enumerate(text.split())]
 
 def generate_audio(text,role,filename,judge_voice_index=None):
-    if "JUDGE" in role.upper(): voice=JUDGE_VOICES[(judge_voice_index or 0)%len(JUDGE_VOICES)]
+    if "JUDGE" in role.upper():
+        voice=JUDGE_VOICES[(judge_voice_index or 0)%len(JUDGE_VOICES)]
     elif "GOD TOLD TRUTH" in role.upper(): voice=VOICES["A"]
     elif "SERPENT TOLD TRUTH" in role.upper(): voice=VOICES["B"]
     else: voice=VOICES["A"] if "GOD" in role.upper() else VOICES["B"] if "SERPENT" in role.upper() else VOICES["Moderator"]
@@ -398,27 +451,24 @@ def fallback_visual_plan(text):
     visuals=[]
     kws=[
         ("apple","Apple on branch","red apple hanging, swinging"),
-        ("fruit","Eating fruit","stick figure eating fruit"),
-        ("tree","Tree in garden","tree with rustling leaves"),
-        ("garden","Garden of Eden","garden scene"),
-        ("serpent","Serpent","snake coiled on branch moving"),
-        ("snake","Snake","snake slithering"),
-        ("god","God light","light rays from above"),
-        ("creator","Creator","sun and rays"),
-        ("universe","Universe","stars and galaxy"),
-        ("eyes opened","Eyes opened","eyes wide open"),
-        ("death","Death","skull"),
-        ("know","Knowing","person thinking"),
+        ("fruit","Eating fruit","person eating apple, clear action"),
+        ("tree","Tree in garden","large tree with green leaves and trunk"),
+        ("garden","Garden of Eden","garden with trees and sun"),
+        ("serpent","Serpent on branch","green snake coiled around branch, head visible"),
+        ("snake","Snake","green snake slithering on branch"),
+        ("god","God light","bright sun with rays shining down"),
+        ("eyes opened","Eyes opened","close up eyes opening wide"),
+        ("die","Death warning","tombstone or calendar with X"),
     ]
     for kw,label,desc in kws:
         if kw in tl and len(visuals)<MAX_VISUALS_PER_SEGMENT:
             idx=tl.find(kw)
             phrase=text[max(0,idx-10):idx+len(kw)+20].strip() or kw
             visuals.append({"phrase":phrase,"label":label,"description":desc,"kind":"concept"})
-    if not visuals:
+    if len(visuals)<2:
         visuals=[
-            {"phrase":text[:30],"label":"Tree in garden","description":"tree with leaves","kind":"concept"},
-            {"phrase":text[:30],"label":"Apple on branch","description":"apple hanging","kind":"concept"},
+            {"phrase":text[:30],"label":"Garden with tree","description":"garden with large tree and apples","kind":"concept"},
+            {"phrase":text[:30],"label":"Serpent on branch","description":"snake coiled on branch","kind":"concept"},
         ]
     return visuals[:MAX_VISUALS_PER_SEGMENT]
 
@@ -480,21 +530,30 @@ def create_visual_plan(text,words,model):
     return out
 
 def draw_stick_figure(draw,x,y,size=80,eating=False,clothed=True):
-    # Less abstract - recognizable human with face and tunic
-    draw.ellipse([x+size*0.3,y,x+size*0.7,y+size*0.4],fill=(255,228,196,255),outline=(0,0,0,255),width=2)
-    draw.ellipse([x+size*0.38,y+size*0.15,x+size*0.45,y+size*0.22],fill=(0,0,0,255))
-    draw.ellipse([x+size*0.55,y+size*0.15,x+size*0.62,y+size*0.22],fill=(0,0,0,255))
-    draw.arc([x+size*0.25,y-2,x+size*0.75,y+size*0.25],0,180,fill=(101,67,33,255),width=4)
+    # Much less abstract - clear human with clothes, face, arms
+    # Head with skin tone
+    draw.ellipse([x+size*0.3,y,x+size*0.7,y+size*0.42],fill=(255,228,196,255),outline=(0,0,0,255),width=2)
+    # Eyes - clear
+    draw.ellipse([x+size*0.38,y+size*0.15,x+size*0.46,y+size*0.24],fill=(0,0,0,255))
+    draw.ellipse([x+size*0.54,y+size*0.15,x+size*0.62,y+size*0.24],fill=(0,0,0,255))
+    # Smile
+    draw.arc([x+size*0.38,y+size*0.22,x+size*0.62,y+size*0.32],20,160,fill=(0,0,0,255),width=1)
+    # Hair
+    draw.ellipse([x+size*0.25,y-3,x+size*0.75,y+size*0.18],fill=(101,67,33,200),outline=(0,0,0,255),width=1)
+    # Tunic - blue, clear clothing
     if clothed:
-        draw.rectangle([x+size*0.25,y+size*0.45,x+size*0.75,y+size*0.95],fill=(100,149,237,255),outline=(0,0,0,255),width=2)
+        draw.rectangle([x+size*0.2,y+size*0.45,x+size*0.8,y+size*0.95],fill=(100,149,237,255),outline=(0,0,0,255),width=2)
+        # Belt
+        draw.rectangle([x+size*0.22,y+size*0.7,x+size*0.78,y+size*0.75],fill=(139,69,19,255),outline=(0,0,0,255),width=1)
     else:
         draw.ellipse([x+size*0.2,y+size*0.45,x+size*0.8,y+size*0.95],fill=(255,228,196,255),outline=(0,0,0,255),width=2)
+    # Arms - clear
     if eating:
         draw.line([x+size*0.7,y+size*0.55,x+size*0.95,y+size*0.4],fill=(0,0,0,255),width=3)
-        draw.ellipse([x+size*0.9,y+size*0.35,x+size*1.0,y+size*0.48],fill=(220,20,60,255),outline=(0,0,0,255),width=1)
+        draw.ellipse([x+size*0.88,y+size*0.32,x+size*1.02,y+size*0.48],fill=(220,20,60,255),outline=(0,0,0,255),width=2)
     else:
-        draw.line([x+size*0.1,y+size*0.55,x+size*0.25,y+size*0.7],fill=(0,0,0,255),width=3)
-        draw.line([x+size*0.75,y+size*0.55,x+size*0.95,y+size*0.45],fill=(0,0,0,255),width=3)
+        draw.line([x+size*0.05,y+size*0.55,x+size*0.22,y+size*0.72],fill=(0,0,0,255),width=3)
+        draw.line([x+size*0.78,y+size*0.55,x+size*0.98,y+size*0.48],fill=(0,0,0,255),width=3)
 
 def create_visual_asset(visual,index):
     filename=f"visual_{index}.gif"
@@ -505,63 +564,108 @@ def create_visual_asset(visual,index):
         frame=Image.new("RGBA",(VISUAL_W,VISUAL_H),(0,0,0,0))
         draw=ImageDraw.Draw(frame)
         if "apple" in label or "fruit" in label:
-            draw.line([30,90,VISUAL_W-30,100],fill=(101,67,33,255),width=4)
+            # Concrete: tree branch with leaves, red apple with highlight, person below reaching
+            draw.line([20,90,VISUAL_W-20,100],fill=(101,67,33,255),width=5)
+            draw.ellipse([30,70,90,110],fill=(34,139,34,255),outline=(0,0,0,255),width=1) # leaf cluster left
+            draw.ellipse([VISUAL_W-90,75,VISUAL_W-30,115],fill=(34,139,34,255),outline=(0,0,0,255),width=1) # right
             swing=12*math.sin(2*math.pi*progress*0.8)
-            ax=VISUAL_W//2+10+swing; ay=125+6*math.sin(4*math.pi*progress)
-            draw.ellipse([ax-28,ay,ax+28,ay+42],fill=(220,20,60,255),outline=(0,0,0,255),width=2)
-            draw.ellipse([ax-15,ay+5,ax-5,ay+15],fill=(255,100,100,200))
-            draw.line([ax,ay-10,ax,ay],fill=(101,67,33,255),width=2)
-            draw.ellipse([ax+5,ay-8,ax+18,ay+2],fill=(34,139,34,255))
+            ax=VISUAL_W//2+10+swing; ay=120+6*math.sin(4*math.pi*progress)
+            # Realistic apple
+            draw.ellipse([ax-30,ay,ax+30,ay+45],fill=(220,20,60,255),outline=(0,0,0,255),width=2)
+            draw.ellipse([ax-18,ay+8,ax-6,ay+20],fill=(255,150,150,220)) # highlight for realism
+            draw.line([ax,ay-12,ax,ay],fill=(101,67,33,255),width=2)
+            draw.ellipse([ax+6,ay-10,ax+20,ay+0],fill=(34,139,34,255),outline=(0,0,0,200),width=1)
+            # Person reaching
             draw_stick_figure(draw,VISUAL_W//2-60,VISUAL_H-160,size=100,eating=("eat" in label))
             if "eat" in label:
                 eat_prog=(math.sin(progress*2*math.pi)+1)/2
                 if eat_prog>0.5:
-                    by=VISUAL_H-110-30*eat_prog
-                    draw.ellipse([VISUAL_W//2+15,by,VISUAL_W//2+35,by+20],fill=(220,20,60,255),outline=(0,0,0,255),width=2)
+                    by=VISUAL_H-115-35*eat_prog
+                    draw.ellipse([VISUAL_W//2+18,by,VISUAL_W//2+38,by+22],fill=(220,20,60,255),outline=(0,0,0,255),width=2)
         elif "tree" in label or "garden" in label:
-            draw.rectangle([VISUAL_W//2-15,VISUAL_H-100,VISUAL_W//2+15,VISUAL_H-20],fill=(101,67,33,255),outline=(0,0,0,255),width=2)
+            # Concrete tree: thick trunk, large green canopy with apples
+            draw.rectangle([VISUAL_W//2-18,VISUAL_H-110,VISUAL_W//2+18,VISUAL_H-20],fill=(101,67,33,255),outline=(0,0,0,255),width=2)
             rustle=10*math.sin(2*math.pi*progress)
-            for lx,ly,sz in [(VISUAL_W//2-70+rustle,VISUAL_H-190,85),(VISUAL_W//2+15-rustle,VISUAL_H-210,90)]:
-                draw.ellipse([lx,ly,lx+sz,ly+sz*0.7],fill=(34,139,34,220),outline=(0,0,0,180),width=2)
+            # Canopy - 3 overlapping circles for realistic tree
+            draw.ellipse([VISUAL_W//2-85+rustle,VISUAL_H-200,VISUAL_W//2+15+rustle,VISUAL_H-110],fill=(34,139,34,255),outline=(0,0,0,255),width=2)
+            draw.ellipse([VISUAL_W//2-20-rustle,VISUAL_H-220,VISUAL_W//2+80-rustle,VISUAL_H-130],fill=(34,139,34,255),outline=(0,0,0,255),width=2)
+            draw.ellipse([VISUAL_W//2-50,VISUAL_H-240+rustle//2,VISUAL_W//2+50,VISUAL_H-160],fill=(34,139,34,255),outline=(0,0,0,255),width=2)
+            # Apples on tree - concrete
+            draw.ellipse([VISUAL_W//2-45,VISUAL_H-165,VISUAL_W//2-20,VISUAL_H-140],fill=(220,20,60,255),outline=(0,0,0,255),width=2)
+            draw.ellipse([VISUAL_W//2+20,VISUAL_H-175,VISUAL_W//2+45,VISUAL_H-150],fill=(220,20,60,255),outline=(0,0,0,255),width=2)
+            # Falling leaf - concrete movement
             fall_y=(progress*VISUAL_H*1.2)%(VISUAL_H+20)-10
             fall_x=VISUAL_W//2+50*math.sin(progress*5)
-            draw.ellipse([fall_x,fall_y,fall_x+14,fall_y+20],fill=(60,180,60,200),outline=(0,0,0,100),width=1)
-            draw.ellipse([VISUAL_W//2-35,VISUAL_H-165,VISUAL_W//2-15,VISUAL_H-145],fill=(220,20,60,255),outline=(0,0,0,255),width=2)
+            draw.ellipse([fall_x,fall_y,fall_x+16,fall_y+22],fill=(60,180,60,230),outline=(0,0,0,150),width=1)
+            # Ground
+            draw.rectangle([0,VISUAL_H-20,VISUAL_W,VISUAL_H],fill=(34,139,34,150),outline=(0,0,0,100),width=1)
         elif "serpent" in label or "snake" in label:
-            draw.line([30,110,VISUAL_W-30,120],fill=(101,67,33,255),width=5)
+            # Concrete snake: green body coiled around brown branch, clear head with eyes
+            draw.line([20,110,VISUAL_W-20,120],fill=(101,67,33,255),width=6)
+            draw.ellipse([25,95,55,125],fill=(101,67,33,255)) # branch knot
             pts=[]
-            for i in range(0,VISUAL_W-50,12):
+            for i in range(0,VISUAL_W-50,10):
                 pts.append((i+25,110+18*math.sin((i/25)+progress*4*math.pi)))
             if len(pts)>1:
-                draw.line(pts,fill=(34,139,34,255),width=10,joint="curve")
+                draw.line(pts,fill=(34,139,34,255),width=12,joint="curve")
                 draw.line(pts,fill=(0,0,0,255),width=2,joint="curve")
+                # Snake pattern
+                for j in range(0,len(pts),3):
+                    x,y=pts[j]
+                    draw.ellipse([x-2,y-2,x+2,y+2],fill=(50,180,50,200))
             hx,hy=pts[-1] if pts else (VISUAL_W-40,110)
-            draw.ellipse([hx,hy-7,hx+20,hy+7],fill=(34,139,34,255),outline=(0,0,0,255),width=2)
-            draw.ellipse([hx+12,hy-2,hx+16,hy+2],fill=(0,0,0,255))
-            if f%6<3: draw.line([hx+20,hy,hx+32,hy-4],fill=(220,20,60,255),width=2)
-        elif "god" in label or "creator" in label or "universe" in label or "light" in label:
+            # Head with eyes
+            draw.ellipse([hx,hy-9,hx+24,hy+9],fill=(34,139,34,255),outline=(0,0,0,255),width=2)
+            draw.ellipse([hx+14,hy-3,hx+18,hy+1],fill=(0,0,0,255))
+            draw.ellipse([hx+16,hy-5,hx+20,hy-1],fill=(255,255,255,150)) # eye highlight
+            if f%6<3:
+                draw.line([hx+24,hy,hx+36,hy-4],fill=(220,20,60,255),width=2)
+                draw.line([hx+24,hy+1,hx+36,hy+4],fill=(220,20,60,255),width=2)
+        elif "god" in label or "creator" in label or "universe" in label or "light" in label or "sun" in label:
+            # Concrete sun with rays and clouds
             cx=VISUAL_W//2
-            pulse=5*math.sin(progress*2*math.pi)
-            draw.ellipse([cx-32-pulse//2,12-pulse//2,cx+32+pulse//2,76+pulse//2],fill=(255,215,0,230),outline=(0,0,0,255),width=2)
-            for ang in range(-50,51,12):
+            pulse=6*math.sin(progress*2*math.pi)
+            # Sun
+            draw.ellipse([cx-38-pulse//2,10-pulse//2,cx+38+pulse//2,86+pulse//2],fill=(255,215,0,255),outline=(0,0,0,255),width=2)
+            draw.ellipse([cx-20,25,cx-5,40],fill=(255,255,150,200)) # highlight
+            # Rays - concrete lines
+            for ang in range(-60,61,15):
                 rad=math.radians(ang)
-                x2=cx+220*math.sin(rad); y2=40+220*math.cos(rad)
-                alpha=110+int(60*math.sin(progress*4+ang/20))
-                draw.line([cx,40,x2,y2],fill=(255,215,0,alpha),width=3)
-            draw.line([(20,VISUAL_H//2+20+10*math.sin(progress*2*math.pi)),(VISUAL_W//2,VISUAL_H//2+10),(VISUAL_W-20,VISUAL_H//2+20+10*math.sin(progress*2*math.pi+1))],fill=(34,139,34,200),width=4)
+                x2=cx+240*math.sin(rad); y2=50+240*math.cos(rad)
+                alpha=120+int(70*math.sin(progress*4+ang/20))
+                draw.line([cx,50,x2,y2],fill=(255,215,0,alpha),width=3)
+            # Clouds
+            draw.ellipse([30,30,110,60],fill=(255,255,255,220),outline=(0,0,0,150),width=1)
+            draw.ellipse([VISUAL_W-110,40,VISUAL_W-30,70],fill=(255,255,255,220),outline=(0,0,0,150),width=1)
+            # Ground with grass
+            draw.rectangle([0,VISUAL_H-30,VISUAL_W,VISUAL_H],fill=(34,139,34,200),outline=(0,0,0,100),width=1)
+        elif "eyes" in label:
+            # Concrete eyes opening
+            eye_open = 10+15*math.sin(progress*math.pi)
+            # Left eye
+            draw.ellipse([VISUAL_W//2-80, VISUAL_H//2-30, VISUAL_W//2-20, VISUAL_H//2+10],fill=(255,255,255,255),outline=(0,0,0,255),width=2)
+            draw.ellipse([VISUAL_W//2-65, VISUAL_H//2-10-eye_open//3, VISUAL_W//2-35, VISUAL_H//2+5-eye_open//3],fill=(101,67,33,255),outline=(0,0,0,255),width=1)
+            draw.ellipse([VISUAL_W//2-55, VISUAL_H//2-5, VISUAL_W//2-45, VISUAL_H//2+2],fill=(0,0,0,255))
+            # Right eye
+            draw.ellipse([VISUAL_W//2+20, VISUAL_H//2-30, VISUAL_W//2+80, VISUAL_H//2+10],fill=(255,255,255,255),outline=(0,0,0,255),width=2)
+            draw.ellipse([VISUAL_W//2+35, VISUAL_H//2-10-eye_open//3, VISUAL_W//2+65, VISUAL_H//2+5-eye_open//3],fill=(101,67,33,255),outline=(0,0,0,255),width=1)
+            draw.ellipse([VISUAL_W//2+45, VISUAL_H//2-5, VISUAL_W//2+55, VISUAL_H//2+2],fill=(0,0,0,255))
         else:
-            # Less abstract: two concrete figures with podium, not just blobs
-            draw.rectangle([60,VISUAL_H//2+20,140,VISUAL_H//2+60],fill=(101,67,33,255),outline=(0,0,0,255),width=2)
-            draw.rectangle([VISUAL_W-140,VISUAL_H//2+20,VISUAL_W-60,VISUAL_H//2+60],fill=(101,67,33,255),outline=(0,0,0,255),width=2)
-            draw_stick_figure(draw,70,VISUAL_H//2-40,size=80)
-            draw_stick_figure(draw,VISUAL_W-130,VISUAL_H//2-40,size=80)
-            if f%9<6:
-                bx=VISUAL_W//2-40+5*math.sin(progress*6)
-                by=VISUAL_H//2-80+3*math.cos(progress*4)
-                draw.ellipse([bx,by,bx+80,by+35],fill=(255,255,255,220),outline=(0,0,0,255),width=2)
+            # Concrete debate scene: two podiums with people
+            draw.rectangle([0,VISUAL_H-40,VISUAL_W,VISUAL_H],fill=(139,69,19,150),outline=(0,0,0,100),width=1) # stage
+            draw.rectangle([50,VISUAL_H//2+10,150,VISUAL_H//2+70],fill=(101,67,33,255),outline=(0,0,0,255),width=2) # podium left
+            draw.rectangle([VISUAL_W-150,VISUAL_H//2+10,VISUAL_W-50,VISUAL_H//2+70],fill=(101,67,33,255),outline=(0,0,0,255),width=2) # podium right
+            draw_stick_figure(draw,60,VISUAL_H//2-50,size=85)
+            draw_stick_figure(draw,VISUAL_W-140,VISUAL_H//2-50,size=85)
+            # Speech bubble with movement
+            if f%10<7:
+                bx=VISUAL_W//2-50+8*math.sin(progress*5)
+                by=VISUAL_H//2-90+4*math.cos(progress*3)
+                draw.ellipse([bx,by,bx+100,by+45],fill=(255,255,255,230),outline=(0,0,0,255),width=2)
+                draw.polygon([(bx+20,by+35),(bx+10,by+55),(bx+35,by+38)],fill=(255,255,255,230),outline=(0,0,0,255))
         frames.append(frame)
     frames[0].save(filename,format='GIF',save_all=True,append_images=frames[1:],duration=160,loop=0,disposal=2)
-    print(f"   Created animation: {visual.get('label')} ({len(frames)} frames, transparent)")
+    print(f"   Created concrete animation: {visual.get('label')} ({len(frames)} frames)")
     return filename
 
 def create_background(position,glow_color,filename):
@@ -649,12 +753,14 @@ def generate_scoreboard(rn,results,ra,rb,ca,cb,filename,roles):
     for label,ak,bk in [("Argument strength","A_argument","B_argument"),("Rebuttal quality","A_rebuttal","B_rebuttal"),("Clarity & reasoning","A_clarity","B_clarity")]:
         a=sum(r[ak] for r in results)/len(results); b=sum(r[bk] for r in results)/len(results)
         d.text((100,y),label,fill="white",font=sml); d.text((500,y),f"{a:.1f}",fill="#00FFCC",font=sml); d.text((680,y),f"{b:.1f}",fill="#FF66FF",font=sml); y+=48
-    d.text((980,225),"INDIVIDUAL JUDGES - ONE PER COMPANY",fill="#FFD700",font=sub)
-    d.text((980,270),"MODEL",fill="white",font=sml); d.text((1500,270),roles['side_a_label'][:1],fill="#00FFCC",font=sml); d.text((1580,270),roles['side_b_label'][:1],fill="#FF66FF",font=sml)
+    d.text((980,225),"INDIVIDUAL JUDGES",fill="#FFD700",font=sub)
+    d.text((980,270),"AI",fill="white",font=sml); d.text((1500,270),roles['side_a_label'][:1],fill="#00FFCC",font=sml); d.text((1580,270),roles['side_b_label'][:1],fill="#FF66FF",font=sml)
     d.line([(970,300),(1680,300)],fill=(100,110,140,255),width=2)
     sy=320
     for r in results:
-        d.text((980,sy),f"{r.get('display_name','?')} [{r.get('provider','?')}]",fill="white",font=sml)
+        # Only company name, not model number - e.g., ChatGPT not GPT-5
+        display = r.get('display_name','?')
+        d.text((980,sy),display,fill="white",font=sml)
         d.text((1500,sy),f"{r['A_total']:.1f}",fill="#00FFCC",font=sml); d.text((1580,sy),f"{r['B_total']:.1f}",fill="#FF66FF",font=sml); sy+=48
     img.save(filename)
 
@@ -688,30 +794,49 @@ def create_segment(text,role,speaker_name,topic,segment_id,model_for_visuals,pos
 
 def generate_panel_commentary(model,side,topic,rn,ap,sk,prev,roles):
     prov=get_judge_short_name(model)
+    comp=get_company_name(model)
     pref_label = roles['side_a_label'] if side=="A" else roles['side_b_label']
+    other_label = roles['side_b_label'] if side=="A" else roles['side_a_label']
     recent="\n".join(prev[-3:])
     def trim(t,mw=180):
         wl=t.split(); return t if len(wl)<=mw else " ".join(wl[-mw:])
-    prompt="You are an expert judge. Topic: "+topic+" Round "+str(rn)+". "+roles['side_a_label']+": "+trim(ap)+" vs "+roles['side_b_label']+": "+trim(sk)+" You preferred "+pref_label+". Give 2 to 3 sentences specific critique natural speech, no saying what you are supposed to do, just critique. Previous: "+recent
-    resp=query_openrouter(prompt,model,timeout=30,max_tokens=280,temperature=0.75)
+    # Make judges distinct - different prompts for A vs B
+    if side=="A":
+        prompt=f"You are {prov} from {comp}. You are judging round {rn} about {topic}. You thought {pref_label} was stronger than {other_label}. {pref_label} said: {trim(ap)} {other_label} said: {trim(sk)} Explain in 2-3 sentences why {pref_label} was more convincing, with specific critique. Be different from previous judges. Previous: {recent}. Speak naturally as {prov}."
+    else:
+        prompt=f"You are {prov} from {comp}. You are judging round {rn} about {topic}. You thought {pref_label} was stronger than {other_label}. {pref_label} said: {trim(ap)} {other_label} said: {trim(sk)} Explain in 2-3 sentences why {pref_label} was more convincing, point out weakness in {other_label}. Be different from previous judges. Previous: {recent}. Speak naturally as {prov}."
+    resp=query_openrouter(prompt,model,timeout=30,max_tokens=320,temperature=0.85)
     if resp and len(resp.split())>=15:
         resp=re.sub(r'As .*? to assess,','',resp,flags=re.IGNORECASE).strip()
         resp=re.sub(r'As an? .*? judge,','',resp,flags=re.IGNORECASE).strip()
-        return resp
-    return f"In round {rn}, {pref_label} had stronger exegesis. They quoted specific verses and followed narrative flow. The opposing side relied on imported ideas rather than immediate text. That is why I preferred {pref_label}."
+        # Remove repetitive intro
+        resp=re.sub(r'^I am .*? and I.*?[.]','',resp,flags=re.IGNORECASE).strip()
+        if len(resp.split())>=10:
+            return resp
+    # Distinct fallbacks for A vs B to avoid similar comments
+    if side=="A":
+        return f"In round {rn}, I found {pref_label} more persuasive because they stayed close to what the text actually says. They quoted Genesis 3 verse 7 and 22 and explained the immediate outcome. {other_label} relied more on ideas not in the chapter. That is why I leaned toward {pref_label} this round."
+    else:
+        return f"Looking at round {rn}, {pref_label} made the stronger case to me. They pointed out that Adam did not die that day, living 930 years, and that eyes opening happened exactly as described. {other_label} tried to redefine death, but the plain reading favors {pref_label} on what happened that day."
 
 def build_intro(topic,jc,roles):
-    return f"Welcome to the AI Debate Arena. Today, {roles['side_a_label']} faces {roles['side_b_label']} on the question: {topic}. Three rounds, equal time, independent panel of {jc} top AI judges from different leading companies, each from a different company, scoring argument strength, rebuttal quality, and clarity. Let's begin."
+    return f"Welcome to the AI Debate Arena. Today, {roles['side_a_label']} faces {roles['side_b_label']} on the question: {topic}. Three rounds, equal time. An independent panel of {jc} AI judges from leading companies will score argument strength, rebuttal quality, and clarity. Let's begin."
 
-def build_intro_with_judges(topic,jc,roles,judge_names):
-    names_str = ", ".join(judge_names)
-    return f"Welcome to the AI Debate Arena. Today, {roles['side_a_label']} faces {roles['side_b_label']} on the question: {topic}. Three rounds, equal time, independent panel of {jc} top AI judges including {names_str}, each from a different company, scoring argument, rebuttal and clarity. Let's begin."
+def build_judge_intro(judge_model, jc):
+    name=get_judge_short_name(judge_model)
+    comp=get_company_name(judge_model)
+    intros=[
+        f"Hello, I am {name} from {comp}. I am one of the {jc} judges on today's panel. I will be scoring on argument, rebuttal, and clarity. Looking forward to a great debate.",
+        f"Hi everyone, {name} here, from {comp}. Excited to be one of your {jc} judges today. I will be looking for specific evidence and clear reasoning. Let us begin.",
+        f"Greetings, I am {name}, representing {comp}. I am honored to be among the {jc} judges. I will evaluate based on strength of argument and how well each side answers the other.",
+    ]
+    return random.choice(intros)
 
 def build_outro(jc,ca,cb,roles):
     if math.isclose(ca,cb,abs_tol=0.01): res="a draw"
     elif ca>cb: res=roles['side_a_label']
     else: res=roles['side_b_label']
-    return f"After three rounds, panel of {jc} judges from different companies gave {roles['side_a_label']} {ca:.1f}, {roles['side_b_label']} {cb:.1f}. Final result is {res}. The text remains, you decide."
+    return f"After three rounds, our panel of {jc} judges gave {roles['side_a_label']} {ca:.1f}, {roles['side_b_label']} {cb:.1f}. Final result is {res}. Thank you for watching, and you decide who told the truth."
 
 def stitch_segments(segs,out):
     lf="concat_list.txt"
@@ -731,7 +856,7 @@ def run_debate_pipeline():
     if not avail: avail=FALLBACK_MODELS.copy()
     ap_model,sk_model=choose_primary_models(avail)
     roles=get_debate_roles(topic, ap_model)
-    print(f"Roles: {roles['side_a_label']} VS {roles['side_b_label']} - Topic-adaptive")
+    print(f"Roles: {roles['side_a_label']} VS {roles['side_b_label']}")
     print(f"Debate engines: {get_judge_short_name(ap_model)} [{provider_from_model(ap_model)}] vs {get_judge_short_name(sk_model)} [{provider_from_model(sk_model)}]")
     judges=choose_judges(avail,(ap_model,sk_model))
     if not judges: judges=FALLBACK_MODELS[:MAX_JUDGES]
@@ -742,12 +867,16 @@ def run_debate_pipeline():
         nonlocal sid
         vm=sk_model if "SERPENT" in role.upper() or role=="B" else ap_model
         v=create_segment(text,role,name,topic,sid,vm,position,glow,judge_voice_index); segs.append(v); sid+=1
-    judge_display_names=[get_judge_short_name(j) for j in judges]
-    try:
-        intro_text=build_intro_with_judges(topic,len(judges),roles,judge_display_names)
-    except:
-        intro_text=build_intro(topic,len(judges),roles)
-    add_segment(intro_text,"Moderator","MODERATOR")
+    
+    # Intro generic - no judge names
+    add_segment(build_intro(topic,len(judges),roles),"Moderator","MODERATOR")
+    
+    # 2 judges introduce themselves briefly with company names, not model number
+    intro_judges = random.sample(judges, min(2, len(judges)))
+    for idx,jm in enumerate(intro_judges):
+        intro_text = build_judge_intro(jm, len(judges))
+        add_segment(intro_text,"AI Judge",f"AI JUDGE — {get_judge_short_name(jm).upper()} ({get_company_name(jm).upper()})","center","#3399FF",judge_voice_index=idx)
+    
     prev=""; cum_a=0.0; cum_b=0.0; pcom=[]
     for rn in range(1,ROUNDS+1):
         print(f"\nROUND {rn}")
