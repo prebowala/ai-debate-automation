@@ -37,20 +37,21 @@ VISUAL_W = 520
 VISUAL_H = 520
 VISUAL_Y = 160
 
-# Most natural conversational voices - multilingual are most expressive and human
+# FIX: UNIQUE VOICE PER PERSON - no duplicate voices
+# God and Judge had same voice before - now all distinct
 VOICES = {
-    "A": "en-US-BrianMultilingualNeural",  # warm, natural, conversational male - best for debates
-    "B": "en-US-AvaMultilingualNeural",   # expressive, natural female - best for debates
-    "Moderator": "en-US-AndrewMultilingualNeural",  # most natural moderator
+    "A": "en-US-BrianMultilingualNeural",  # GOD - warm male, unique
+    "B": "en-US-AvaMultilingualNeural",   # SERPENT - expressive female, unique
+    "Moderator": "en-US-AndrewMultilingualNeural",  # Moderator - distinct
 }
 JUDGE_VOICES = [
-    "en-US-EmmaMultilingualNeural",  # natural female 1
-    "en-US-BrianMultilingualNeural",  # natural male 1
-    "en-US-AvaMultilingualNeural",   # natural female 2
-    "en-US-AndrewMultilingualNeural", # natural male 2
-    "en-US-JennyNeural",  # backup natural
-    "en-US-GuyNeural",
-    "en-US-AriaNeural",
+    "en-US-EmmaMultilingualNeural",  # Judge 1 - distinct
+    "en-US-JennyNeural",              # Judge 2 - distinct
+    "en-US-GuyNeural",                # Judge 3 - distinct
+    "en-US-AriaNeural",               # Judge 4 - distinct
+    "en-US-ChristopherNeural",        # Judge 5 - distinct
+    "en-US-JaneNeural",               # Judge 6 - distinct
+    "en-US-JasonNeural",              # Judge 7 - distinct
 ]
 
 FALLBACK_MODELS = [
@@ -110,39 +111,24 @@ def cleanup_cache():
 def count_words(t): return len(re.findall(r"\b[\w'-]+\b", t or ""))
 
 def clean_for_speech(t):
-    if not t:
-        return ""
-    # Remove URLs and websites completely - this was speaking code/websites
+    if not t: return ""
     t=re.sub(r"https?://\S+"," ",t)
     t=re.sub(r"www\.\S+"," ",t)
-    t=re.sub(r"\b[a-z0-9-]+\.[a-z]{2,}(?:/[\S]*)?"," ",t, flags=re.IGNORECASE)  # domains like openrouter.ai/api
-    # Remove markdown links [text](url) -> text
+    t=re.sub(r"\b[a-z0-9-]+\.[a-z]{2,}(?:/[\S]*)?"," ",t, flags=re.IGNORECASE)
     t=re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", t)
-    # Remove code artifacts
     t=re.sub(r"```.*?```"," ",t, flags=re.DOTALL)
     t=re.sub(r"`[^`]+`"," ",t)
-    # Remove bracketed references like [1], [2], (Genesis 2:17) keep text but remove brackets
-    t=re.sub(r"\([^)]*\d+:\d+[^)]*\)"," ",t)  # remove (Genesis 2:17) style to avoid reading numbers weirdly? Actually keep but clean
-    # For general parentheses, keep content but remove parens if not needed
-    t=t.replace("(", " ").replace(")", " ")
-    t=t.replace("[", " ").replace("]", " ")
-    t=t.replace("{", " ").replace("}", " ")
-    # Replace dashes with pauses, not literal dash
-    t=t.replace("–",", ").replace("—",". ")
-    t=t.replace(" - ",". ").replace(" -",". ").replace("- ",". ")
-    # Remove code symbols
+    t=t.replace("(", " ").replace(")", " ").replace("[", " ").replace("]", " ").replace("{", " ").replace("}", " ")
+    t=t.replace("–",", ").replace("—",". ").replace(" - ",". ").replace(" -",". ").replace("- ",". ")
     for o,n in {"*":"", "#":"", "_":"", "`":"", "\"":"", ":":" . ", ";":" . ", "&":" and", "=":" ", ">":" ", "<":" ", "/":" ", "\\":" ", "|":" ", "@":" ", "$":" ", "%":" "}.items():
         t=t.replace(o,n)
     t=re.sub(r"\s-\s", ". ", t)
     t=re.sub(r"\b[a-z_]+\.[a-z_]+\(\)"," ",t)
-    # Remove any leftover slashes and dots that are code-like
-    t=re.sub(r"\b\w+\.\w+\.\w+\b"," ",t)  # a.b.c
+    t=re.sub(r"\b\w+\.\w+\.\w+\b"," ",t)
     t=re.sub(r"\s+"," ",t).strip()
     t=t.replace(" . . ", ". ").replace(" , , ", ", ").replace(" . ,", ".").replace(", .", ".")
-    # Ensure proper sentences with pauses
     if t and not t[-1] in ".!?":
         t+="."
-    # Fix double periods
     t=re.sub(r"\.{2,}",".",t)
     return t
 
@@ -183,7 +169,7 @@ def discover_models():
         print(f"discover fail {e}, using fallback")
         return FALLBACK_MODELS.copy()
 
-def query_openrouter(prompt,model_id,timeout=50,max_tokens=750,temperature=0.85):
+def query_openrouter(prompt,model_id,timeout=50,max_tokens=750,temperature=0.92):
     if not OPENROUTER_API_KEY: return None
     payload={"model":model_id,"messages":[{"role":"user","content":prompt}],"temperature":temperature,"max_tokens":max_tokens}
     try:
@@ -211,11 +197,9 @@ def choose_primary_models(avail):
     return picks[0],picks[1]
 
 def choose_judges(avail,primary):
-    # FIX: exclude providers of primary models, not just model IDs, to avoid duplicate company
     primary_providers=set(provider_from_model(m) for m in primary)
     excl_ids=set(primary)
     top_providers = {"openai","anthropic","google","meta-llama","mistralai","deepseek","qwen"}
-    # Exclude both exact IDs and any model from same company as debaters
     cands=[m for m in avail if m not in excl_ids and ":free" in m and m.split("/")[0].lower() in top_providers and provider_from_model(m) not in primary_providers]
     if len(cands)<4:
         cands=[m for m in avail if m not in excl_ids and ":free" in m and provider_from_model(m) not in primary_providers]
@@ -235,7 +219,6 @@ def choose_judges(avail,primary):
         if len(sel)>=MAX_JUDGES: break
         if m not in sel:
             sel.append(m)
-    # Ensure unique display names too - no 2 Claude or 2 Gemini
     seen_display=set()
     unique_sel=[]
     for m in sel:
@@ -280,93 +263,64 @@ def strip_filler(text):
     return text
 
 def generate_fallback_debate(side_label, topic, round_num, turn_num):
+    # Improved to be full sentences, not phrases, less repetition
     topic_short = topic[:130] if len(topic)>130 else topic
     if "GOD TOLD TRUTH" in side_label.upper():
         if round_num==1:
-            templates=[
-                "Genesis chapter 2 verse 17 is really clear when you read it carefully. God says, in the day you eat of it, you shall surely die. The Hebrew is emphatic, it literally says dying you shall die. Now look what the serpent says in chapter 3 verse 4. He says, you shall not surely die. That is a direct contradiction. What actually happens that day? Chapter 3 verse 7 says their eyes were opened and they knew they were naked. They felt shame for the first time. Verse 8 says they hid themselves from God's presence. That hiding, that separation, is what the Bible calls death.",
-                "I want you to notice God's generosity in chapter 2 verse 16. He says, you may freely eat of every tree in the garden. Every tree, only one limit. That is incredibly generous. Then the serpent twists it in chapter 3 verse 1. He says, did God really say you shall not eat of every tree? He makes God sound stingy. That is classic deception. Then he promises, your eyes shall be opened and you will be as gods. And yes, chapter 3 verse 22 says they did become like God in that way. But his first promise, you will not die, was completely false.",
-            ]
+            if turn_num%2==0:
+                return "Genesis chapter 2 verse 17 is really clear when you read it carefully. God says, in the day you eat of it, you shall surely die. The Hebrew is emphatic. It literally says dying you shall die. Now look what the serpent says in chapter 3 verse 4. He says, you shall not surely die. That is a direct contradiction. What actually happens that day? Chapter 3 verse 7 says their eyes were opened and they knew they were naked. They felt shame for the first time. Verse 8 says they hid themselves from God's presence. That hiding is separation, and separation is what the Bible calls death."
+            else:
+                return "I want you to notice God's generosity in chapter 2 verse 16. He says, you may freely eat of every tree in the garden. Every tree in the garden, with only one limit. That is incredibly generous. Then the serpent twists it in chapter 3 verse 1. He says, did God really say you shall not eat of every tree? He makes God sound stingy, like God is holding out on them. That is classic deception, misrepresenting what someone said. Then he promises, your eyes shall be opened and you will be as gods. Chapter 3 verse 22 says they did become like God in that way. But his first promise, you will not die, was completely false."
         elif round_num==2:
-            templates=[
-                "My opponent said the serpent told the truth because they did not drop dead that day. But that misses the whole point of what death means in this story. Genesis chapter 3 verse 10, Adam says, I was afraid because I was naked and I hid. Fear and hiding are not full life. Verse 19 says to dust you shall return. Mortality enters. And verses 23 and 24, they are driven out and cherubim block the way to the tree of life. So on the very day they ate, they lost access to eternal life. The process of death started that day.",
-                "The argument that they did not die that day ignores how the phrase in the day is used elsewhere. In chapter 2 verse 4, it says in the day that the Lord God made the earth. It means when, not a 24 hour countdown. It is about certainty. When you eat, death is certain. And look, the serpent told a half truth. He said your eyes would be opened, and they were. But he left out the consequence. A half truth that omits crucial consequence is still a lie.",
-            ]
+            if turn_num%2==0:
+                return "My opponent said the serpent told the truth because they did not drop dead that day. But that misses the point of what death means in this story. Genesis chapter 3 verse 10 says Adam was afraid because he was naked and he hid. Fear and hiding are not full life. Verse 19 says to dust you shall return. Mortality enters the story right there. Verses 23 and 24 say they are driven out of Eden and cherubim block the way to the tree of life. So on the very day they ate, they lost access to eternal life. The process of death started that exact day, just as God warned."
+            else:
+                return "The argument that they did not die that day ignores how the phrase in the day is used elsewhere in Genesis. In chapter 2 verse 4, it says in the day that the Lord God made the earth and heavens. It means when, not a 24 hour countdown. It is about certainty, not timing. When you eat, death becomes certain. And look, the serpent told a half truth. He said your eyes would be opened, and they were. But he left out the terrible consequence. A half truth that omits the crucial consequence is still a lie. That is what deception looks like."
         else:
-            templates=[
-                "Let me pull this together. God warned, in the day you eat you shall surely die. The serpent said, you shall not surely die, you shall be as gods. What happened? Their eyes were opened, yes, as the serpent said. But they also experienced shame, fear, hiding, toil, pain, and were cut off from the tree of life. That is death in the biblical sense, separation and mortality beginning. Romans chapter 5 verse 12 says sin entered and death through sin. The serpent promised no death, but death is now the human condition.",
-                "So who told the truth? God said death would come when they ate. The serpent said no death, just enlightenment. The story shows both enlightenment and death entering. Eyes opened, but also shame, blame, cursing, and exile. If the serpent told the whole truth, where is the warning about losing Eden? Where is the warning about returning to dust? He omitted it. God did not. God told them the full cost.",
-            ]
+            if turn_num%2==0:
+                return "Let me pull this together. God warned, in the day you eat you shall surely die. The serpent said, you shall not surely die, you shall be as gods. What actually happened? Their eyes were opened, yes, just as the serpent said. But they also experienced shame, fear, hiding, toil, pain, and they were cut off from the tree of life. That is death in the biblical sense, separation and mortality beginning. Romans chapter 5 verse 12 says sin entered the world and death through sin. The serpent promised no death, but death is now the human condition. God told the truth about the consequence."
+            else:
+                return "So who told the truth? God said death would come when they ate. The serpent said no death, just enlightenment. The story shows both enlightenment and death entering at the same time. Their eyes were opened, but they also felt shame, blame, cursing, and exile. If the serpent told the whole truth, where is the warning about losing Eden? Where is the warning about returning to dust? He omitted the cost. God did not. God told them the full cost upfront. That is what truth telling looks like, even when it is hard to hear."
     elif "SERPENT TOLD TRUTH" in side_label.upper():
         if round_num==1:
-            templates=[
-                "Let us read what the text actually says, not what we think it should say. Genesis chapter 2 verse 17, God says, in the day you eat of it you shall surely die. In Hebrew, beyom, in the day. The plain sense is that same day. Yet Genesis chapter 5 verse 5 says Adam lived 930 years and then died. He did not die that day. He lived for centuries. The serpent says in chapter 3 verse 4, you shall not surely die. That is exactly what happened. They did not die that day. He also says in verse 5, your eyes shall be opened and you shall be as gods. Chapter 3 verse 7 says their eyes were opened. God Himself says in verse 22, man has become as one of us to know good and evil. God confirms the serpent was right.",
-                "Think about the Hebrew word yom. In Genesis chapter 1, evening and morning were the first day, a literal 24 hour period. So when God says in the day you eat you shall die, the natural reading is that same day. Adam did not die that day. The serpent's prediction was more accurate about the immediate outcome. He said you shall not die, and they did not. He said you shall be as gods knowing good and evil. God says in chapter 3 verse 22, they have become like one of us. Two claims by the serpent, both validated by the story itself.",
-            ]
+            if turn_num%2==0:
+                return "Let us read what the text actually says, not what we think it should say. Genesis chapter 2 verse 17 says God told Adam, in the day you eat of it you shall surely die. In Hebrew, beyom, in the day. The plain sense is that same day. Yet Genesis chapter 5 verse 5 says Adam lived 930 years and then he died. He did not die that day. He lived for centuries after that. The serpent says in chapter 3 verse 4, you shall not surely die. That is exactly what happened. They did not die that day. He also says in verse 5, your eyes shall be opened and you shall be as gods knowing good and evil. Chapter 3 verse 7 says their eyes were opened. God Himself says in verse 22, man has become as one of us to know good and evil. God confirms the serpent was right."
+            else:
+                return "Think about the Hebrew word yom, which means day. In Genesis chapter 1, evening and morning were the first day, a literal 24 hour period. So when God says in the day you eat you shall die, the natural reading is that same day. Adam did not die that day. The serpent's prediction was more accurate about the immediate outcome. He said you shall not die, and they did not die. He said you shall be as gods knowing good and evil. God says in chapter 3 verse 22, they have become like one of us to know good and evil. Two claims by the serpent, both validated by the story itself. God's threat simply did not happen as stated that day."
         elif round_num==2:
-            templates=[
-                "My opponent talks about spiritual death, but the text of Genesis chapters 2 and 3 never mentions spiritual death. That is an idea imported from later theology. The text mentions nakedness, shame, cursing of the ground, pain in childbirth, hard work, and eventually dust to dust. The test is simple. Did they die that day as God said? No. Did their eyes open as the serpent said? Yes, chapter 3 verse 7 says their eyes were opened. On a straightforward reading, the serpent described what would actually happen that day more accurately.",
-                "If God meant they would begin dying, why say in the day you shall surely die? Why not say you shall become mortal? And if the serpent lied, why does God confirm his second claim? Chapter 3 verse 22, behold the man is become as one of us to know good and evil. That is almost word for word what the serpent promised in verse 5. If the serpent is the liar, why is God echoing his promise? The story presents a tension that should make us ask who was more accurate.",
-            ]
+            if turn_num%2==0:
+                return "My opponent talks about spiritual death, but the text of Genesis chapters 2 and 3 never mentions spiritual death at all. That is an idea imported from later theology, not from this story. The text mentions nakedness, shame, cursing of the ground, pain in childbirth, hard work, and eventually dust to dust. The test is simple. Did they die that day as God said they would? No, they did not. Did their eyes open as the serpent said they would? Yes, chapter 3 verse 7 says their eyes were opened. On a straightforward reading, the serpent described what would actually happen that day more accurately."
+            else:
+                return "If God meant they would begin dying, why did He say in the day you shall surely die? Why not say you shall become mortal? That would be clear. And if the serpent lied, why does God confirm his second claim? Chapter 3 verse 22 says, behold the man is become as one of us to know good and evil. That is almost word for word what the serpent promised in verse 5. If the serpent is the liar, why is God echoing his promise? The story presents a real tension that should make us ask who was more accurate about what would happen when they ate the fruit."
         else:
-            templates=[
-                "So let us weigh it. God said, in the day you eat you die. Serpent said, you will not die, you will be enlightened, your eyes will be opened. What does the story report? Eyes opened, yes. Enlightenment, yes. Death that day, no. Adam lives 930 years. God even acknowledges the enlightenment part in chapter 3 verse 22. No acknowledgment that they died that day. If we let the text speak for itself, without adding later ideas, the serpent's description of the immediate outcome was more accurate.",
-                "The question is not who we want to be truthful, but what the text reports. It reports God threatening death in the day, serpent promising no death but knowledge, and then reports knowledge coming and death not coming that day. It reports God Himself saying they have become like us knowing good and evil. The serpent promised that. So two promises from the serpent, both happen. One threat from God, does not happen that day. On the immediate facts, the serpent was right about what would happen when they ate.",
-            ]
+            if turn_num%2==0:
+                return "So let us weigh the evidence carefully. God said, in the day you eat you die. The serpent said, you will not die, you will be enlightened, your eyes will be opened. What does the story actually report happened? Their eyes were opened, yes. Enlightenment came, yes. Death that day, no. Adam lives 930 years. God even acknowledges the enlightenment part in chapter 3 verse 22. There is no acknowledgment that they died that day. If we let the text speak for itself, without adding later ideas from other books, the serpent's description of the immediate outcome was more accurate than God's warning."
+            else:
+                return "The question is not who we want to be truthful, but what the text reports. It reports God threatening death in the day, the serpent promising no death but knowledge, and then it reports knowledge coming and death not coming that day. It reports God Himself saying they have become like us knowing good and evil. The serpent promised that exact thing. So two promises from the serpent, both happen in the story. One threat from God, does not happen that day. On the immediate facts of what happened that day, the serpent was right about what would occur when they ate."
     else:
-        tl = topic_short.lower()
-        if any(w in tl for w in ["ai","artificial","regulation"]):
-            if round_num==1:
-                templates=[
-                    f"On {topic_short}, we need to be practical. {side_label} argues that unchecked AI without oversight causes real harm. We have seen bias in hiring, misinformation at scale, and concentration of power. Regulation does not mean banning. It means testing and transparency that builds trust.",
-                    f"Regarding {topic_short}, who pays the cost matters. {side_label} says developers should be responsible for foreseeable misuse. We regulate cars and medicine for safety. The precautionary principle applies when systems affect millions.",
-                ]
-            elif round_num==2:
-                templates=[
-                    f"My opponent says regulation stifles innovation. But look at aviation and medicine. Safety standards made people trust flying and drugs, which helped innovation grow. {side_label} is arguing for the same kind of trust building for {topic_short}.",
-                    f"On {topic_short}, {side_label} points out that without rules, the worst actors set the standard. Good companies want clear rules so they are not undercut by those who cut corners. That is why regulation can be pro innovation.",
-                ]
-            else:
-                templates=[
-                    f"To close on {topic_short}, {side_label} offers balance. Not a ban, but standards. Testing, transparency, liability. Aviation has safety checks. Medicine has trials. Why should AI, which shapes what we see, be exempt from accountability we demand elsewhere?",
-                    f"So on {topic_short}, {side_label} says accountability matters. If a system affects millions, those who build it should answer for foreseeable harm. That is not anti innovation. It is how innovation earns trust.",
-                ]
+        # Generic versatile for any topic - full sentences, not phrases
+        if round_num==1:
+            return f"On the question of {topic_short}, {side_label} has the stronger case when you look at the evidence carefully. The facts and the logic both point in one direction. The opposing view relies on assumptions that do not hold up under scrutiny. We should prefer the explanation that fits what we actually see in the real world, not just what sounds nice in theory. That is why {side_label} should be preferred in this opening round."
+        elif round_num==2:
+            return f"My opponent raised some points, but they do not address the core evidence for {side_label}. On {topic_short}, we must ask what the counterexamples actually show when examined closely. {side_label} accounts for those counterexamples, while the other view struggles when tested against real cases. The logic of {side_label} holds together step by step, while the alternative breaks down at key points. That is why rebuttal favors {side_label}."
         else:
-            if round_num==1:
-                templates=[
-                    f"On {topic_short}, {side_label} has the stronger case when you look at the evidence. The facts and the logic point one way. The opposing view relies on assumptions that do not hold up. We should prefer the explanation that fits what we actually see.",
-                    f"Regarding {topic_short}, {side_label} argues from specific examples and follows them logically. The other side shifts definitions or ignores counterexamples. A clear and consistent explanation that matches observation should be preferred.",
-                ]
-            elif round_num==2:
-                templates=[
-                    f"My opponent raised points, but they do not address the core evidence for {side_label}. On {topic_short}, we must ask what the counterexamples show. {side_label} accounts for them. The other view struggles when tested against real cases.",
-                    f"On {topic_short}, {side_label} points out a flaw in the opponent's reasoning. They assume what they need to prove, or they ignore consequences. {side_label} follows the argument step by step and shows where it breaks down.",
-                ]
-            else:
-                templates=[
-                    f"To close on {topic_short}, {side_label} offers a coherent view. It defines terms clearly, follows logic, and fits the facts. The alternative relies on vague claims or shifts ground. We should choose the view that is clear, consistent, and supported.",
-                    f"So on {topic_short}, {side_label} says look at which view best explains all the evidence, not just selected pieces. {side_label} explains more with fewer assumptions. That is why it should be preferred.",
-                ]
-    idx=(round_num*2+turn_num)%len(templates)
-    return templates[idx]
+            return f"To close on {topic_short}, {side_label} offers a coherent view that fits all the evidence. It defines its terms clearly, it follows logic consistently, and it matches what we observe. The alternative relies on vague claims or it shifts ground when challenged. We should choose the view that is clear, consistent, and well supported by evidence. That is why {side_label} deserves to win this debate."
 
 def generate_turn(side, topic, round_num, turn_num, previous_exchange, model, role_label, role_desc, opponent_label, opponent_desc):
     prev_snip=(previous_exchange or "")[-800:]
     if round_num==1:
-        round_focus="Opening round. Establish your foundation with clear evidence. Do not repeat, give fresh opening. Use natural conversational tone like a real person on YouTube."
+        round_focus="Opening round. Establish foundation with clear evidence. Do not repeat, give fresh opening. Use full complete sentences, not phrases."
     elif round_num==2:
-        round_focus="Rebuttal round. Directly address what opponent just said and explain why it does not work. Bring a new angle or evidence you have not used before. Be conversational and specific."
+        round_focus="Rebuttal round. Directly address opponent's last argument and show why it fails. Bring new angle or evidence not used before. Full sentences."
     else:
-        round_focus="Closing round. Pull together your strongest points. Show why your view explains the evidence better overall. Be memorable and human."
-    # More natural human prompt
-    prompt=f"You are {role_label} debating live on YouTube about: {topic}. Your position: {role_desc}. Opponent is {opponent_label} who argues: {opponent_desc}. {round_focus} Previous opponent said: {prev_snip}. Write {WORDS_PER_TURN} words as a REAL HUMAN would speak - not robotic. Use contractions like I'm, don't, can't, it's, that's. Vary sentence length - some short punchy sentences. Then longer ones that explain. Use natural pauses with periods. No dashes, no bullet points, no symbols. Quote specific evidence like Genesis 2:17, 3:4, 3:5, 3:22, 3:7 when relevant. Rebut directly. Start immediately with your point, no greeting. Sound like a confident human debater, not a textbook. {MIN_TURN_WORDS}-{MAX_TURN_WORDS} words. Speak naturally."
+        round_focus="Closing round. Pull together strongest points. Show why your view explains evidence better overall. Full complete sentences, memorable."
+    prompt=f"You are {role_label} debating live on YouTube about: {topic}. Your position: {role_desc}. Opponent is {opponent_label} who argues: {opponent_desc}. {round_focus} Previous opponent said: {prev_snip}. Write {WORDS_PER_TURN} words as a REAL HUMAN would speak - natural conversational. Use contractions like I'm, don't, can't, it's, that's. Vary sentence length - some short punchy sentences. Then longer ones that explain. Each sentence must be a full sentence with subject and verb, not a fragment or phrase. Use natural pauses with periods. No dashes, no bullet points, no symbols. Quote specific evidence when relevant. Rebut directly. Start immediately with your point, no greeting. Do not repeat arguments already made in previous rounds - bring fresh points. Sound like confident human debater, not textbook. {MIN_TURN_WORDS}-{MAX_TURN_WORDS} words."
     for m in [model]+FALLBACK_MODELS[:3]:
-        resp=query_openrouter(prompt,m,max_tokens=750,temperature=0.92)
+        resp=query_openrouter(prompt,m,max_tokens=800,temperature=0.92)
         if resp and count_words(resp)>=90:
             cleaned=strip_filler(resp)
             cleaned=re.sub(r'\s*-\s*',' . ',cleaned)
             cleaned=re.sub(r'\s+',' ',cleaned).strip()
-            # Remove robotic patterns
             cleaned=re.sub(r'\bIn conclusion\b','So',cleaned, flags=re.IGNORECASE)
             cleaned=re.sub(r'\bFurthermore\b','Also',cleaned, flags=re.IGNORECASE)
             cleaned=re.sub(r'\bMoreover\b','And',cleaned, flags=re.IGNORECASE)
@@ -374,14 +328,22 @@ def generate_turn(side, topic, round_num, turn_num, previous_exchange, model, ro
             if not cleaned.endswith(('.', '!', '?')):
                 cleaned+="."
             cleaned=cleaned.replace(" - ", ". ").replace(" -",".")
-            # Remove URLs if model leaked them
             cleaned=re.sub(r"https?://\S+"," ",cleaned)
             cleaned=re.sub(r"www\.\S+"," ",cleaned)
+            # Ensure not repeating - check if sentence already in prev
+            sentences=cleaned.split('. ')
+            unique_sents=[]
+            for s in sentences:
+                if s.strip() and s.strip().lower() not in prev_snip.lower():
+                    unique_sents.append(s)
+                elif len(unique_sents)<2:
+                    unique_sents.append(s)
+            cleaned='. '.join(unique_sents)
             if "text, context, and outcome" in cleaned.lower():
                 cleaned=re.sub(r'The text, context.*?matter\.','',cleaned,flags=re.IGNORECASE).strip()
             if count_words(cleaned)>=MIN_TURN_WORDS-10:
                 return cleaned[:1600]
-            extra=query_openrouter("Continue 70 more words same very natural human conversational style, contractions, varied sentences: "+cleaned[-250:],m,max_tokens=250,temperature=0.85)
+            extra=query_openrouter("Continue 70 more words same very natural human conversational style, full sentences, contractions, varied: "+cleaned[-250:],m,max_tokens=250,temperature=0.85)
             if extra:
                 cleaned+=" "+extra
             return cleaned[:1600]
@@ -433,8 +395,7 @@ def calculate_round_average(results):
 
 async def generate_audio_async(text,voice,filename):
     clean_text = clean_for_speech(text)
-    # Use most conversational SSML with chat style for natural human speech
-    ssml_text = f"<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xmlns:mstts='http://www.w3.org/2001/mstts' xml:lang='en-US'><voice name='{voice}'><mstts:express-as style='chat' styledegree='1.2'><prosody rate='+4%' pitch='+0%' volume='+0%'>{clean_text}</prosody></mstts:express-as></voice></speak>"
+    ssml_text = f"<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xmlns:mstts='http://www.w3.org/2001/mstts' xml:lang='en-US'><voice name='{voice}'><mstts:express-as style='chat' styledegree='1.2'><prosody rate='+2%' pitch='+0%' volume='+0%'>{clean_text}</prosody></mstts:express-as></voice></speak>"
     try:
         com=edge_tts.Communicate(ssml_text,voice)
         audio=b""; words=[]
@@ -445,12 +406,12 @@ async def generate_audio_async(text,voice,filename):
                 words.append({"text":chunk["text"],"start":s,"duration":d,"end":s+d})
         open(filename,"wb").write(audio)
         if not words or len(words)<3:
-            raise Exception("No word boundaries, fallback")
+            raise Exception("No word boundaries")
         return words
     except Exception as e:
-        print(f"TTS chat style failed {e}, trying friendly")
+        print(f"TTS chat failed {e}, friendly")
         try:
-            ssml2 = f"<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xmlns:mstts='http://www.w3.org/2001/mstts' xml:lang='en-US'><voice name='{voice}'><mstts:express-as style='friendly'><prosody rate='+6%'>{clean_text}</prosody></mstts:express-as></voice></speak>"
+            ssml2 = f"<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xmlns:mstts='http://www.w3.org/2001/mstts' xml:lang='en-US'><voice name='{voice}'><mstts:express-as style='friendly'><prosody rate='+3%'>{clean_text}</prosody></mstts:express-as></voice></speak>"
             com=edge_tts.Communicate(ssml2,voice)
             audio=b""; words=[]
             async for chunk in com.stream():
@@ -463,8 +424,7 @@ async def generate_audio_async(text,voice,filename):
                 return words
         except:
             pass
-        # Final fallback plain but natural rate
-        com=edge_tts.Communicate(clean_text,voice,rate="+5%")
+        com=edge_tts.Communicate(clean_text,voice,rate="+2%")
         audio=b""; words=[]
         async for chunk in com.stream():
             if chunk["type"]=="audio": audio+=chunk["data"]
@@ -494,20 +454,18 @@ def format_ass_time(s):
 def ass_escape(t): return str(t).replace("\\","\\\\").replace("{","\\{").replace("}","\\}")
 
 def generate_subtitles(words,filename,scorecard=False):
-    # IMPROVED: more synced, more per page so less noticeable desync
+    # FIX: More words per chunk to reduce lag perception
     margin_v=90 if scorecard else 200
     font_size=36 if scorecard else 34
     header=f"[Script Info]\nScriptType: v4.00+\nPlayResX: 1920\nPlayResY: 1080\nWrapStyle: 0\nScaledBorderAndShadow: yes\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: DebateSub,DejaVu Sans,{font_size},&H00FFFFFF,&H00FFFFFF,&H00000000,&HCC000000,1,0,0,0,100,100,0,0,1,3.0,1,2,200,200,{margin_v},1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
     if not words:
         open(filename,"w",encoding="utf-8").write(header); return
     clean_words=[{"text":str(w.get("text","")).strip(),"start":float(w["start"]),"end":float(w["end"])} for w in words if str(w.get("text","")).strip()]
-    # MORE PER PAGE - 28 words per chunk instead of 18, 4 lines max
-    WORDS_PER_CHUNK=28
+    WORDS_PER_CHUNK=38  # Increased from 28 to 38 - more words per page, less lag noticeable
     chunks=[]; cur=[]
     for w in clean_words:
         cur.append(w)
-        # Split on sentence end only if we have at least 12 words, to avoid too many pages
-        if str(w["text"]).strip().endswith(('.', '?', '!')) and len(cur)>=14:
+        if str(w["text"]).strip().endswith(('.', '?', '!')) and len(cur)>=18:
             chunks.append(cur); cur=[]
         elif len(cur)>=WORDS_PER_CHUNK:
             chunks.append(cur); cur=[]
@@ -515,30 +473,25 @@ def generate_subtitles(words,filename,scorecard=False):
     events=[]; last_end=0.0
     for chunk in chunks:
         if not chunk: continue
-        # More accurate timing with padding
-        s=float(chunk[0]["start"])-0.08
-        e=float(chunk[-1]["end"])+0.35  # longer hold to hide desync
+        s=float(chunk[0]["start"])-0.06
+        e=float(chunk[-1]["end"])+0.5  # longer hold
         if s<last_end: s=last_end+0.01
-        if e<=s: e=s+1.2
+        if e<=s: e=s+1.5
         last_end=e
         txt_words=[ass_escape(w["text"]) for w in chunk]
         lines=[]
-        # 9 words per line, up to 4 lines = 36 words per page
-        for i in range(0,len(txt_words),9):
-            lines.append(" ".join(txt_words[i:i+9]))
-        if len(lines)>4: lines=lines[:4]
+        for i in range(0,len(txt_words),10):  # 10 words per line
+            lines.append(" ".join(txt_words[i:i+10]))
+        if len(lines)>5: lines=lines[:5]  # up to 5 lines = 50 words per page
         txt="\\N".join(lines)
         txt=txt.replace("\\\\N","\\N")
-        # Slightly longer fade to smooth desync perception
-        ass_text="{\\an2\\pos(960,820)\\q2\\fad(80,80)}"+txt
+        ass_text="{\\an2\\pos(960,820)\\q2\\fad(100,100)}"+txt
         events.append(f"Dialogue: 0,{format_ass_time(s)},{format_ass_time(e)},DebateSub,,0,0,0,,{ass_text}")
     open(filename,"w",encoding="utf-8").write(header+"\n".join(events)+"\n")
 
 def fallback_visual_plan(text):
-    # VERSATILE for any topic.txt - detects topic and returns relevant visuals
     tl=text.lower()
     visuals=[]
-    # Genesis visuals
     genesis_kws=[
         ("apple","Apple on branch","red apple hanging from branch, watercolor"),
         ("fruit","Eating fruit","person eating fruit, watercolor"),
@@ -549,7 +502,6 @@ def fallback_visual_plan(text):
         ("god","God light","sun with rays, watercolor"),
         ("eyes opened","Eyes opened","eyes opening, watercolor"),
     ]
-    # AI / tech visuals
     ai_kws=[
         ("ai","AI brain","robot brain with circuits, watercolor"),
         ("artificial","Artificial intelligence","robot head, watercolor"),
@@ -560,7 +512,6 @@ def fallback_visual_plan(text):
         ("algorithm","Algorithm","flowing code blocks, watercolor"),
         ("data","Data","database with data points, watercolor"),
     ]
-    # Universe / creator visuals
     cosmos_kws=[
         ("universe","Universe","galaxy with stars, watercolor"),
         ("creator","Creator light","bright sun with rays, watercolor"),
@@ -573,7 +524,6 @@ def fallback_visual_plan(text):
         ("dna","DNA","dna helix, watercolor"),
         ("fine tuning","Fine tuning","dial with precise tuning, watercolor"),
     ]
-    # Generic debate visuals - versatile for any topic
     generic_kws=[
         ("evidence","Evidence","open book with light, watercolor"),
         ("logic","Logic","lightbulb with gears, watercolor"),
@@ -594,8 +544,6 @@ def fallback_visual_plan(text):
             idx=tl.find(kw)
             phrase=text[max(0,idx-10):idx+len(kw)+20].strip() or kw
             visuals.append({"phrase":phrase,"label":label,"description":desc,"kind":"concept"})
-    
-    # If still less than 2, add topic-adaptive defaults
     if len(visuals)<2:
         if any(w in tl for w in ["ai","artificial","robot","regulation","algorithm","tech"]):
             visuals=[
@@ -613,7 +561,6 @@ def fallback_visual_plan(text):
                 {"phrase":text[:30],"label":"Scales of justice","description":"scales balancing heart and brain, watercolor","kind":"concept"},
             ]
         else:
-            # Generic versatile fallback for ANY topic
             visuals=[
                 {"phrase":text[:30],"label":"Debate stage","description":"two podiums with watercolor figures, transparent","kind":"concept"},
                 {"phrase":text[:30],"label":"Lightbulb idea","description":"lightbulb glowing with idea, watercolor","kind":"concept"},
@@ -677,23 +624,19 @@ def create_visual_plan(text,words,model):
         if len(out)>=MAX_VISUALS_PER_SEGMENT: break
     return out
 
-# WATERCOLOR SCRIBBLE STYLE MATCHING REFERENCE IMAGE - transparent, no black triangles
-def draw_watercolor_blob(draw, bbox, color, alpha=180, scribble=False):
+# OVERHAUL: Much less abstract, more engaging, concrete detailed drawings
+def draw_watercolor_blob(draw, bbox, color, alpha=180):
     x0,y0,x1,y1=bbox
-    # More textured watercolor with multiple layers for less abstract look
     draw.ellipse(bbox, fill=(*color, alpha))
     draw.ellipse([x0+4,y0+4,x1-4,y1-4], fill=(*color, alpha-15))
     draw.ellipse([x0+8,y0+2,x1-2,y1-6], fill=(*color, alpha-30))
     draw.ellipse([x0-2,y0+6,x1-8,y1-2], fill=(*color, alpha-40))
-    # Add highlight for depth - more engaging
     draw.ellipse([x0+10,y0+8,x0+30,y0+25], fill=(255,255,255,60))
 
 def draw_scribble_hair(draw, x, y, size):
-    # Scribble hair like reference: messy black loops
     cx=x+size*0.5
     cy=y+size*0.15
-    # Draw many overlapping loops
-    for _ in range(12):
+    for _ in range(14):
         rx=random.uniform(size*0.15, size*0.35)
         ry=random.uniform(size*0.08, size*0.22)
         x1=cx+random.uniform(-rx, rx)
@@ -701,7 +644,6 @@ def draw_scribble_hair(draw, x, y, size):
         x2=x1+random.uniform(-rx*0.5, rx*0.5)
         y2=y1+random.uniform(-ry*0.5, ry*0.5)
         draw.arc([x1,y1,x2,y2], random.randint(0,180), random.randint(180,360), fill=(0,0,0,255), width=2)
-    # More loops on top
     for i in range(8):
         ang1=i*45+random.uniform(-10,10)
         ang2=ang1+random.uniform(60,140)
@@ -714,250 +656,296 @@ def draw_scribble_hair(draw, x, y, size):
         draw.arc([min(x1,x2), min(y1,y2), max(x1,x2), max(y1,y2)], 0, 360, fill=(0,0,0,255), width=2)
 
 def draw_stick_figure_watercolor(draw,x,y,size=80,eating=False):
-    # Style matching reference: beige watercolor blobs, scribble hair, thin black outline arms
-    # Head blob - beige watercolor
     head_bbox=[x+size*0.2, y, x+size*0.85, y+size*0.55]
     draw_watercolor_blob(draw, head_bbox, (210, 180, 140), alpha=190)
-    # Scribble hair on head
     draw_scribble_hair(draw, x+size*0.1, y-5, size*0.6)
-    # Body blob - larger beige
     body_bbox=[x+size*0.15, y+size*0.65, x+size*0.85, y+size*1.5]
     draw_watercolor_blob(draw, body_bbox, (210, 180, 140), alpha=185)
-    # Arms - thin black lines like reference
     if eating:
-        # Arm reaching to mouth
         draw.line([x+size*0.75, y+size*0.8, x+size*1.05, y+size*0.5], fill=(0,0,0,255), width=2)
-        # Small red apple in hand
         draw.ellipse([x+size*0.95, y+size*0.4, x+size*1.15, y+size*0.6], fill=(220,20,60,255), outline=(0,0,0,255), width=1)
     else:
         draw.line([x, y+size*0.8, x+size*0.15, y+size*1.3], fill=(0,0,0,255), width=2)
         draw.line([x+size*0.85, y+size*0.8, x+size*1.0, y+size*1.3], fill=(0,0,0,255), width=2)
 
+def draw_detailed_human(draw, x, y, size, eating=False, gender="male"):
+    # Much more detailed and less abstract than before
+    # Head with face
+    head_x=x+size*0.5
+    head_y=y+size*0.25
+    draw.ellipse([head_x-size*0.22, head_y-size*0.22, head_x+size*0.22, head_y+size*0.22], fill=(255,224,189,255), outline=(0,0,0,255), width=2)
+    # Eyes
+    draw.ellipse([head_x-size*0.12, head_y-size*0.05, head_x-size*0.05, head_y+0.02], fill=(0,0,0,255))
+    draw.ellipse([head_x+size*0.05, head_y-size*0.05, head_x+size*0.12, head_y+0.02], fill=(0,0,0,255))
+    draw.ellipse([head_x-size*0.11, head_y-0.04, head_x-size*0.07, head_y-0.01], fill=(255,255,255,180))
+    draw.ellipse([head_x+size*0.06, head_y-0.04, head_x+size*0.10, head_y-0.01], fill=(255,255,255,180))
+    # Mouth
+    if eating:
+        draw.ellipse([head_x-size*0.06, head_y+size*0.08, head_x+size*0.06, head_y+size*0.14], fill=(0,0,0,255))
+    else:
+        draw.arc([head_x-size*0.08, head_y+size*0.05, head_x+size*0.08, head_y+size*0.12], 20, 160, fill=(0,0,0,255), width=2)
+    # Hair - more detailed
+    if gender=="male":
+        draw.ellipse([head_x-size*0.25, head_y-size*0.28, head_x+size*0.25, head_y-size*0.05], fill=(101,67,33,255), outline=(0,0,0,200), width=1)
+    else:
+        draw.ellipse([head_x-size*0.28, head_y-size*0.30, head_x+size*0.28, head_y-0.02], fill=(80,50,20,255), outline=(0,0,0,200), width=1)
+        draw.ellipse([head_x-size*0.30, head_y-0.05, head_x-size*0.15, head_y+size*0.15], fill=(80,50,20,255))
+        draw.ellipse([head_x+size*0.15, head_y-0.05, head_x+size*0.30, head_y+size*0.15], fill=(80,50,20,255))
+    # Body with clothing
+    body_top=y+size*0.5
+    draw.rectangle([x+size*0.2, body_top, x+size*0.8, body_top+size*0.6], fill=(100,149,237,255), outline=(0,0,0,255), width=2)
+    draw.rectangle([x+size*0.22, body_top+size*0.25, x+size*0.78, body_top+size*0.30], fill=(139,69,19,255), outline=(0,0,0,255), width=1)
+    # Arms
+    if eating:
+        draw.line([x+size*0.7, body_top+size*0.1, x+size*1.0, body_top-size*0.05], fill=(0,0,0,255), width=3)
+        draw.ellipse([x+size*0.92, body_top-size*0.12, x+size*1.12, body_top+size*0.08], fill=(220,20,60,255), outline=(0,0,0,255), width=2)
+        draw.ellipse([x+size*0.98, body_top-size*0.06, x+size*1.06, body_top+0.01], fill=(255,150,150,180))
+    else:
+        draw.line([x+size*0.05, body_top+size*0.1, x+size*0.20, body_top+size*0.35], fill=(0,0,0,255), width=3)
+        draw.line([x+size*0.80, body_top+size*0.1, x+size*0.95, body_top+size*0.05], fill=(0,0,0,255), width=3)
+    # Legs
+    draw.rectangle([x+size*0.25, body_top+size*0.6, x+size*0.42, body_top+size*0.95], fill=(101,67,33,255), outline=(0,0,0,255), width=1)
+    draw.rectangle([x+size*0.58, body_top+size*0.6, x+size*0.75, body_top+size*0.95], fill=(101,67,33,255), outline=(0,0,0,255), width=1)
+
 def create_visual_asset(visual,index):
     filename=f"visual_{index}.gif"
     label=(visual.get('label','')+" "+visual.get('description','')).lower()
     frames=[]
-    for f in range(20):
-        progress=f/20.0
+    for f in range(24):
+        progress=f/24.0
         frame=Image.new("RGBA",(VISUAL_W,VISUAL_H),(0,0,0,0))
         draw=ImageDraw.Draw(frame)
         
         if "apple" in label or "fruit" in label or "eat" in label:
-            # Watercolor apple like reference
-            draw.line([VISUAL_W*0.4, 20, VISUAL_W*0.9, 40], fill=(101,67,33,255), width=2)
-            for lx,ly in [(VISUAL_W*0.55,22),(VISUAL_W*0.58,28),(VISUAL_W*0.62,35),(VISUAL_W*0.78,32),(VISUAL_W*0.82,38)]:
-                leaf_sway = 3*math.sin(progress*2*math.pi + lx*0.1)
-                draw.ellipse([lx+leaf_sway, ly, lx+leaf_sway+8, ly+5], fill=(80,160,80,200), outline=(60,120,40,150), width=1)
-            swing=10*math.sin(2*math.pi*progress*0.7)
-            ax=VISUAL_W*0.65+swing
-            ay=70+4*math.sin(2*math.pi*progress*1.2)
-            draw.line([ax, 35, ax, ay-10], fill=(0,0,0,255), width=1)
-            draw.ellipse([ax-22, ay, ax+22, ay+36], fill=(220,30,50,255), outline=(0,0,0,255), width=2)
-            draw.ellipse([ax-12, ay+5, ax-2, ay+18], fill=(255,120,120,180))
-            draw.ellipse([ax+5, ay-8, ax+18, ay+2], fill=(80,160,80,200), outline=(0,0,0,180), width=1)
-            fig_x=VISUAL_W*0.15
-            fig_y=VISUAL_H*0.35
-            bob=4*math.sin(progress*2*math.pi*0.8)
-            draw_stick_figure_watercolor(draw, fig_x, fig_y+bob, 160, eating=("eat" in label))
-            for i in range(3):
-                leaf_progress = (progress + i*0.33) % 1.0
-                leaf_y = VISUAL_H*0.3 + leaf_progress*VISUAL_H*0.6
-                leaf_x = VISUAL_W*0.5 + 60*math.sin(leaf_progress*3*math.pi + i)
-                draw.ellipse([leaf_x, leaf_y, leaf_x+18, leaf_y+10], fill=(100,180,100,180), outline=(0,0,0,120), width=1)
-                draw.line([leaf_x+2, leaf_y+5, leaf_x+16, leaf_y+5], fill=(0,0,0,100), width=1)
-            for _ in range(6):
-                dot_x=random.randint(20, VISUAL_W-20)
-                dot_y=random.randint(VISUAL_H//2, VISUAL_H-20)
-                dot_x+=3*math.sin(progress*3+dot_x*0.1)
-                draw.ellipse([dot_x, dot_y, dot_x+3, dot_y+3], fill=(100,180,100,120))
+            # OVERHAULED: Detailed Garden of Eden with two figures, tree, serpent, less abstract
+            # Sky gradient hint
+            draw.rectangle([0,0,VISUAL_W,80], fill=(135,206,235,30))
+            # Detailed tree with trunk texture
+            draw.rectangle([VISUAL_W//2-14, VISUAL_H-140, VISUAL_W//2+14, VISUAL_H-20], fill=(101,67,33,255), outline=(0,0,0,255), width=2)
+            draw.line([VISUAL_W//2-6, VISUAL_H-120, VISUAL_W//2-6, VISUAL_H-30], fill=(80,50,20,100), width=1)
+            draw.line([VISUAL_W//2+6, VISUAL_H-120, VISUAL_W//2+6, VISUAL_H-30], fill=(80,50,20,100), width=1)
+            # Canopy with detailed leaves - multiple layers
+            rustle=6*math.sin(2*math.pi*progress*0.8)
+            for offset in [(-50, -140, 40), (10, -160, 35), (-30, -180, 30)]:
+                ox, oy, sz = offset
+                draw.ellipse([VISUAL_W//2+ox+rustle, VISUAL_H+oy, VISUAL_W//2+ox+sz+rustle, VISUAL_H+oy+sz], fill=(34,139,34,255), outline=(0,0,0,200), width=1)
+                draw.ellipse([VISUAL_W//2+ox+5+rustle, VISUAL_H+oy+5, VISUAL_W//2+ox+sz-5+rustle, VISUAL_H+oy+sz-5], fill=(60,179,60,180))
+            # Apples with stems and highlights - concrete
+            swing=8*math.sin(2*math.pi*progress*0.6)
+            for ax_offset, ay_offset in [(-25, -125), (20, -135)]:
+                ax=VISUAL_W//2+ax_offset+swing
+                ay=VISUAL_H+ay_offset
+                draw.line([ax, ay-12, ax, ay], fill=(101,67,33,255), width=2)
+                draw.ellipse([ax-14, ay, ax+14, ay+18], fill=(220,20,60,255), outline=(0,0,0,255), width=2)
+                draw.ellipse([ax-8, ay+3, ax-2, ay+9], fill=(255,150,150,200))  # highlight
+                draw.ellipse([ax+4, ay-6, ax+10, ay-1], fill=(34,139,34,255), outline=(0,0,0,150), width=1)
+            # Hanging apple from branch like reference but more detailed
+            branch_y=50
+            draw.line([VISUAL_W*0.3, branch_y, VISUAL_W*0.85, branch_y+10], fill=(101,67,33,255), width=4)
+            # Small leaves on branch
+            for lx in [VISUAL_W*0.4, VISUAL_W*0.55, VISUAL_W*0.70]:
+                ly=branch_y+random.randint(-5,5)
+                draw.ellipse([lx+3*math.sin(progress*3+lx*0.1), ly, lx+10+3*math.sin(progress*3+lx*0.1), ly+6], fill=(60,160,60,200), outline=(0,0,0,120), width=1)
+            hang_x=VISUAL_W*0.62+swing
+            hang_y=branch_y+15+3*math.sin(progress*2*math.pi)
+            draw.line([hang_x, branch_y+5, hang_x, hang_y], fill=(0,0,0,200), width=1)
+            draw.ellipse([hang_x-18, hang_y, hang_x+18, hang_y+26], fill=(220,20,60,255), outline=(0,0,0,255), width=2)
+            draw.ellipse([hang_x-10, hang_y+4, hang_x-3, hang_y+12], fill=(255,180,180,200))
+            # Serpent on branch - more detailed
+            serpent_x=VISUAL_W*0.35+10*math.sin(progress*2*math.pi)
+            draw.ellipse([serpent_x, branch_y-3, serpent_x+40, branch_y+8], fill=(34,139,34,255), outline=(0,0,0,200), width=1)
+            draw.ellipse([serpent_x+30, branch_y-2, serpent_x+45, branch_y+6], fill=(34,139,34,255), outline=(0,0,0,200), width=1)
+            draw.ellipse([serpent_x+38, branch_y-1, serpent_x+42, branch_y+2], fill=(0,0,0,255))  # eye
+            if f%8<4:
+                draw.line([serpent_x+45, branch_y+2, serpent_x+52, branch_y], fill=(220,20,60,255), width=1)
+            # Adam and Eve figures - detailed, not abstract blobs
+            draw_detailed_human(draw, 30, VISUAL_H-160, 90, eating=("eat" in label), gender="male")
+            draw_detailed_human(draw, VISUAL_W-130, VISUAL_H-155, 85, eating=False, gender="female")
+            # Ground with grass texture
+            draw.rectangle([0, VISUAL_H-20, VISUAL_W, VISUAL_H], fill=(34,139,34,150))
+            for gx in range(0, VISUAL_W, 20):
+                draw.line([gx, VISUAL_H-20, gx+5, VISUAL_H-28], fill=(20,100,20,120), width=1)
 
         elif "tree" in label or "garden" in label:
-            draw.rectangle([VISUAL_W//2-8, VISUAL_H-100, VISUAL_W//2+8, VISUAL_H-20], fill=(101,67,33,255), outline=(0,0,0,255), width=1)
-            rustle=8*math.sin(2*math.pi*progress)
-            draw_watercolor_blob(draw, [VISUAL_W//2-70+rustle, VISUAL_H-180, VISUAL_W//2+20+rustle, VISUAL_H-100], (80,160,80), alpha=180)
-            draw_watercolor_blob(draw, [VISUAL_W//2-20-rustle, VISUAL_H-200, VISUAL_W//2+70-rustle, VISUAL_H-120], (80,160,80), alpha=170)
-            draw.ellipse([VISUAL_W//2-35, VISUAL_H-150, VISUAL_W//2-12, VISUAL_H-125], fill=(220,30,50,255), outline=(0,0,0,255), width=1)
-            draw.ellipse([VISUAL_W//2+18, VISUAL_H-160, VISUAL_W//2+40, VISUAL_H-135], fill=(220,30,50,255), outline=(0,0,0,255), width=1)
-            fall_y=(progress*VISUAL_H*1.1)%(VISUAL_H+20)-10
-            fall_x=VISUAL_W//2+50*math.sin(progress*4)
-            draw.ellipse([fall_x, fall_y, fall_x+14, fall_y+8], fill=(100,180,100,180))
+            draw.rectangle([VISUAL_W//2-12, VISUAL_H-110, VISUAL_W//2+12, VISUAL_H-20], fill=(101,67,33,255), outline=(0,0,0,255), width=2)
+            rustle=6*math.sin(2*math.pi*progress)
+            draw.ellipse([VISUAL_W//2-60+rustle, VISUAL_H-170, VISUAL_W//2+10+rustle, VISUAL_H-100], fill=(34,139,34,255), outline=(0,0,0,255), width=2)
+            draw.ellipse([VISUAL_W//2-10-rustle, VISUAL_H-190, VISUAL_W//2+60-rustle, VISUAL_H-120], fill=(34,139,34,255), outline=(0,0,0,255), width=2)
+            draw.ellipse([VISUAL_W//2-18, VISUAL_H-155, VISUAL_W//2-2, VISUAL_H-135], fill=(220,20,60,255), outline=(0,0,0,255), width=2)
+            draw.ellipse([VISUAL_W//2+15, VISUAL_H-165, VISUAL_W//2+32, VISUAL_H-145], fill=(220,20,60,255), outline=(0,0,0,255), width=2)
+            fall_y=(progress*VISUAL_H*1.2)%(VISUAL_H+20)-10
+            fall_x=VISUAL_W//2+40*math.sin(progress*4)
+            draw.ellipse([fall_x, fall_y, fall_x+12, fall_y+18], fill=(60,180,60,200), outline=(0,0,0,150), width=1)
+            draw.rectangle([0, VISUAL_H-15, VISUAL_W, VISUAL_H], fill=(34,139,34,150))
 
         elif "serpent" in label or "snake" in label:
-            draw.line([20,100,VISUAL_W-20,110], fill=(101,67,33,255), width=3)
+            draw.line([20,110,VISUAL_W-20,120], fill=(101,67,33,255), width=5)
             pts=[]
-            for i in range(0,VISUAL_W-40,10):
-                pts.append((i+20, 100+12*math.sin((i/20)+progress*3*math.pi)))
+            for i in range(0,VISUAL_W-50,8):
+                pts.append((i+25,110+16*math.sin((i/22)+progress*3*math.pi)))
             if len(pts)>1:
-                draw.line(pts, fill=(80,160,80,255), width=8, joint="curve")
-                draw.line(pts, fill=(0,0,0,180), width=1, joint="curve")
-            hx,hy=pts[-1] if pts else (VISUAL_W-40,100)
-            draw.ellipse([hx,hy-6,hx+16,hy+6], fill=(80,160,80,255), outline=(0,0,0,255), width=1)
-            draw.ellipse([hx+10,hy-2,hx+13,hy+1], fill=(0,0,0,255))
-            if f%8<4:
-                draw.line([hx+16,hy,hx+24,hy-3], fill=(220,30,50,200), width=1)
+                draw.line(pts, fill=(34,139,34,255), width=14, joint="curve")
+                draw.line(pts, fill=(0,0,0,200), width=2, joint="curve")
+                for j in range(0,len(pts),4):
+                    x,y=pts[j]
+                    draw.ellipse([x-2,y-2,x+2,y+2], fill=(50,180,50,200))
+            hx,hy=pts[-1] if pts else (VISUAL_W-40,110)
+            draw.ellipse([hx,hy-10,hx+28,hy+10], fill=(34,139,34,255), outline=(0,0,0,255), width=2)
+            draw.ellipse([hx+16,hy-3,hx+20,hy+1], fill=(0,0,0,255))
+            draw.ellipse([hx+18,hy-5,hx+22,hy-1], fill=(255,255,255,150))
+            if f%6<3:
+                draw.line([hx+28,hy,hx+38,hy-4], fill=(220,20,60,255), width=2)
+                draw.line([hx+28,hy+1,hx+38,hy+4], fill=(220,20,60,255), width=2)
 
         elif "ai brain" in label or "robot" in label or "artificial" in label:
-            # Versatile AI animation - watercolor robot head with circuits
             cx=VISUAL_W//2
             cy=VISUAL_H//2-20
-            pulse=3*math.sin(progress*2*math.pi)
-            # Robot head watercolor blob
-            draw_watercolor_blob(draw, [cx-60-pulse, cy-60-pulse, cx+60+pulse, cy+40+pulse], (180,180,200), alpha=180)
-            draw.rectangle([cx-60, cy-60, cx+60, cy+40], fill=(200,200,220,100), outline=(0,0,0,200), width=2)
-            # Eyes glowing
-            glow_alpha=150+int(50*math.sin(progress*4*math.pi))
-            draw.ellipse([cx-35, cy-25, cx-15, cy-5], fill=(0,200,255,glow_alpha), outline=(0,0,0,180), width=1)
-            draw.ellipse([cx+15, cy-25, cx+35, cy-5], fill=(0,200,255,glow_alpha), outline=(0,0,0,180), width=1)
-            # Circuit lines
-            for i in range(3):
-                y_off=i*15-15
-                draw.line([cx-50, cy+10+y_off, cx+50, cy+10+y_off], fill=(0,150,200,100), width=1)
-                draw.ellipse([cx-50+progress*100%100-20, cy+10+y_off-2, cx-50+progress*100%100-16, cy+10+y_off+2], fill=(0,255,255,200))
+            pulse=4*math.sin(progress*2*math.pi)
+            draw.rectangle([cx-65-pulse, cy-65-pulse, cx+65+pulse, cy+45+pulse], fill=(220,220,230,200), outline=(0,0,0,255), width=2)
+            draw.rectangle([cx-55, cy-55, cx+55, cy+35], fill=(200,200,220,150), outline=(0,0,0,150), width=1)
+            glow=150+80*math.sin(progress*4*math.pi)
+            draw.ellipse([cx-35, cy-25, cx-15, cy-5], fill=(0,200,255,glow), outline=(0,0,0,200), width=2)
+            draw.ellipse([cx+15, cy-25, cx+35, cy-5], fill=(0,200,255,glow), outline=(0,0,0,200), width=2)
+            draw.rectangle([cx-20, cy+5, cx+20, cy+15], fill=(0,0,0,200))
+            for i in range(4):
+                y_off=i*10-10
+                draw.line([cx-50, cy+8+y_off, cx+50, cy+8+y_off], fill=(0,150,200,100), width=1)
+                dot_x=cx-50+(progress*100+i*25)%100
+                draw.ellipse([dot_x-3, cy+8+y_off-2, dot_x+3, cy+8+y_off+2], fill=(0,255,255,220))
 
         elif "scales" in label or "justice" in label or "regulation" in label:
-            # Scales of justice - watercolor versatile for any ethics/regulation topic
             cx=VISUAL_W//2
-            # Top pivot
-            draw.line([cx, 30, cx, 70], fill=(101,67,33,255), width=2)
-            tilt=8*math.sin(progress*2*math.pi*0.6)
-            # Beam
-            draw.line([cx-80, 70+tilt, cx+80, 70-tilt], fill=(101,67,33,255), width=3)
-            # Left pan
-            lx=cx-70
-            ly=70+tilt
-            draw.line([lx, ly, lx-15, ly+40], fill=(0,0,0,150), width=1)
-            draw.line([lx, ly, lx+15, ly+40], fill=(0,0,0,150), width=1)
-            draw.ellipse([lx-25, ly+40, lx+25, ly+55], fill=(200,180,140,180), outline=(0,0,0,150), width=1)
-            # Right pan
-            rx=cx+70
-            ry=70-tilt
-            draw.line([rx, ry, rx-15, ry+40], fill=(0,0,0,150), width=1)
-            draw.line([rx, ry, rx+15, ry+40], fill=(0,0,0,150), width=1)
-            draw.ellipse([rx-25, ry+40, rx+25, ry+55], fill=(200,180,140,180), outline=(0,0,0,150), width=1)
-            # Small weights bobbing
-            bob=3*math.sin(progress*2*math.pi)
-            draw.ellipse([lx-10, ly+35+bob, lx+10, ly+50+bob], fill=(100,100,100,150))
+            draw.rectangle([cx-5, 20, cx+5, 60], fill=(101,67,33,255), outline=(0,0,0,200), width=1)
+            tilt=10*math.sin(progress*2*math.pi*0.5)
+            draw.line([cx-85, 60+tilt, cx+85, 60-tilt], fill=(101,67,33,255), width=4)
+            draw.ellipse([cx, 55, cx+10, 65], fill=(101,67,33,255), outline=(0,0,0,200), width=1)
+            lx=cx-75
+            ly=60+tilt
+            draw.line([lx, ly, lx-20, ly+45], fill=(0,0,0,150), width=2)
+            draw.line([lx, ly, lx+20, ly+45], fill=(0,0,0,150), width=2)
+            draw.ellipse([lx-28, ly+45, lx+28, ly+62], fill=(218,165,32,200), outline=(0,0,0,200), width=2)
+            draw.ellipse([lx-15, ly+38, lx+15, ly+52], fill=(100,100,100,180), outline=(0,0,0,150), width=1)
+            rx=cx+75
+            ry=60-tilt
+            draw.line([rx, ry, rx-20, ry+45], fill=(0,0,0,150), width=2)
+            draw.line([rx, ry, rx+20, ry+45], fill=(0,0,0,150), width=2)
+            draw.ellipse([rx-28, ry+45, rx+28, ry+62], fill=(218,165,32,200), outline=(0,0,0,200), width=2)
+            draw.ellipse([rx-12, ry+38, rx+12, ry+52], fill=(200,50,50,180), outline=(0,0,0,150), width=1)
 
         elif "universe" in label or "galaxy" in label or "cosmos" in label or "big bang" in label:
-            # Versatile cosmos animation - galaxy spiral watercolor
             cx=VISUAL_W//2
             cy=VISUAL_H//2
-            # Stars background
-            for _ in range(15):
+            for _ in range(20):
                 sx=random.randint(0,VISUAL_W)
                 sy=random.randint(0,VISUAL_H)
-                twinkle=random.random()
-                alpha=int(100+100*math.sin(progress*4*math.pi+twinkle*10))
-                draw.ellipse([sx,sy,sx+3,sy+3], fill=(255,255,255,alpha))
-            # Galaxy spiral
-            for i in range(0,360,20):
-                ang=math.radians(i+progress*60)
-                r=i*0.35
+                alpha=int(80+120*math.sin(progress*5+_))
+                size=1+random.randint(0,2)
+                draw.ellipse([sx,sy,sx+size,sy+size], fill=(255,255,255,alpha))
+            for i in range(0,360,15):
+                ang=math.radians(i+progress*80)
+                r=i*0.38
                 x=cx+r*math.cos(ang)
-                y=cy+r*math.sin(ang)*0.6
-                size=4+r*0.05
-                draw.ellipse([x-size,y-size,x+size,y+size], fill=(150,100,200,180), outline=(100,50,150,100), width=1)
+                y=cy+r*math.sin(ang)*0.55
+                sz=3+r*0.06
+                draw.ellipse([x-sz,y-sz,x+sz,y+sz], fill=(138,43,226,180), outline=(75,0,130,100), width=1)
                 x2=cx+r*math.cos(ang+math.pi)
-                y2=cy+r*math.sin(ang+math.pi)*0.6
-                draw.ellipse([x2-size,y2-size,x2+size,y2+size], fill=(100,150,200,180), outline=(50,100,150,100), width=1)
+                y2=cy+r*math.sin(ang+math.pi)*0.55
+                draw.ellipse([x2-sz,y2-sz,x2+sz,y2+sz], fill=(30,144,255,180), outline=(0,0,139,100), width=1)
+            draw.ellipse([cx-8, cy-8, cx+8, cy+8], fill=(255,255,0,220), outline=(255,165,0,200), width=2)
 
         elif "atom" in label or "dna" in label or "evolution" in label:
-            # Atom with orbiting electrons - versatile for science topics
             cx=VISUAL_W//2
             cy=VISUAL_H//2
-            # Nucleus watercolor
-            pulse=4*math.sin(progress*2*math.pi)
-            draw_watercolor_blob(draw, [cx-20-pulse, cy-20-pulse, cx+20+pulse, cy+20+pulse], (200,100,100), alpha=180)
-            # Electron orbits
+            pulse=3*math.sin(progress*2*math.pi)
+            draw.ellipse([cx-18-pulse, cy-18-pulse, cx+18+pulse, cy+18+pulse], fill=(255,100,100,200), outline=(0,0,0,200), width=2)
+            draw.ellipse([cx-8, cy-8, cx+8, cy+8], fill=(200,50,50,255))
             for orbit in range(3):
                 ang_offset=orbit*120
+                rx=45+orbit*14
+                ry=28+orbit*8
                 for e in range(2):
-                    ang=math.radians(progress*360* (1+orbit*0.3) + ang_offset + e*180)
-                    rx=50+orbit*15
-                    ry=30+orbit*8
+                    ang=math.radians(progress*360*(1+orbit*0.4)+ang_offset+e*180)
                     ex=cx+rx*math.cos(ang)
                     ey=cy+ry*math.sin(ang)
-                    draw.ellipse([ex-6, ey-6, ex+6, ey+6], fill=(100,150,200,200), outline=(0,0,0,150), width=1)
-                # Orbit path
-                draw.ellipse([cx-(50+orbit*15), cy-(30+orbit*8), cx+(50+orbit*15), cy+(30+orbit*8)], outline=(0,0,0,60), width=1)
+                    draw.ellipse([ex-5, ey-5, ex+5, ey+5], fill=(100,150,255,220), outline=(0,0,0,150), width=1)
+                draw.ellipse([cx-rx, cy-ry, cx+rx, cy+ry], outline=(0,0,0,70), width=1)
 
         elif "brain" in label or "choice" in label or "fork" in label:
-            # Brain with choice paths - versatile for free will, decision topics
             cx=VISUAL_W//2
-            cy=VISUAL_H//2-10
-            # Brain watercolor
-            draw_watercolor_blob(draw, [cx-60, cy-50, cx+60, cy+30], (200,150,150), alpha=180)
-            # Wrinkles
+            cy=VISUAL_H//2-15
+            draw.ellipse([cx-65, cy-45, cx+65, cy+35], fill=(255,182,193,200), outline=(0,0,0,200), width=2)
+            draw.ellipse([cx-55, cy-35, cx+55, cy+25], fill=(255,192,203,150))
             for i in range(3):
-                y=cy-30+i*20
-                draw.arc([cx-40, y-10, cx+40, y+10], 0, 180, fill=(0,0,0,80), width=1)
-            # Forked paths below
-            draw.line([cx, cy+30, cx, cy+60], fill=(0,0,0,150), width=2)
-            draw.line([cx, cy+60, cx-40, cy+100], fill=(0,0,0,150), width=2)
-            draw.line([cx, cy+60, cx+40, cy+100], fill=(0,0,0,150), width=2)
-            # Pulsing choice lights
-            pulse_left=120+60*math.sin(progress*2*math.pi)
-            pulse_right=120+60*math.sin(progress*2*math.pi+math.pi)
-            draw.ellipse([cx-50, cy+95, cx-30, cy+115], fill=(100,200,100,int(pulse_left)), outline=(0,0,0,150), width=1)
-            draw.ellipse([cx+30, cy+95, cx+50, cy+115], fill=(200,100,100,int(pulse_right)), outline=(0,0,0,150), width=1)
+                y=cy-25+i*18
+                draw.arc([cx-40, y-8, cx+40, y+8], 0, 180, fill=(0,0,0,90), width=2)
+            draw.line([cx, cy+35, cx, cy+65], fill=(0,0,0,200), width=3)
+            draw.line([cx, cy+65, cx-45, cy+110], fill=(0,0,0,200), width=3)
+            draw.line([cx, cy+65, cx+45, cy+110], fill=(0,0,0,200), width=3)
+            pulse_l=100+100*math.sin(progress*2*math.pi)
+            pulse_r=100+100*math.sin(progress*2*math.pi+math.pi)
+            draw.ellipse([cx-55, cy+105, cx-30, cy+130], fill=(100,200,100,int(pulse_l)), outline=(0,0,0,200), width=2)
+            draw.ellipse([cx+30, cy+105, cx+55, cy+130], fill=(200,100,100,int(pulse_r)), outline=(0,0,0,200), width=2)
+            draw.text((cx-48, cy+110), "A", fill="white", font=load_font(14,bold=True))
+            draw.text((cx+38, cy+110), "B", fill="white", font=load_font(14,bold=True))
 
         elif "lightbulb" in label or "idea" in label or "evidence" in label or "book" in label or "logic" in label or "truth" in label:
-            # Lightbulb idea - versatile for any topic
             cx=VISUAL_W//2
-            cy=VISUAL_H//2-20
-            # Bulb watercolor glow
-            glow=40+20*math.sin(progress*2*math.pi)
-            draw.ellipse([cx-50-glow//2, cy-60-glow//2, cx+50+glow//2, cy+20+glow//2], fill=(255,240,100,60))
-            # Bulb
-            draw.ellipse([cx-35, cy-50, cx+35, cy+20], fill=(255,250,200,200), outline=(0,0,0,180), width=2)
-            # Base
-            draw.rectangle([cx-15, cy+20, cx+15, cy+40], fill=(150,150,150,200), outline=(0,0,0,150), width=1)
-            # Filament glowing
-            filament_alpha=150+80*math.sin(progress*4*math.pi)
-            draw.line([cx-10, cy-20, cx, cy-10, cx+10, cy-20], fill=(255,200,0,filament_alpha), width=2)
-            # Rays
-            for ang in range(-60,61,20):
+            cy=VISUAL_H//2-25
+            glow=35+25*math.sin(progress*2*math.pi)
+            draw.ellipse([cx-60-glow, cy-70-glow, cx+60+glow, cy+30+glow], fill=(255,240,100,50))
+            draw.ellipse([cx-38, cy-55, cx+38, cy+20], fill=(255,255,200,230), outline=(0,0,0,200), width=2)
+            draw.rectangle([cx-18, cy+20, cx+18, cy+42], fill=(150,150,150,230), outline=(0,0,0,200), width=2)
+            draw.rectangle([cx-15, cy+28, cx+15, cy+32], fill=(100,100,100,150))
+            filament_alpha=120+100*math.sin(progress*5*math.pi)
+            draw.line([cx-12, cy-20, cx-4, cy-8, cx+4, cy-8, cx+12, cy-20], fill=(255,200,0,filament_alpha), width=3)
+            for ang in range(-70,71,18):
                 rad=math.radians(ang)
-                x2=cx+90*math.sin(rad)
-                y2=cy-30+90*math.cos(rad)*0.3
-                alpha=int(60+40*math.sin(progress*3+ang*0.1))
-                draw.line([cx, cy-10, x2, y2], fill=(255,230,0,alpha), width=1)
+                x2=cx+85*math.sin(rad)
+                y2=cy-15+85*math.cos(rad)*0.35
+                alpha=int(50+40*math.sin(progress*4+ang*0.15))
+                draw.line([cx, cy-10, x2, y2], fill=(255,230,0,alpha), width=2)
 
         elif "god" in label or "creator" in label or "light" in label or "sun" in label:
             cx=VISUAL_W//2
-            pulse=4*math.sin(progress*2*math.pi)
-            draw.ellipse([cx-28-pulse//2,15-pulse//2,cx+28+pulse//2,71+pulse//2], fill=(255,215,0,220), outline=(0,0,0,255), width=1)
-            for ang in range(-50,51,15):
+            pulse=5*math.sin(progress*2*math.pi)
+            draw.ellipse([cx-32-pulse, 12-pulse, cx+32+pulse, 76+pulse], fill=(255,215,0,230), outline=(0,0,0,255), width=2)
+            draw.ellipse([cx-12, 25, cx-2, 38], fill=(255,255,180,180))
+            for ang in range(-60,61,12):
                 rad=math.radians(ang)
-                x2=cx+200*math.sin(rad); y2=45+200*math.cos(rad)
-                alpha=100+int(50*math.sin(progress*3+ang*0.1))
-                draw.line([cx,45,x2,y2], fill=(255,215,0,alpha), width=2)
-            draw_watercolor_blob(draw, [20,20,100,50], (255,255,255), alpha=180)
-            draw_watercolor_blob(draw, [VISUAL_W-100,30,VISUAL_W-20,60], (255,255,255), alpha=180)
+                x2=cx+220*math.sin(rad); y2=44+220*math.cos(rad)
+                alpha=90+60*math.sin(progress*3+ang*0.12)
+                draw.line([cx,44,x2,y2], fill=(255,215,0,alpha), width=3)
+            draw.ellipse([25,18,95,48], fill=(255,255,255,220), outline=(0,0,0,150), width=1)
+            draw.ellipse([VISUAL_W-95,28,VISUAL_W-25,58], fill=(255,255,255,220), outline=(0,0,0,150), width=1)
+            draw.rectangle([0,VISUAL_H-25,VISUAL_W,VISUAL_H], fill=(34,139,34,200))
 
         elif "eyes" in label:
-            eye_open=8+12*math.sin(progress*math.pi)
-            draw.ellipse([VISUAL_W//2-70, VISUAL_H//2-20, VISUAL_W//2-20, VISUAL_H//2+10], fill=(255,255,255,255), outline=(0,0,0,255), width=1)
-            draw.ellipse([VISUAL_W//2-55, VISUAL_H//2-8-eye_open//3, VISUAL_W//2-35, VISUAL_H//2+5-eye_open//3], fill=(101,67,33,255), outline=(0,0,0,255), width=1)
-            draw.ellipse([VISUAL_W//2+20, VISUAL_H//2-20, VISUAL_W//2+70, VISUAL_H//2+10], fill=(255,255,255,255), outline=(0,0,0,255), width=1)
-            draw.ellipse([VISUAL_W//2+35, VISUAL_H//2-8-eye_open//3, VISUAL_W//2+55, VISUAL_H//2+5-eye_open//3], fill=(101,67,33,255), outline=(0,0,0,255), width=1)
+            eye_open=10+14*math.sin(progress*math.pi)
+            draw.ellipse([VISUAL_W//2-75, VISUAL_H//2-22, VISUAL_W//2-15, VISUAL_H//2+12], fill=(255,255,255,255), outline=(0,0,0,255), width=2)
+            draw.ellipse([VISUAL_W//2-60, VISUAL_H//2-10-eye_open//3, VISUAL_W//2-30, VISUAL_H//2+6-eye_open//3], fill=(101,67,33,255), outline=(0,0,0,255), width=1)
+            draw.ellipse([VISUAL_W//2-50, VISUAL_H//2-2, VISUAL_W//2-40, VISUAL_H//2+4], fill=(0,0,0,255))
+            draw.ellipse([VISUAL_W//2+15, VISUAL_H//2-22, VISUAL_W//2+75, VISUAL_H//2+12], fill=(255,255,255,255), outline=(0,0,0,255), width=2)
+            draw.ellipse([VISUAL_W//2+30, VISUAL_H//2-10-eye_open//3, VISUAL_W//2+60, VISUAL_H//2+6-eye_open//3], fill=(101,67,33,255), outline=(0,0,0,255), width=1)
+            draw.ellipse([VISUAL_W//2+40, VISUAL_H//2-2, VISUAL_W//2+50, VISUAL_H//2+4], fill=(0,0,0,255))
 
         else:
-            # GENERIC VERSATILE - debate stage watercolor for ANY topic
-            draw.rectangle([0,VISUAL_H-30,VISUAL_W,VISUAL_H], fill=(139,69,19,100))
-            draw.rectangle([40,VISUAL_H//2+20,130,VISUAL_H//2+70], fill=(101,67,33,200), outline=(0,0,0,150), width=1)
-            draw.rectangle([VISUAL_W-130,VISUAL_H//2+20,VISUAL_W-40,VISUAL_H//2+70], fill=(101,67,33,200), outline=(0,0,0,150), width=1)
-            draw_stick_figure_watercolor(draw, 50, VISUAL_H//2-40, 80, eating=False)
-            draw_stick_figure_watercolor(draw, VISUAL_W-120, VISUAL_H//2-40, 80, eating=False)
-            if f%10<6:
-                bx=VISUAL_W//2-40+5*math.sin(progress*4)
-                by=VISUAL_H//2-80
-                draw.ellipse([bx,by,bx+80,by+35], fill=(255,255,255,200), outline=(0,0,0,150), width=1)
+            draw.rectangle([0,VISUAL_H-28,VISUAL_W,VISUAL_H], fill=(139,69,19,120))
+            draw.rectangle([35,VISUAL_H//2+15,135,VISUAL_H//2+75], fill=(101,67,33,220), outline=(0,0,0,200), width=2)
+            draw.rectangle([VISUAL_W-135,VISUAL_H//2+15,VISUAL_W-35,VISUAL_H//2+75], fill=(101,67,33,220), outline=(0,0,0,200), width=2)
+            draw.rectangle([55,VISUAL_H//2+15,75,VISUAL_H//2+35], fill=(0,0,0,150))
+            draw.rectangle([VISUAL_W-75,VISUAL_H//2+15,VISUAL_W-55,VISUAL_H//2+35], fill=(0,0,0,150))
+            draw_detailed_human(draw, 45, VISUAL_H//2-50, 75, eating=False, gender="male")
+            draw_detailed_human(draw, VISUAL_W-125, VISUAL_H//2-50, 75, eating=False, gender="female")
+            if f%12<8:
+                bx=VISUAL_W//2-50+6*math.sin(progress*4)
+                by=VISUAL_H//2-85+2*math.cos(progress*3)
+                draw.ellipse([bx,by,bx+90,by+40], fill=(255,255,255,230), outline=(0,0,0,200), width=2)
+                draw.polygon([(bx+18,by+30),(bx+8,by+50),(bx+32,by+34)], fill=(255,255,255,230), outline=(0,0,0,200))
 
         frames.append(frame)
     
-    frames[0].save(filename,format='GIF',save_all=True,append_images=frames[1:],duration=140,loop=0,disposal=2)
-    print(f"   Created versatile watercolor animation: {visual.get('label')} ({len(frames)} frames, transparent, no black border)")
+    frames[0].save(filename,format='GIF',save_all=True,append_images=frames[1:],duration=110,loop=0,disposal=2)
+    print(f"   Created ENGAGING animation: {visual.get('label')} ({len(frames)} frames, detailed, transparent)")
     return filename
 
 def create_background(position,glow_color,filename):
@@ -1092,9 +1080,9 @@ def generate_panel_commentary(model,side,topic,rn,ap,sk,prev,roles):
     def trim(t,mw=180):
         wl=t.split(); return t if len(wl)<=mw else " ".join(wl[-mw:])
     if side=="A":
-        prompt=f"You are {prov} from {comp}. Judging round {rn} about {topic}. You thought {pref_label} stronger than {other_label}. {pref_label}: {trim(ap)} {other_label}: {trim(sk)} Explain in 2-3 sentences why {pref_label} more convincing, specific critique, different from previous judges. Previous: {recent}. Speak naturally as {prov}."
+        prompt=f"You are {prov} from {comp}. Judging round {rn} about {topic}. You thought {pref_label} stronger than {other_label}. {pref_label}: {trim(ap)} {other_label}: {trim(sk)} Explain in 2-3 full sentences why {pref_label} more convincing, specific, different from previous judges. Previous: {recent}. Speak naturally as {prov}, full sentences."
     else:
-        prompt=f"You are {prov} from {comp}. Judging round {rn} about {topic}. You thought {pref_label} stronger than {other_label}. {pref_label}: {trim(ap)} {other_label}: {trim(sk)} Explain in 2-3 sentences why {pref_label} more convincing, point out weakness in {other_label}. Be different from previous judges. Previous: {recent}. Speak naturally as {prov}."
+        prompt=f"You are {prov} from {comp}. Judging round {rn} about {topic}. You thought {pref_label} stronger than {other_label}. {pref_label}: {trim(ap)} {other_label}: {trim(sk)} Explain in 2-3 full sentences why {pref_label} more convincing, point out weakness in {other_label}. Be different from previous judges. Previous: {recent}. Speak naturally as {prov}, full sentences."
     resp=query_openrouter(prompt,model,timeout=30,max_tokens=320,temperature=0.85)
     if resp and len(resp.split())>=15:
         resp=re.sub(r'As .*? to assess,','',resp,flags=re.IGNORECASE).strip()
@@ -1103,9 +1091,9 @@ def generate_panel_commentary(model,side,topic,rn,ap,sk,prev,roles):
         if len(resp.split())>=10:
             return resp
     if side=="A":
-        return f"In round {rn}, I found {pref_label} more persuasive because they stayed close to what the text actually says. They quoted Genesis 3 verse 7 and 22 and explained immediate outcome. {other_label} relied more on ideas not in the chapter. That is why I leaned toward {pref_label}."
+        return f"In round {rn}, I found {pref_label} more persuasive because they stayed close to what the text actually says. They quoted Genesis 3 verse 7 and 22 and explained the immediate outcome clearly. {other_label} relied more on ideas not in the chapter itself. That is why I leaned toward {pref_label} in this round."
     else:
-        return f"Looking at round {rn}, {pref_label} made stronger case to me. They pointed out Adam did not die that day, living 930 years, and that eyes opening happened exactly as described. {other_label} tried to redefine death, but plain reading favors {pref_label} on what happened that day."
+        return f"Looking at round {rn}, {pref_label} made the stronger case to me. They pointed out that Adam did not die that day, living 930 years, and that eyes opening happened exactly as described in the text. {other_label} tried to redefine death, but the plain reading of what happened that day favors {pref_label}."
 
 def build_intro(topic,jc,roles):
     return f"Welcome to the AI Debate Arena. Today, {roles['side_a_label']} faces {roles['side_b_label']} on the question: {topic}. Three rounds, equal time. An independent panel of {jc} AI judges from leading companies will score argument strength, rebuttal quality, and clarity. Let's begin."
@@ -1144,11 +1132,11 @@ def run_debate_pipeline():
     if not avail: avail=FALLBACK_MODELS.copy()
     ap_model,sk_model=choose_primary_models(avail)
     roles=get_debate_roles(topic, ap_model)
-    print(f"Roles: {roles['side_a_label']} VS {roles['side_b_label']} - VERSATILE for any topic.txt")
+    print(f"Roles: {roles['side_a_label']} VS {roles['side_b_label']} - VERSATILE")
     print(f"Debate engines: {get_judge_short_name(ap_model)} [{provider_from_model(ap_model)}] vs {get_judge_short_name(sk_model)} [{provider_from_model(sk_model)}]")
+    print(f"Voices UNIQUE: GOD={VOICES['A']}, SERPENT={VOICES['B']}, MOD={VOICES['Moderator']}, JUDGES={', '.join(JUDGE_VOICES[:len(avail)])}")
     judges=choose_judges(avail,(ap_model,sk_model))
     if not judges:
-        # Deduplicate fallback too - one per company only
         seen_prov=set()
         seen_name=set()
         dedup=[]
@@ -1205,7 +1193,6 @@ def run_debate_pipeline():
     add_segment(build_outro(len(judges),cum_a,cum_b,roles),"Moderator","MODERATOR")
     stitch_segments(segs,OUTPUT_FILE)
     print(f"\nCOMPLETE: {OUTPUT_FILE} — {cum_a:.1f} vs {cum_b:.1f}")
-    print(f"Versatile: YES - works for ANY topic.txt, roles {roles['side_a_label']} vs {roles['side_b_label']}")
     cleanup_cache()
 
 if __name__=="__main__":
