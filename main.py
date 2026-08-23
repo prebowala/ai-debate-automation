@@ -37,20 +37,20 @@ VISUAL_W = 520
 VISUAL_H = 520
 VISUAL_Y = 160
 
-# Most natural conversational voices - fixed for language audio not code
+# Most natural conversational voices - multilingual are most expressive and human
 VOICES = {
-    "A": "en-US-GuyNeural",
-    "B": "en-US-AriaNeural",
-    "Moderator": "en-US-JennyNeural",
+    "A": "en-US-BrianMultilingualNeural",  # warm, natural, conversational male - best for debates
+    "B": "en-US-AvaMultilingualNeural",   # expressive, natural female - best for debates
+    "Moderator": "en-US-AndrewMultilingualNeural",  # most natural moderator
 }
 JUDGE_VOICES = [
-    "en-US-DavisNeural",
-    "en-US-JaneNeural",
-    "en-US-JasonNeural",
-    "en-US-NancyNeural",
-    "en-US-ChristopherNeural",
-    "en-US-EmmaNeural",
-    "en-US-AndrewNeural",
+    "en-US-EmmaMultilingualNeural",  # natural female 1
+    "en-US-BrianMultilingualNeural",  # natural male 1
+    "en-US-AvaMultilingualNeural",   # natural female 2
+    "en-US-AndrewMultilingualNeural", # natural male 2
+    "en-US-JennyNeural",  # backup natural
+    "en-US-GuyNeural",
+    "en-US-AriaNeural",
 ]
 
 FALLBACK_MODELS = [
@@ -110,21 +110,40 @@ def cleanup_cache():
 def count_words(t): return len(re.findall(r"\b[\w'-]+\b", t or ""))
 
 def clean_for_speech(t):
-    # FIX: ensure language audio, not code spoken
-    # Remove code artifacts, brackets, etc.
-    t=re.sub(r"\([^)]*\)","",t or "")  # remove (like this)
-    t=re.sub(r"\[.*?\]","",t)  # remove [brackets]
-    t=re.sub(r"\{.*?\}","",t)  # remove {braces}
-    t=t.replace("–",", ").replace("—",". ").replace(" - ",". ").replace(" -",". ").replace("- ",". ")
-    for o,n in {"*":"", "#":"", "_":"", "`":"", "\"":"", ":":" . ", ";":" . ", "&":" and", "=":" ", ">":" ", "<":" ", "/":" ", "\\":" "}.items():
+    if not t:
+        return ""
+    # Remove URLs and websites completely - this was speaking code/websites
+    t=re.sub(r"https?://\S+"," ",t)
+    t=re.sub(r"www\.\S+"," ",t)
+    t=re.sub(r"\b[a-z0-9-]+\.[a-z]{2,}(?:/[\S]*)?"," ",t, flags=re.IGNORECASE)  # domains like openrouter.ai/api
+    # Remove markdown links [text](url) -> text
+    t=re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", t)
+    # Remove code artifacts
+    t=re.sub(r"```.*?```"," ",t, flags=re.DOTALL)
+    t=re.sub(r"`[^`]+`"," ",t)
+    # Remove bracketed references like [1], [2], (Genesis 2:17) keep text but remove brackets
+    t=re.sub(r"\([^)]*\d+:\d+[^)]*\)"," ",t)  # remove (Genesis 2:17) style to avoid reading numbers weirdly? Actually keep but clean
+    # For general parentheses, keep content but remove parens if not needed
+    t=t.replace("(", " ").replace(")", " ")
+    t=t.replace("[", " ").replace("]", " ")
+    t=t.replace("{", " ").replace("}", " ")
+    # Replace dashes with pauses, not literal dash
+    t=t.replace("–",", ").replace("—",". ")
+    t=t.replace(" - ",". ").replace(" -",". ").replace("- ",". ")
+    # Remove code symbols
+    for o,n in {"*":"", "#":"", "_":"", "`":"", "\"":"", ":":" . ", ";":" . ", "&":" and", "=":" ", ">":" ", "<":" ", "/":" ", "\\":" ", "|":" ", "@":" ", "$":" ", "%":" "}.items():
         t=t.replace(o,n)
     t=re.sub(r"\s-\s", ". ", t)
-    # Remove any leftover code-like tokens
-    t=re.sub(r"\b[a-z_]+\.[a-z_]+\(\)","",t)  # remove function calls like foo.bar()
+    t=re.sub(r"\b[a-z_]+\.[a-z_]+\(\)"," ",t)
+    # Remove any leftover slashes and dots that are code-like
+    t=re.sub(r"\b\w+\.\w+\.\w+\b"," ",t)  # a.b.c
     t=re.sub(r"\s+"," ",t).strip()
-    t=t.replace(" . . ", ". ").replace(" , , ", ", ")
+    t=t.replace(" . . ", ". ").replace(" , , ", ", ").replace(" . ,", ".").replace(", .", ".")
+    # Ensure proper sentences with pauses
     if t and not t[-1] in ".!?":
         t+="."
+    # Fix double periods
+    t=re.sub(r"\.{2,}",".",t)
     return t
 
 def clamp_score(v):
@@ -192,11 +211,14 @@ def choose_primary_models(avail):
     return picks[0],picks[1]
 
 def choose_judges(avail,primary):
-    excl=set(primary)
+    # FIX: exclude providers of primary models, not just model IDs, to avoid duplicate company
+    primary_providers=set(provider_from_model(m) for m in primary)
+    excl_ids=set(primary)
     top_providers = {"openai","anthropic","google","meta-llama","mistralai","deepseek","qwen"}
-    cands=[m for m in avail if m not in excl and ":free" in m and m.split("/")[0].lower() in top_providers]
+    # Exclude both exact IDs and any model from same company as debaters
+    cands=[m for m in avail if m not in excl_ids and ":free" in m and m.split("/")[0].lower() in top_providers and provider_from_model(m) not in primary_providers]
     if len(cands)<4:
-        cands=[m for m in avail if m not in excl and ":free" in m]
+        cands=[m for m in avail if m not in excl_ids and ":free" in m and provider_from_model(m) not in primary_providers]
     groups={}
     for m in cands:
         prov=provider_from_model(m)
@@ -213,8 +235,16 @@ def choose_judges(avail,primary):
         if len(sel)>=MAX_JUDGES: break
         if m not in sel:
             sel.append(m)
-    print(f"Judges ONE PER COMPANY: {', '.join(provider_from_model(m) for m in sel)}")
-    return sel[:MAX_JUDGES]
+    # Ensure unique display names too - no 2 Claude or 2 Gemini
+    seen_display=set()
+    unique_sel=[]
+    for m in sel:
+        dname=get_judge_short_name(m)
+        if dname not in seen_display:
+            unique_sel.append(m)
+            seen_display.add(dname)
+    print(f"Judges ONE PER COMPANY UNIQUE: {', '.join(f'{provider_from_model(m)} ({get_judge_short_name(m)})' for m in unique_sel)}")
+    return unique_sel[:MAX_JUDGES]
 
 def get_debate_roles(topic, model):
     tl=(topic or "").lower()
@@ -321,31 +351,40 @@ def generate_fallback_debate(side_label, topic, round_num, turn_num):
     return templates[idx]
 
 def generate_turn(side, topic, round_num, turn_num, previous_exchange, model, role_label, role_desc, opponent_label, opponent_desc):
-    prev_snip=(previous_exchange or "")[-700:]
+    prev_snip=(previous_exchange or "")[-800:]
     if round_num==1:
-        round_focus="Opening round. Establish foundation. Do not repeat, give fresh opening."
+        round_focus="Opening round. Establish your foundation with clear evidence. Do not repeat, give fresh opening. Use natural conversational tone like a real person on YouTube."
     elif round_num==2:
-        round_focus="Rebuttal round. Directly address opponent's last argument and show why it fails. Bring new evidence."
+        round_focus="Rebuttal round. Directly address what opponent just said and explain why it does not work. Bring a new angle or evidence you have not used before. Be conversational and specific."
     else:
-        round_focus="Closing round. Summarize strongest points and show why your view best explains all evidence."
-    prompt=f"You are {role_label} in live debate about {topic}. Your view: {role_desc}. Opponent {opponent_label}: {opponent_desc}. {round_focus} Previous opponent said: {prev_snip}. Write {WORDS_PER_TURN} words as human speaking naturally with contractions, varied sentences, full stops for pauses, no dashes, quote specific verses, rebut directly, start immediately, {MIN_TURN_WORDS}-{MAX_TURN_WORDS} words."
+        round_focus="Closing round. Pull together your strongest points. Show why your view explains the evidence better overall. Be memorable and human."
+    # More natural human prompt
+    prompt=f"You are {role_label} debating live on YouTube about: {topic}. Your position: {role_desc}. Opponent is {opponent_label} who argues: {opponent_desc}. {round_focus} Previous opponent said: {prev_snip}. Write {WORDS_PER_TURN} words as a REAL HUMAN would speak - not robotic. Use contractions like I'm, don't, can't, it's, that's. Vary sentence length - some short punchy sentences. Then longer ones that explain. Use natural pauses with periods. No dashes, no bullet points, no symbols. Quote specific evidence like Genesis 2:17, 3:4, 3:5, 3:22, 3:7 when relevant. Rebut directly. Start immediately with your point, no greeting. Sound like a confident human debater, not a textbook. {MIN_TURN_WORDS}-{MAX_TURN_WORDS} words. Speak naturally."
     for m in [model]+FALLBACK_MODELS[:3]:
-        resp=query_openrouter(prompt,m,max_tokens=700,temperature=0.88)
-        if resp and count_words(resp)>=85:
+        resp=query_openrouter(prompt,m,max_tokens=750,temperature=0.92)
+        if resp and count_words(resp)>=90:
             cleaned=strip_filler(resp)
             cleaned=re.sub(r'\s*-\s*',' . ',cleaned)
             cleaned=re.sub(r'\s+',' ',cleaned).strip()
+            # Remove robotic patterns
+            cleaned=re.sub(r'\bIn conclusion\b','So',cleaned, flags=re.IGNORECASE)
+            cleaned=re.sub(r'\bFurthermore\b','Also',cleaned, flags=re.IGNORECASE)
+            cleaned=re.sub(r'\bMoreover\b','And',cleaned, flags=re.IGNORECASE)
+            cleaned=re.sub(r'\bIt is important to note\b','Notice',cleaned, flags=re.IGNORECASE)
             if not cleaned.endswith(('.', '!', '?')):
                 cleaned+="."
             cleaned=cleaned.replace(" - ", ". ").replace(" -",".")
+            # Remove URLs if model leaked them
+            cleaned=re.sub(r"https?://\S+"," ",cleaned)
+            cleaned=re.sub(r"www\.\S+"," ",cleaned)
             if "text, context, and outcome" in cleaned.lower():
                 cleaned=re.sub(r'The text, context.*?matter\.','',cleaned,flags=re.IGNORECASE).strip()
             if count_words(cleaned)>=MIN_TURN_WORDS-10:
-                return cleaned[:1500]
-            extra=query_openrouter("Continue 70 more words same natural human style: "+cleaned[-250:],m,max_tokens=230,temperature=0.8)
+                return cleaned[:1600]
+            extra=query_openrouter("Continue 70 more words same very natural human conversational style, contractions, varied sentences: "+cleaned[-250:],m,max_tokens=250,temperature=0.85)
             if extra:
                 cleaned+=" "+extra
-            return cleaned[:1500]
+            return cleaned[:1600]
     return generate_fallback_debate(role_label, topic, round_num, turn_num)
 
 def build_round_exchanges(topic, rn, ap_model, sk_model, prev_hist, roles):
@@ -393,11 +432,39 @@ def calculate_round_average(results):
     return round(sum(r["A_total"] for r in results)/len(results),2), round(sum(r["B_total"] for r in results)/len(results),2)
 
 async def generate_audio_async(text,voice,filename):
-    # FIX: ensure language audio not code - use cleaned text, SSML with natural prosody
     clean_text = clean_for_speech(text)
-    ssml_text = f"<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='en-US'><voice name='{voice}'><prosody rate='+8%' pitch='+0%'>{clean_text}</prosody></voice></speak>"
+    # Use most conversational SSML with chat style for natural human speech
+    ssml_text = f"<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xmlns:mstts='http://www.w3.org/2001/mstts' xml:lang='en-US'><voice name='{voice}'><mstts:express-as style='chat' styledegree='1.2'><prosody rate='+4%' pitch='+0%' volume='+0%'>{clean_text}</prosody></mstts:express-as></voice></speak>"
     try:
         com=edge_tts.Communicate(ssml_text,voice)
+        audio=b""; words=[]
+        async for chunk in com.stream():
+            if chunk["type"]=="audio": audio+=chunk["data"]
+            elif chunk["type"]=="WordBoundary":
+                s=chunk["offset"]/10_000_000; d=chunk["duration"]/10_000_000
+                words.append({"text":chunk["text"],"start":s,"duration":d,"end":s+d})
+        open(filename,"wb").write(audio)
+        if not words or len(words)<3:
+            raise Exception("No word boundaries, fallback")
+        return words
+    except Exception as e:
+        print(f"TTS chat style failed {e}, trying friendly")
+        try:
+            ssml2 = f"<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xmlns:mstts='http://www.w3.org/2001/mstts' xml:lang='en-US'><voice name='{voice}'><mstts:express-as style='friendly'><prosody rate='+6%'>{clean_text}</prosody></mstts:express-as></voice></speak>"
+            com=edge_tts.Communicate(ssml2,voice)
+            audio=b""; words=[]
+            async for chunk in com.stream():
+                if chunk["type"]=="audio": audio+=chunk["data"]
+                elif chunk["type"]=="WordBoundary":
+                    s=chunk["offset"]/10_000_000; d=chunk["duration"]/10_000_000
+                    words.append({"text":chunk["text"],"start":s,"duration":d,"end":s+d})
+            open(filename,"wb").write(audio)
+            if words:
+                return words
+        except:
+            pass
+        # Final fallback plain but natural rate
+        com=edge_tts.Communicate(clean_text,voice,rate="+5%")
         audio=b""; words=[]
         async for chunk in com.stream():
             if chunk["type"]=="audio": audio+=chunk["data"]
@@ -409,19 +476,8 @@ async def generate_audio_async(text,voice,filename):
             t=0.0
             for tok in clean_text.split():
                 if not tok: continue
-                words.append({"text":tok,"start":t,"duration":0.35,"end":t+0.35}); t+=0.4
+                words.append({"text":tok,"start":t,"duration":0.38,"end":t+0.38}); t+=0.42
         return words
-    except Exception as e:
-        print(f"TTS SSML failed {e}, fallback to plain")
-        com=edge_tts.Communicate(clean_text,voice,rate="+8%")
-        audio=b""; words=[]
-        async for chunk in com.stream():
-            if chunk["type"]=="audio": audio+=chunk["data"]
-            elif chunk["type"]=="WordBoundary":
-                s=chunk["offset"]/10_000_000; d=chunk["duration"]/10_000_000
-                words.append({"text":chunk["text"],"start":s,"duration":d,"end":s+d})
-        open(filename,"wb").write(audio)
-        return words if words else [{"text":w,"start":i*0.4,"end":i*0.4+0.35} for i,w in enumerate(clean_text.split())]
 
 def generate_audio(text,role,filename,judge_voice_index=None):
     if "JUDGE" in role.upper():
@@ -623,13 +679,14 @@ def create_visual_plan(text,words,model):
 
 # WATERCOLOR SCRIBBLE STYLE MATCHING REFERENCE IMAGE - transparent, no black triangles
 def draw_watercolor_blob(draw, bbox, color, alpha=180, scribble=False):
-    # Draw watercolor-like blob: soft edges with alpha
     x0,y0,x1,y1=bbox
-    # Base blob
+    # More textured watercolor with multiple layers for less abstract look
     draw.ellipse(bbox, fill=(*color, alpha))
-    # Add watercolor variation with slightly offset ellipses
-    draw.ellipse([x0+5,y0+5,x1-3,y1-3], fill=(*color, alpha-20))
-    draw.ellipse([x0+3,y0-2,x1-5,y1+2], fill=(*color, alpha-30))
+    draw.ellipse([x0+4,y0+4,x1-4,y1-4], fill=(*color, alpha-15))
+    draw.ellipse([x0+8,y0+2,x1-2,y1-6], fill=(*color, alpha-30))
+    draw.ellipse([x0-2,y0+6,x1-8,y1-2], fill=(*color, alpha-40))
+    # Add highlight for depth - more engaging
+    draw.ellipse([x0+10,y0+8,x0+30,y0+25], fill=(255,255,255,60))
 
 def draw_scribble_hair(draw, x, y, size):
     # Scribble hair like reference: messy black loops
@@ -1090,7 +1147,21 @@ def run_debate_pipeline():
     print(f"Roles: {roles['side_a_label']} VS {roles['side_b_label']} - VERSATILE for any topic.txt")
     print(f"Debate engines: {get_judge_short_name(ap_model)} [{provider_from_model(ap_model)}] vs {get_judge_short_name(sk_model)} [{provider_from_model(sk_model)}]")
     judges=choose_judges(avail,(ap_model,sk_model))
-    if not judges: judges=FALLBACK_MODELS[:MAX_JUDGES]
+    if not judges:
+        # Deduplicate fallback too - one per company only
+        seen_prov=set()
+        seen_name=set()
+        dedup=[]
+        for m in FALLBACK_MODELS:
+            prov=provider_from_model(m)
+            dname=get_judge_short_name(m)
+            if prov not in seen_prov and dname not in seen_name:
+                dedup.append(m)
+                seen_prov.add(prov)
+                seen_name.add(dname)
+            if len(dedup)>=MAX_JUDGES:
+                break
+        judges=dedup
     print(f"Judges ({len(judges)}): ONE PER COMPANY - {', '.join(get_judge_short_name(j) for j in judges)}")
     segs=[]; sid=0
     def add_segment(text,role,name,position=None,glow=None,judge_voice_index=None):
