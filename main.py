@@ -41,17 +41,13 @@ VISUAL_Y = 160
 VOICES = {"A": "en-US-BrianMultilingualNeural","B": "en-US-AvaMultilingualNeural","Moderator": "en-US-AndrewMultilingualNeural"}
 JUDGE_VOICES = ["en-US-ChristopherNeural","en-US-EmmaMultilingualNeural","en-US-GuyNeural","en-US-JennyNeural"]
 
-# TOP FREE MODELS - one per company will be enforced for judges
 FALLBACK_MODELS = [
     "openai/gpt-4o-mini:free",
-    "openai/gpt-3.5-turbo:free",
     "anthropic/claude-3-haiku:free",
     "anthropic/claude-3-5-haiku:free",
     "google/gemini-flash-1.5-8b:free",
     "google/gemini-2.0-flash-001:free",
-    "google/gemma-2-9b-it:free",
     "meta-llama/llama-3.2-3b-instruct:free",
-    "meta-llama/llama-3.1-8b-instruct:free",
     "mistralai/mistral-7b-instruct:free",
     "deepseek/deepseek-r1:free",
     "qwen/qwen-2.5-7b-instruct:free",
@@ -106,8 +102,15 @@ def cleanup_cache():
 def count_words(t): return len(re.findall(r"\b[\w'-]+\b", t or ""))
 def clean_for_speech(t):
     t=re.sub(r"\([^)]*\)","",t or "")
-    for o,n in {"*":"","#":"","_":"","`":"","–":"-","—":"-","\"":"",":":" ",";":" ","&":"and"}.items(): t=t.replace(o,n)
-    return re.sub(r"\s+"," ",t).strip()
+    t=t.replace("–",", ").replace("—",". ").replace(" - ",". ").replace(" -",". ").replace("- ",". ")
+    for o,n in {"*":"", "#":"", "_":"", "`":"", "\"":"", ":":" . ", ";":" . ", "&":" and"}.items():
+        t=t.replace(o,n)
+    t=re.sub(r"\s-\s", ". ", t)
+    t=re.sub(r"\s+"," ",t).strip()
+    if t and not t[-1] in ".!?":
+        t+="."
+    return t
+
 def clamp_score(v):
     try: v=float(v)
     except: v=50.0
@@ -132,16 +135,19 @@ def discover_models():
             mid=it.get("id","")
             if not mid or ":free" not in mid.lower(): continue
             if any(x in mid.lower() for x in ["embed","tts","whisper","audio"]): continue
+            # Only top companies to avoid obscure like nvidia
+            top = ["openai","anthropic","google","meta-llama","mistralai","deepseek","qwen","x-ai"]
+            if not any(p in mid.lower() for p in top): continue
             free.append(mid)
         if free:
-            print(f"Found {len(free)} free models")
+            print(f"Found {len(free)} top free models")
             return list(dict.fromkeys(free))
         return FALLBACK_MODELS.copy()
     except Exception as e:
         print(f"discover fail {e}, using fallback")
         return FALLBACK_MODELS.copy()
 
-def query_openrouter(prompt,model_id,timeout=50,max_tokens=700,temperature=0.75):
+def query_openrouter(prompt,model_id,timeout=50,max_tokens=700,temperature=0.78):
     if not OPENROUTER_API_KEY: return None
     payload={"model":model_id,"messages":[{"role":"user","content":prompt}],"temperature":temperature,"max_tokens":max_tokens}
     try:
@@ -156,14 +162,13 @@ def query_openrouter(prompt,model_id,timeout=50,max_tokens=700,temperature=0.75)
 def choose_primary_models(avail):
     free=[m for m in avail if ":free" in m]
     if not free: free=avail
-    # Ensure different companies for two debaters
-    used_providers=set()
+    used=set()
     picks=[]
     for m in free:
         prov=provider_from_model(m)
-        if prov not in used_providers:
+        if prov not in used:
             picks.append(m)
-            used_providers.add(prov)
+            used.add(prov)
         if len(picks)>=2: break
     if len(picks)<2:
         picks=(free+["openai/gpt-4o-mini:free","google/gemini-flash-1.5-8b:free"])[:2]
@@ -171,20 +176,15 @@ def choose_primary_models(avail):
 
 def choose_judges(avail,primary):
     excl=set(primary)
-    # ONLY ONE MODEL PER COMPANY - strict - TOP COMPANIES ONLY
-    # Filter to only top-tier providers to avoid obscure AIs
-    top_providers = {"openai","anthropic","google","meta-llama","mistralai","deepseek","qwen","x-ai","xai"}
+    top_providers = {"openai","anthropic","google","meta-llama","mistralai","deepseek","qwen"}
     cands=[m for m in avail if m not in excl and ":free" in m and m.split("/")[0].lower() in top_providers]
     if len(cands)<4:
-        # fallback to any free but still one per company
         cands=[m for m in avail if m not in excl and ":free" in m]
-    if len(cands)<3: cands=[m for m in avail if m not in excl]
     groups={}
     for m in cands:
         prov=provider_from_model(m)
         if prov not in groups:
-            groups[prov]=m  # one per provider only
-    # Prioritize top companies
+            groups[prov]=m
     order=["OpenAI","Anthropic","Google","Meta","Mistral","DeepSeek","Qwen","xAI"]
     sel=[]
     for name in order:
@@ -192,12 +192,11 @@ def choose_judges(avail,primary):
             sel.append(groups[name])
             del groups[name]
         if len(sel)>=MAX_JUDGES: break
-    # Fill with remaining providers if needed
     for prov,m in groups.items():
         if len(sel)>=MAX_JUDGES: break
         if m not in sel:
             sel.append(m)
-    print(f"Judges selected - ONE PER COMPANY: {', '.join(provider_from_model(m) for m in sel)}")
+    print(f"Judges ONE PER COMPANY: {', '.join(provider_from_model(m) for m in sel)}")
     return sel[:MAX_JUDGES]
 
 def get_debate_roles(topic, model):
@@ -205,12 +204,11 @@ def get_debate_roles(topic, model):
     if "god" in tl and "serpent" in tl:
         return {
             "side_a_label": "GOD TOLD TRUTH",
-            "side_a_desc": "Defends that God told the truth in Genesis, serpent deceived",
+            "side_a_desc": "Defends God told truth in Genesis",
             "side_b_label": "SERPENT TOLD TRUTH",
-            "side_b_desc": "Defends that serpent told truth, God did not",
+            "side_b_desc": "Defends serpent told truth",
         }
-    # For ANY other topic.txt, ask LLM to create opposite labels
-    prompt=f'Topic: "{topic}" Return ONLY JSON: {{"side_a_label":"2-3 word label for FOR side","side_a_desc":"one sentence for side","side_b_label":"2-3 word label for AGAINST side","side_b_desc":"one sentence"}} Labels must be uppercase, short, opposite. Example: Creator Required vs No Creator.'
+    prompt='Topic: "'+topic+'" Return ONLY JSON: {"side_a_label":"FOR label 2-3 words","side_a_desc":"sentence","side_b_label":"AGAINST label","side_b_desc":"sentence"} Labels uppercase.'
     resp=query_openrouter(prompt, model, timeout=25, max_tokens=250, temperature=0.4)
     if resp:
         try:
@@ -222,12 +220,11 @@ def get_debate_roles(topic, model):
                 if a and b and a!=b:
                     return {"side_a_label":a,"side_a_desc":str(data.get("side_a_desc",a)),"side_b_label":b,"side_b_desc":str(data.get("side_b_desc",b))}
         except: pass
-    # Fallback generic but topic-adaptive
     return {
         "side_a_label": "AFFIRMATIVE",
-        "side_a_desc": f"Argues FOR: {topic}",
+        "side_a_desc": f"Argues FOR {topic}",
         "side_b_label": "NEGATIVE",
-        "side_b_desc": f"Argues AGAINST: {topic}",
+        "side_b_desc": f"Argues AGAINST {topic}",
     }
 
 def strip_filler(text):
@@ -236,73 +233,56 @@ def strip_filler(text):
     return text
 
 def generate_fallback_debate(side_label, topic, round_num, turn_num):
-    # Topic-adaptive fallback with varied content - no repeating filler
-    topic_short = topic[:120] if len(topic)>120 else topic
+    topic_short = topic[:130] if len(topic)>130 else topic
     if "GOD TOLD TRUTH" in side_label.upper():
         templates=[
-            f"Genesis 2:17 says in Hebrew moth tamuth - dying you shall die, emphatic certainty. Serpent says in 3:4 lo moth temuthun - you shall not surely die, negating God's certainty. Genesis 3:7 shows their eyes opened and they knew nakedness - shame enters. Genesis 3:8 they hide from God's presence. That relational rupture is death as separation. Physical death process begins, barred from tree of life 3:24.",
-            f"God's generosity in 2:16 - you may freely eat of every tree - only one limit. Serpent distorts in 3:1 - hath God said ye shall not eat of every tree? He makes God sound restrictive. Classic misrepresentation. Then 3:5 you shall be as gods knowing good and evil. Genesis 3:22 God confirms they have become like one of us knowing good and evil. Serpent's second claim came true, but first claim you shall not die failed - death entered through sin Romans 5:12.",
-            f"Look at immediate narrative outcome. Genesis 3:7 eyes opened, they sew fig leaves - new self-consciousness. 3:10 Adam says I was afraid because naked and hid. Fear and hiding are not life. 3:19 to dust you shall return introduces mortality. 3:23-24 expulsion from Eden, cherubim guarding way to tree of life. The day they ate, access to eternal life ended. That is death beginning that day.",
-            f"The Hebrew phrase beyom - in the day - can mean when, not necessarily within 24 hours, as in 2:4 in the day God made earth. The emphasis is on certainty of consequence when you eat, not stopwatch. Serpent says you shall not die, yet death is now inevitable. Genesis 3:22-24 shows life cut short, toil, pain, return to dust. Serpent omitted consequence while telling partial truth about eyes opening.",
+            "Genesis chapter 2 verse 17 is explicit. God says, in the day you eat of it you shall surely die. The Hebrew is emphatic, moth tamuth, dying you shall die. The serpent directly contradicts this in chapter 3 verse 4. He says, you shall not surely die. That is a direct negation. What happens that day? Genesis chapter 3 verse 7 says their eyes were opened and they knew they were naked. They felt shame. Verse 8 says they hid from God's presence. That hiding is separation. That is death as the Bible defines it. Physical death began, they were barred from the tree of life in verse 24.",
+            "Notice God's generosity in chapter 2 verse 16. You may freely eat of every tree. Only one restriction. The serpent twists this in chapter 3 verse 1. He asks, did God really say you shall not eat of every tree? He makes God sound stingy and restrictive. That is deception. Then he promises in verse 5, your eyes shall be opened and you shall be as gods knowing good and evil. Genesis 3 verse 22 confirms they did become like God knowing good and evil. So his second claim came true. But his first claim, you shall not die, was false. Death entered through sin. Romans chapter 5 verse 12 says sin entered and death through sin.",
+            "Look at the immediate outcome after eating. Genesis chapter 3 verse 7 says they sewed fig leaves. They experienced self consciousness and shame. Verse 10, Adam says I was afraid because I was naked and I hid. Fear and hiding are not fullness of life. Verse 19 says to dust you shall return. Mortality is introduced. Chapter 3 verses 23 and 24 say they were sent out of Eden and cherubim guarded the way to the tree of life. On the day they ate, they lost access to eternal life. That is the beginning of death.",
+            "The phrase in the day, beyom in Hebrew, can mean when, as in chapter 2 verse 4, in the day God made the earth. It emphasizes certainty, not a 24 hour timer. The point is, when you eat, death is certain. The serpent said you will not surely die, yet death became inevitable. Even if physical death took years, spiritual death, relational rupture, happened immediately. They were cut off. That is what God warned about, and it happened exactly as He said.",
         ]
     elif "SERPENT TOLD TRUTH" in side_label.upper():
         templates=[
-            f"Genesis 2:17 says beyom akhalcha - in the day you eat, moth tamuth - you shall surely die. Plain reading suggests same day death. Genesis 5:5 says Adam lived 930 years then died. He did not die that day. Serpent says in 3:4 lo moth temuthun - you shall not surely die. That matches what happened - they lived. Serpent says 3:5 your eyes shall be opened, you shall be as gods. Genesis 3:7 their eyes were opened. God confirms in 3:22 man become as one of us knowing good and evil. Serpent described outcome.",
-            f"Consider Hebrew yom in Genesis 1 - evening and morning were first day - 24 hours. Beyom in 2:17 naturally means that same day. Adam does not die that day. James Barr argued God does not carry out threat. Serpent says you shall not die - true that day. Serpent says you shall be as gods knowing good and evil - God himself says in 3:22 behold man is become as one of us to know good and evil. Two predictions, both validated by narrator, unlike God's.",
-            f"Traditional spiritual death reading imports later theology. Genesis 2-3 text never mentions spiritual death. It mentions nakedness, shame, cursing of ground, pain, toil, and eventually dust to dust 3:19. The immediate testable claim was death that day versus eyes opened. Genesis 3:7 says eyes opened - serpent right. Genesis records no death that day - serpent right about that too. Simple narrative reading favors serpent's accuracy.",
-            f"God says you shall surely die if you eat. Serpent says you shall not surely die, you shall be as gods. After eating, Genesis 3:7 eyes opened, 3:11 God asks who told you naked, 3:22 God says man become like us. No one dies that day. Instead they receive knowledge. If serpent lied, why does God confirm his second claim? And why does threatened death not occur? Text presents tension - serpent more accurate about immediate events.",
+            "Genesis chapter 2 verse 17 says, in the day you eat you shall surely die. In Hebrew, beyom, in the day. The plain reading suggests the same day. Yet Genesis chapter 5 verse 5 tells us Adam lived 930 years and then died. He did not die that day. The serpent says in chapter 3 verse 4, you shall not surely die. That matches what actually happened. They lived. The serpent also says in verse 5, your eyes shall be opened and you shall be as gods knowing good and evil. Genesis chapter 3 verse 7 says their eyes were opened. God Himself confirms in chapter 3 verse 22, behold the man is become as one of us to know good and evil. God confirms the serpent was right.",
+            "The Hebrew word yom in Genesis chapter 1 means a literal day, evening and morning were the first day. So beyom in chapter 2 verse 17 naturally means that same day. Adam did not die that day. The serpent's prediction was more accurate about the immediate outcome. He said you shall not die, and they did not die that day. He said you shall be as gods knowing good and evil. God says in chapter 3 verse 22, they have become as one of us. Two claims by the serpent, both validated by the narrator. God's threatened death did not happen as stated.",
+            "We must not import later theology about spiritual death. The text of Genesis chapters 2 and 3 never mentions spiritual death. It mentions nakedness, shame, cursing of the ground, pain in childbirth, toil, and finally dust to dust in chapter 3 verse 19. The testable claim was death that day versus eyes opened. Chapter 3 verse 7 says eyes were opened, exactly as serpent said. The text records no death that day. On a simple reading, the serpent described what would actually happen more accurately than God's threat.",
+            "If God meant spiritual death, why did He say to dust you shall return? That is physical. If He meant they would begin dying, why say in the day? The serpent's words in chapter 3 verse 4 and 5 are precise. You shall not die, your eyes shall be opened, you shall be as gods. Verse 7, eyes opened. Verse 22, God says they have become as one of us. No one dies that day. If the serpent lied, why does God confirm his second claim? The narrative presents tension. The serpent was more accurate about immediate events.",
         ]
     else:
-        # GENERIC for ANY topic.txt - must be varied and specific to topic
         tl = topic_short.lower()
-        if any(w in tl for w in ["ai","artificial","regulation","should ai"]):
+        if any(w in tl for w in ["ai","artificial","regulation"]):
             templates=[
-                f"On {topic_short}, the key is risk versus innovation. {side_label} argues that unchecked capability without oversight leads to harm. Examples of bias, misinformation, and concentration of power show need for guardrails. Opponent claims innovation suffers, but regulation can be pro-innovation by building trust.",
-                f"Regarding {topic_short}, we must weigh who bears cost. {side_label} says developers must be accountable for foreseeable misuse. The precautionary principle matters when systems affect millions. Saying let market decide ignores externalities.",
-                f"The question {topic_short} is about balance. {side_label} does not argue for ban but for standards - testing, transparency, liability. Other domains like aviation and medicine have this. Why should AI be exempt from accountability that we demand elsewhere?",
-            ]
-        elif any(w in tl for w in ["creator","universe","god","exist","cosmos"]):
-            templates=[
-                f"On {topic_short}, the cosmological argument matters. {side_label} points to contingency - universe began, has cause. Borde-Guth-Vilenkin theorem suggests past finite. Opponent says quantum vacuum, but vacuum is not nothing, has laws. Where do laws come from?",
-                f"Regarding {topic_short}, {side_label} argues fine-tuning and intelligibility suggest mind. Constants within narrow life-permitting range. Multiverse is speculative, not observed, and still needs mechanism. Simpler explanation is intentional cause.",
-                f"The topic {topic_short} asks about ultimate explanation. {side_label} says self-existent creator avoids infinite regress. Opponent says universe is brute fact, but brute fact is not explanation. The question is which is more reasonable as stopping point.",
+                f"On {topic_short}, the key is risk versus innovation. {side_label} argues that unchecked capability without oversight leads to harm. Examples of bias, misinformation, and concentration of power show need for guardrails. Regulation does not mean banning. It means testing and transparency that builds trust.",
+                f"Regarding {topic_short}, who bears cost matters. {side_label} says developers must be accountable for foreseeable misuse. We regulate cars and medicine for safety. The precautionary principle applies when systems affect millions. Letting market decide ignores external costs.",
+                f"The issue {topic_short} is about balance. {side_label} argues for standards, not a ban. Aviation has safety checks. Medicine has trials. Why should AI, which shapes what we see, be exempt from accountability we demand elsewhere?",
             ]
         else:
             templates=[
-                f"On {topic_short}, {side_label} has stronger case. Look at evidence, not just intuition. What do examples show? What are consequences if we accept opposite? The burden is on who makes broader claim.",
-                f"Regarding {topic_short}, {side_label} argues from observed outcomes. The opposing view relies on assumptions that fail when tested. Consider counterexamples and whether theory predicts what we see.",
-                f"The question {topic_short} needs clarity. {side_label} defines terms precisely and follows logic. The other side shifts definitions or appeals to consequences. We should prefer coherent explanation that fits facts.",
+                f"On {topic_short}, {side_label} has the stronger case. Look at evidence and real consequences. The facts and logic point one way. The opposing view relies on assumptions that fail when tested. We should prefer coherent explanation that fits facts.",
+                f"Regarding {topic_short}, {side_label} argues from specific examples and follows logic. The other side shifts definitions or ignores counterexamples. A clear explanation that matches what we observe should be preferred.",
+                f"The question {topic_short} needs clarity. {side_label} defines terms carefully and follows argument step by step. The alternative relies on vague claims. We should choose view that is clear, consistent, and supported.",
             ]
     idx=(round_num*4+turn_num)%len(templates)
-    base=templates[idx]
-    # Ensure length without repeating same sentence
-    extras=[
-        " The narrative context and immediate fulfillment matter more than imported theology.",
-        " Hebrew grammar and story flow should guide reading, not later doctrines.",
-        " We must let text speak rather than adding meanings not present in chapter.",
-        " The contrast between promise and outcome is central to deciding who was truthful.",
-        " For any topic, evidence and logical consistency are the test, not rhetoric.",
-    ]
-    ei=0
-    while count_words(base)<125 and ei<5:
-        base+=" "+extras[ei]
-        ei+=1
-    return base
-
+    return templates[idx]
 
 def generate_turn(side, topic, round_num, turn_num, previous_exchange, model, role_label, role_desc, opponent_label, opponent_desc):
-    prev_snip=(previous_exchange or "")[-500:]
-    prompt=f"You are {role_label} debating {topic}. Your stance: {role_desc}. Opponent {opponent_label}: {opponent_desc}. Previous: {prev_snip}\nWrite {WORDS_PER_TURN} word specific argument quoting verses or facts, rebut opponent, no greeting, start directly, {MIN_TURN_WORDS}-{MAX_TURN_WORDS} words."
-    for m in [model]+FALLBACK_MODELS[:2]:
-        resp=query_openrouter(prompt,m,max_tokens=600,temperature=0.8)
-        if resp and count_words(resp)>=70:
+    prev_snip=(previous_exchange or "")[-600:]
+    prompt="You are "+role_label+" debating "+topic+". Your stance: "+role_desc+". Opponent "+opponent_label+": "+opponent_desc+". Previous: "+prev_snip+"\nWrite "+str(WORDS_PER_TURN)+" words as human speaking naturally, full sentences, no dashes, quote Genesis 2:17, 3:4, 3:5, 3:22, 3:7 or relevant facts, rebut opponent, start directly, "+str(MIN_TURN_WORDS)+"-"+str(MAX_TURN_WORDS)+" words."
+    for m in [model]+FALLBACK_MODELS[:3]:
+        resp=query_openrouter(prompt,m,max_tokens=650,temperature=0.82)
+        if resp and count_words(resp)>=80:
             cleaned=strip_filler(resp)
-            if count_words(cleaned)>=MIN_TURN_WORDS:
-                return cleaned[:1300]
-            # Extend if short
-            extra=query_openrouter(f"Continue 60 more words same argument: {cleaned[-200:]}",m,max_tokens=200,temperature=0.7)
-            if extra: cleaned+=" "+extra
-            return cleaned[:1300]
+            cleaned=re.sub(r'\s*-\s*',' . ',cleaned)
+            cleaned=re.sub(r'\s+',' ',cleaned).strip()
+            if not cleaned.endswith(('.', '!', '?')):
+                cleaned+="."
+            cleaned=cleaned.replace(" - ", ". ").replace(" -",".")
+            if count_words(cleaned)>=MIN_TURN_WORDS-10:
+                return cleaned[:1400]
+            extra=query_openrouter("Continue 70 more words same natural style: "+cleaned[-250:],m,max_tokens=220,temperature=0.75)
+            if extra:
+                cleaned+=" "+extra
+            return cleaned[:1400]
     return generate_fallback_debate(role_label, topic, round_num, turn_num)
 
 def build_round_exchanges(topic, rn, ap_model, sk_model, prev_hist, roles):
@@ -319,7 +299,7 @@ def neutral_judge(model):
     return {"model":model,"provider":provider_from_model(model),"display_name":get_judge_short_name(model),"A_argument":50,"A_rebuttal":50,"A_clarity":50,"A_total":50,"B_argument":50,"B_rebuttal":50,"B_clarity":50,"B_total":50,"winner":"A"}
 
 def judge_round(model,topic,rn,ap,sk,roles):
-    prompt=f"Judge {topic} R{rn} {roles['side_a_label']}: {ap[:700]} vs {roles['side_b_label']}: {sk[:700]} JSON {{\"A_argument\":0,\"A_rebuttal\":0,\"A_clarity\":0,\"B_argument\":0,\"B_rebuttal\":0,\"B_clarity\":0}}"
+    prompt=f"Judge {topic} R{rn} {roles['side_a_label']}: {ap[:700]} vs {roles['side_b_label']}: {sk[:700]} JSON A_argument etc 0-100"
     resp=query_openrouter(prompt,model,timeout=30,max_tokens=250,temperature=0.2)
     if not resp: return neutral_judge(model)
     try:
@@ -357,7 +337,7 @@ async def generate_audio_async(text,voice,filename):
         elif chunk["type"]=="WordBoundary":
             s=chunk["offset"]/10_000_000; d=chunk["duration"]/10_000_000
             words.append({"text":chunk["text"],"start":s,"duration":d,"end":s+d})
-    with open(filename,"wb") as f: f.write(audio)
+    open(filename,"wb").write(audio)
     if not words:
         clean=clean_for_speech(text); t=0.0
         for tok in clean.split():
@@ -382,20 +362,7 @@ def ass_escape(t): return str(t).replace("\\","\\\\").replace("{","\\{").replace
 def generate_subtitles(words,filename,scorecard=False):
     margin_v=90 if scorecard else 200
     font_size=36 if scorecard else 34
-    header=f"""[Script Info]
-ScriptType: v4.00+
-PlayResX: 1920
-PlayResY: 1080
-WrapStyle: 0
-ScaledBorderAndShadow: yes
-
-[V4+ Styles]
-Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: DebateSub,DejaVu Sans,{font_size},&H00FFFFFF,&H00FFFFFF,&H00000000,&HCC000000,1,0,0,0,100,100,0,0,1,3.0,1,2,200,200,{margin_v},1
-
-[Events]
-Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
-""".format(font_size=font_size, margin_v=margin_v)
+    header=f"[Script Info]\nScriptType: v4.00+\nPlayResX: 1920\nPlayResY: 1080\nWrapStyle: 0\nScaledBorderAndShadow: yes\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: DebateSub,DejaVu Sans,{font_size},&H00FFFFFF,&H00FFFFFF,&H00000000,&HCC000000,1,0,0,0,100,100,0,0,1,3.0,1,2,200,200,{margin_v},1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
     if not words:
         open(filename,"w",encoding="utf-8").write(header); return
     clean_words=[{"text":str(w.get("text","")).strip(),"start":float(w["start"]),"end":float(w["end"])} for w in words if str(w.get("text","")).strip()]
@@ -437,34 +404,26 @@ def fallback_visual_plan(text):
         ("serpent","Serpent","snake coiled on branch moving"),
         ("snake","Snake","snake slithering"),
         ("god","God light","light rays from above"),
-        ("adam","Adam","stick figure man"),
-        ("eve","Eve","stick figure woman"),
-        ("eat","Eating","person eating apple"),
-        ("know","Knowing","person thinking"),
-        ("death","Death","skull icon"),
-        ("die","Die that day","calendar X"),
-        ("eyes opened","Eyes opened","eyes wide open"),
-        ("creator","Creator","universe and light"),
+        ("creator","Creator","sun and rays"),
         ("universe","Universe","stars and galaxy"),
-        ("exist","Existence","question mark and lightbulb"),
-        ("moral","Morality","scales balancing"),
-        ("consciousness","Consciousness","brain and spark"),
+        ("eyes opened","Eyes opened","eyes wide open"),
+        ("death","Death","skull"),
+        ("know","Knowing","person thinking"),
     ]
     for kw,label,desc in kws:
         if kw in tl and len(visuals)<MAX_VISUALS_PER_SEGMENT:
             idx=tl.find(kw)
             phrase=text[max(0,idx-10):idx+len(kw)+20].strip() or kw
             visuals.append({"phrase":phrase,"label":label,"description":desc,"kind":"concept"})
-    # Ensure at least 2 visuals even for generic topics
     if not visuals:
         visuals=[
-            {"phrase":text[:30],"label":"Thinking","description":"person thinking","kind":"concept"},
-            {"phrase":text[:30],"label":"Debate","description":"two figures debating","kind":"concept"},
+            {"phrase":text[:30],"label":"Tree in garden","description":"tree with leaves","kind":"concept"},
+            {"phrase":text[:30],"label":"Apple on branch","description":"apple hanging","kind":"concept"},
         ]
     return visuals[:MAX_VISUALS_PER_SEGMENT]
 
 def plan_visuals(text,model):
-    prompt=f"Find up to {MAX_VISUALS_PER_SEGMENT} simple visual moments in: {text}\nJSON [{{\"phrase\":\"exact phrase\",\"label\":\"2-4 words\"}}]"
+    prompt=f"Find up to {MAX_VISUALS_PER_SEGMENT} simple visual moments in: {text} JSON [phrase,label]"
     resp=query_openrouter(prompt,model,timeout=20,max_tokens=350,temperature=0.2)
     if not resp: return fallback_visual_plan(text)
     try:
@@ -520,14 +479,22 @@ def create_visual_plan(text,words,model):
         if len(out)>=MAX_VISUALS_PER_SEGMENT: break
     return out
 
-def draw_stick_figure(draw,x,y,size=80,eating=False):
-    draw.ellipse([x+size*0.3,y,x+size*0.7,y+size*0.4],fill=(222,184,135,255),outline=(0,0,0,255),width=2)
-    for i in range(5): draw.arc([x+size*0.2+i*3,y-5,x+size*0.8-i*2,y+size*0.3],0,180,fill=(0,0,0,255),width=2)
-    draw.ellipse([x+size*0.2,y+size*0.45,x+size*0.8,y+size*0.95],fill=(222,184,135,255),outline=(0,0,0,255),width=2)
-    if eating: draw.line([x+size*0.7,y+size*0.6,x+size*0.95,y+size*0.4],fill=(0,0,0,255),width=3)
+def draw_stick_figure(draw,x,y,size=80,eating=False,clothed=True):
+    # Less abstract - recognizable human with face and tunic
+    draw.ellipse([x+size*0.3,y,x+size*0.7,y+size*0.4],fill=(255,228,196,255),outline=(0,0,0,255),width=2)
+    draw.ellipse([x+size*0.38,y+size*0.15,x+size*0.45,y+size*0.22],fill=(0,0,0,255))
+    draw.ellipse([x+size*0.55,y+size*0.15,x+size*0.62,y+size*0.22],fill=(0,0,0,255))
+    draw.arc([x+size*0.25,y-2,x+size*0.75,y+size*0.25],0,180,fill=(101,67,33,255),width=4)
+    if clothed:
+        draw.rectangle([x+size*0.25,y+size*0.45,x+size*0.75,y+size*0.95],fill=(100,149,237,255),outline=(0,0,0,255),width=2)
     else:
-        draw.line([x,y+size*0.6,x+size*0.2,y+size*0.7],fill=(0,0,0,255),width=3)
-        draw.line([x+size*0.8,y+size*0.6,x+size*1.0,y+size*0.5],fill=(0,0,0,255),width=3)
+        draw.ellipse([x+size*0.2,y+size*0.45,x+size*0.8,y+size*0.95],fill=(255,228,196,255),outline=(0,0,0,255),width=2)
+    if eating:
+        draw.line([x+size*0.7,y+size*0.55,x+size*0.95,y+size*0.4],fill=(0,0,0,255),width=3)
+        draw.ellipse([x+size*0.9,y+size*0.35,x+size*1.0,y+size*0.48],fill=(220,20,60,255),outline=(0,0,0,255),width=1)
+    else:
+        draw.line([x+size*0.1,y+size*0.55,x+size*0.25,y+size*0.7],fill=(0,0,0,255),width=3)
+        draw.line([x+size*0.75,y+size*0.55,x+size*0.95,y+size*0.45],fill=(0,0,0,255),width=3)
 
 def create_visual_asset(visual,index):
     filename=f"visual_{index}.gif"
@@ -541,22 +508,20 @@ def create_visual_asset(visual,index):
             draw.line([30,90,VISUAL_W-30,100],fill=(101,67,33,255),width=4)
             swing=12*math.sin(2*math.pi*progress*0.8)
             ax=VISUAL_W//2+10+swing; ay=125+6*math.sin(4*math.pi*progress)
-            # Apple with highlight
             draw.ellipse([ax-28,ay,ax+28,ay+42],fill=(220,20,60,255),outline=(0,0,0,255),width=2)
-            draw.ellipse([ax-15,ay+5,ax-5,ay+15],fill=(255,100,100,200)) # highlight
+            draw.ellipse([ax-15,ay+5,ax-5,ay+15],fill=(255,100,100,200))
             draw.line([ax,ay-10,ax,ay],fill=(101,67,33,255),width=2)
             draw.ellipse([ax+5,ay-8,ax+18,ay+2],fill=(34,139,34,255))
             draw_stick_figure(draw,VISUAL_W//2-60,VISUAL_H-160,size=100,eating=("eat" in label))
             if "eat" in label:
-                # Apple moves to mouth when eating
-                eat_prog = (math.sin(progress*2*math.pi)+1)/2
+                eat_prog=(math.sin(progress*2*math.pi)+1)/2
                 if eat_prog>0.5:
                     by=VISUAL_H-110-30*eat_prog
                     draw.ellipse([VISUAL_W//2+15,by,VISUAL_W//2+35,by+20],fill=(220,20,60,255),outline=(0,0,0,255),width=2)
         elif "tree" in label or "garden" in label:
             draw.rectangle([VISUAL_W//2-15,VISUAL_H-100,VISUAL_W//2+15,VISUAL_H-20],fill=(101,67,33,255),outline=(0,0,0,255),width=2)
             rustle=10*math.sin(2*math.pi*progress)
-            for lx,ly,sz in [(VISUAL_W//2-70+rustle,VISUAL_H-190,85),(VISUAL_W//2+15-rustle,VISUAL_H-210,90),(VISUAL_W//2-30,VISUAL_H-230+rustle//2,75)]:
+            for lx,ly,sz in [(VISUAL_W//2-70+rustle,VISUAL_H-190,85),(VISUAL_W//2+15-rustle,VISUAL_H-210,90)]:
                 draw.ellipse([lx,ly,lx+sz,ly+sz*0.7],fill=(34,139,34,220),outline=(0,0,0,180),width=2)
             fall_y=(progress*VISUAL_H*1.2)%(VISUAL_H+20)-10
             fall_x=VISUAL_W//2+50*math.sin(progress*5)
@@ -576,7 +541,6 @@ def create_visual_asset(visual,index):
             if f%6<3: draw.line([hx+20,hy,hx+32,hy-4],fill=(220,20,60,255),width=2)
         elif "god" in label or "creator" in label or "universe" in label or "light" in label:
             cx=VISUAL_W//2
-            # Pulsing sun
             pulse=5*math.sin(progress*2*math.pi)
             draw.ellipse([cx-32-pulse//2,12-pulse//2,cx+32+pulse//2,76+pulse//2],fill=(255,215,0,230),outline=(0,0,0,255),width=2)
             for ang in range(-50,51,12):
@@ -584,25 +548,20 @@ def create_visual_asset(visual,index):
                 x2=cx+220*math.sin(rad); y2=40+220*math.cos(rad)
                 alpha=110+int(60*math.sin(progress*4+ang/20))
                 draw.line([cx,40,x2,y2],fill=(255,215,0,alpha),width=3)
-            # Green wavy ground
             draw.line([(20,VISUAL_H//2+20+10*math.sin(progress*2*math.pi)),(VISUAL_W//2,VISUAL_H//2+10),(VISUAL_W-20,VISUAL_H//2+20+10*math.sin(progress*2*math.pi+1))],fill=(34,139,34,200),width=4)
         else:
-            # Generic: two figures debating with speech bubbles that appear/disappear
-            draw_stick_figure(draw,80,VISUAL_H//2-30,size=90,eating=False)
-            draw_stick_figure(draw,VISUAL_W-170,VISUAL_H//2-30,size=90,eating=False)
-            # Speech bubbles popping
+            # Less abstract: two concrete figures with podium, not just blobs
+            draw.rectangle([60,VISUAL_H//2+20,140,VISUAL_H//2+60],fill=(101,67,33,255),outline=(0,0,0,255),width=2)
+            draw.rectangle([VISUAL_W-140,VISUAL_H//2+20,VISUAL_W-60,VISUAL_H//2+60],fill=(101,67,33,255),outline=(0,0,0,255),width=2)
+            draw_stick_figure(draw,70,VISUAL_H//2-40,size=80)
+            draw_stick_figure(draw,VISUAL_W-130,VISUAL_H//2-40,size=80)
             if f%9<6:
                 bx=VISUAL_W//2-40+5*math.sin(progress*6)
-                by=VISUAL_H//2-100+3*math.cos(progress*4)
+                by=VISUAL_H//2-80+3*math.cos(progress*4)
                 draw.ellipse([bx,by,bx+80,by+35],fill=(255,255,255,220),outline=(0,0,0,255),width=2)
-                draw.ellipse([bx-10,by+20,bx+10,by+35],fill=(255,255,255,220),outline=(0,0,0,200),width=1)
-        # NO rounded mask - square transparent to avoid black corner dots
-        # Directly use frame with transparent bg - no putalpha mask that causes corner artifacts
         frames.append(frame)
-    # Save GIF with transparent background handling - use disposal 2 and no transparency index that causes black dots
-    # Convert to P mode with transparent color handling to avoid black corners
     frames[0].save(filename,format='GIF',save_all=True,append_images=frames[1:],duration=160,loop=0,disposal=2)
-    print(f"   Created animation: {visual.get('label')} ({len(frames)} frames, transparent, no black dots)")
+    print(f"   Created animation: {visual.get('label')} ({len(frames)} frames, transparent)")
     return filename
 
 def create_background(position,glow_color,filename):
@@ -730,21 +689,29 @@ def create_segment(text,role,speaker_name,topic,segment_id,model_for_visuals,pos
 def generate_panel_commentary(model,side,topic,rn,ap,sk,prev,roles):
     prov=get_judge_short_name(model)
     pref_label = roles['side_a_label'] if side=="A" else roles['side_b_label']
-    recent="\n".join(prev[-4:])
-    def trim(t,mw=200):
+    recent="\n".join(prev[-3:])
+    def trim(t,mw=180):
         wl=t.split(); return t if len(wl)<=mw else " ".join(wl[-mw:])
-    prompt=f"You are {prov} judge. Topic:{topic} Round:{rn} {roles['side_a_label']}:{trim(ap)} vs {roles['side_b_label']}:{trim(sk)} You preferred {pref_label}. Give 2 sentence specific critique. Previous: {recent}"
-    resp=query_openrouter(prompt,model,timeout=30,max_tokens=200,temperature=0.7)
-    return resp if resp else f"Round {rn} - {pref_label} had stronger exegesis."
+    prompt="You are an expert judge. Topic: "+topic+" Round "+str(rn)+". "+roles['side_a_label']+": "+trim(ap)+" vs "+roles['side_b_label']+": "+trim(sk)+" You preferred "+pref_label+". Give 2 to 3 sentences specific critique natural speech, no saying what you are supposed to do, just critique. Previous: "+recent
+    resp=query_openrouter(prompt,model,timeout=30,max_tokens=280,temperature=0.75)
+    if resp and len(resp.split())>=15:
+        resp=re.sub(r'As .*? to assess,','',resp,flags=re.IGNORECASE).strip()
+        resp=re.sub(r'As an? .*? judge,','',resp,flags=re.IGNORECASE).strip()
+        return resp
+    return f"In round {rn}, {pref_label} had stronger exegesis. They quoted specific verses and followed narrative flow. The opposing side relied on imported ideas rather than immediate text. That is why I preferred {pref_label}."
 
 def build_intro(topic,jc,roles):
-    return f"Welcome to the AI Debate Arena. Today, {roles['side_a_label']} faces {roles['side_b_label']} on the question: {topic}. Three rounds, equal time, independent panel of {jc} top AI judges from different companies - one per company including ChatGPT, Claude, Gemini, Llama, Mistral, DeepSeek, Qwen - scoring argument, rebuttal and clarity. Let's begin."
+    return f"Welcome to the AI Debate Arena. Today, {roles['side_a_label']} faces {roles['side_b_label']} on the question: {topic}. Three rounds, equal time, independent panel of {jc} top AI judges from different leading companies, each from a different company, scoring argument strength, rebuttal quality, and clarity. Let's begin."
+
+def build_intro_with_judges(topic,jc,roles,judge_names):
+    names_str = ", ".join(judge_names)
+    return f"Welcome to the AI Debate Arena. Today, {roles['side_a_label']} faces {roles['side_b_label']} on the question: {topic}. Three rounds, equal time, independent panel of {jc} top AI judges including {names_str}, each from a different company, scoring argument, rebuttal and clarity. Let's begin."
 
 def build_outro(jc,ca,cb,roles):
     if math.isclose(ca,cb,abs_tol=0.01): res="a draw"
     elif ca>cb: res=roles['side_a_label']
     else: res=roles['side_b_label']
-    return f"After three rounds, panel of {jc} judges from different companies gave {roles['side_a_label']} {ca:.1f}, {roles['side_b_label']} {cb:.1f}. Final result is {res}. The text remains - you decide."
+    return f"After three rounds, panel of {jc} judges from different companies gave {roles['side_a_label']} {ca:.1f}, {roles['side_b_label']} {cb:.1f}. Final result is {res}. The text remains, you decide."
 
 def stitch_segments(segs,out):
     lf="concat_list.txt"
@@ -764,18 +731,23 @@ def run_debate_pipeline():
     if not avail: avail=FALLBACK_MODELS.copy()
     ap_model,sk_model=choose_primary_models(avail)
     roles=get_debate_roles(topic, ap_model)
-    print(f"Roles: {roles['side_a_label']} VS {roles['side_b_label']} - Topic-adaptive from topic.txt")
-    print(f"Debate engines: {get_judge_short_name(ap_model)} [{provider_from_model(ap_model)}] vs {get_judge_short_name(sk_model)} [{provider_from_model(sk_model)}] - different companies")
+    print(f"Roles: {roles['side_a_label']} VS {roles['side_b_label']} - Topic-adaptive")
+    print(f"Debate engines: {get_judge_short_name(ap_model)} [{provider_from_model(ap_model)}] vs {get_judge_short_name(sk_model)} [{provider_from_model(sk_model)}]")
     judges=choose_judges(avail,(ap_model,sk_model))
     if not judges: judges=FALLBACK_MODELS[:MAX_JUDGES]
-    print(f"Judges ({len(judges)}): ONE PER COMPANY enforced")
+    print(f"Judges ({len(judges)}): ONE PER COMPANY")
     for j in judges: print(f"  - {get_judge_short_name(j)} [{provider_from_model(j)}] - {j}")
     segs=[]; sid=0
     def add_segment(text,role,name,position=None,glow=None,judge_voice_index=None):
         nonlocal sid
         vm=sk_model if "SERPENT" in role.upper() or role=="B" else ap_model
         v=create_segment(text,role,name,topic,sid,vm,position,glow,judge_voice_index); segs.append(v); sid+=1
-    add_segment(build_intro(topic,len(judges),roles),"Moderator","MODERATOR")
+    judge_display_names=[get_judge_short_name(j) for j in judges]
+    try:
+        intro_text=build_intro_with_judges(topic,len(judges),roles,judge_display_names)
+    except:
+        intro_text=build_intro(topic,len(judges),roles)
+    add_segment(intro_text,"Moderator","MODERATOR")
     prev=""; cum_a=0.0; cum_b=0.0; pcom=[]
     for rn in range(1,ROUNDS+1):
         print(f"\nROUND {rn}")
@@ -805,8 +777,6 @@ def run_debate_pipeline():
     add_segment(build_outro(len(judges),cum_a,cum_b,roles),"Moderator","MODERATOR")
     stitch_segments(segs,OUTPUT_FILE)
     print(f"\nCOMPLETE: {OUTPUT_FILE} — {cum_a:.1f} vs {cum_b:.1f}")
-    print(f"Topic-adaptive: YES - roles {roles['side_a_label']} vs {roles['side_b_label']} from topic.txt '{topic}'")
-    print(f"One per company: YES - {len(judges)} judges from different companies")
     cleanup_cache()
 
 if __name__=="__main__":
