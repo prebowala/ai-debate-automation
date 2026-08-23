@@ -1035,15 +1035,14 @@ def create_ui_overlay(speaker_name,topic,position,glow,filename):
     return x,y
 
 def render_video_segment(bg_path,ui_path,audio_path,subs_path,output_path,position,glow,cx,cy,visual_plan):
-    # FIXED: Correct input indexing - was using [1:v] for visuals but input 1 is audio, causing "Stream specifier ':v' invalid"
+    # FIXED v2: 1) Input indices correct (bg=0, ui=1, audio=2, visuals=3+), 2) No force_style commas causing "No such filter: ''"
     duration=get_audio_duration(audio_path)
     if not duration: duration=10.0
-    # Inputs: 0:bg, 1:ui, 2:audio, 3..: visuals
     cmd=["ffmpeg","-y","-loop","1","-i",bg_path,"-loop","1","-i",ui_path,"-i",audio_path]
     filter_parts=[]
     filter_parts.append(f"[0:v]scale={VIDEO_W}:{VIDEO_H}:flags=lanczos[bg]")
     filter_parts.append(f"[1:v]scale={VIDEO_W}:{VIDEO_H}:flags=lanczos[ui]")
-    filter_parts.append(f"[bg][ui]overlay=0:0[bg_ui]")
+    filter_parts.append(f"[bg][ui]overlay=0:0:shortest=1[bg_ui]")
     last_label="[bg_ui]"
     visual_inputs=[]
     for idx, vis in enumerate(visual_plan):
@@ -1055,13 +1054,15 @@ def render_video_segment(bg_path,ui_path,audio_path,subs_path,output_path,positi
         else:
             if idx%2==0: vx=80; vy=VISUAL_Y
             else: vx=VIDEO_W-VISUAL_W-80; vy=VISUAL_Y+40
-        # FIX: Visuals start at input 3, not 1 - offset by 2 for bg+ui+audio
         input_idx = 3 + idx
         filter_parts.append(f"[{input_idx}:v]scale={VISUAL_W}:{VISUAL_H}[v{idx}]")
         next_label=f"[tmp{idx}]"
         filter_parts.append(f"{last_label}[v{idx}]overlay={vx}:{vy}:enable='gte(t,{start_time})'{next_label}")
         last_label=next_label
-    filter_parts.append(f"{last_label},format=yuv420p,subtitles={subs_path}:force_style='FontName=DejaVu Sans,FontSize=38,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BackColour=&HCC000000,Bold=1,BorderStyle=1,Outline=3.8,Shadow=1,Alignment=2,MarginV=185'[out]")
+    # Use simple subtitles filter without force_style commas - ASS file already has style
+    # Escape subs path for ffmpeg (replace : with \:)
+    safe_subs = subs_path.replace(":", "\\:")
+    filter_parts.append(f"{last_label}format=yuv420p,subtitles={safe_subs}[out]")
     filter_complex=";".join(filter_parts)
     input_args=[]
     for vp in visual_inputs: input_args.extend(["-i", vp])
@@ -1069,7 +1070,7 @@ def render_video_segment(bg_path,ui_path,audio_path,subs_path,output_path,positi
     cmd.extend(["-filter_complex", filter_complex, "-map", "[out]", "-map", "2:a", "-c:v", "libx264", "-c:a", "aac", "-shortest", "-t", str(duration+0.5), output_path])
     r=subprocess.run(cmd,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
     if r.returncode!=0:
-        print("FFmpeg filter:", filter_complex[:2000])
+        print("Filter:", filter_complex[:3000])
         print(r.stderr[-8000:])
         raise RuntimeError("Render failed")
     for vp in visual_inputs:
@@ -1104,7 +1105,8 @@ def generate_scoreboard(round_num,results,avg_a,avg_b,cum_a,cum_b,output_path,ro
 
 def render_scorecard_video(image_path,audio_path,subs_path,output_path):
     duration=get_audio_duration(audio_path) or 6.0
-    cmd=["ffmpeg","-y","-loop","1","-i",image_path,"-i",audio_path,"-filter_complex",f"[0:v]scale={VIDEO_W}:{VIDEO_H}:flags=lanczos,format=yuv420p,subtitles={subs_path}:force_style='FontName=DejaVu Sans,FontSize=40,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BackColour=&HCC000000,Bold=1,BorderStyle=1,Outline=3.8,Shadow=1,Alignment=2,MarginV=90'[out]","-map","[out]","-map","1:a","-c:v","libx264","-c:a","aac","-shortest","-t",str(duration+0.6),output_path]
+    safe_subs = subs_path.replace(":", "\\:")
+    cmd=["ffmpeg","-y","-loop","1","-i",image_path,"-i",audio_path,"-filter_complex",f"[0:v]scale={VIDEO_W}:{VIDEO_H}:flags=lanczos,format=yuv420p,subtitles={safe_subs}[out]","-map","[out]","-map","1:a","-c:v","libx264","-c:a","aac","-shortest","-t",str(duration+0.6),output_path]
     r=subprocess.run(cmd,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
     if r.returncode!=0: print(r.stderr[-5000:]); raise RuntimeError("Scorecard render failed")
 
