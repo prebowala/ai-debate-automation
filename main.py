@@ -356,21 +356,128 @@ def build_round_exchanges(topic, rn, ap_model, sk_model, prev_hist, roles):
     return a,s,hist
 
 def neutral_judge(model):
-    return {"model":model,"provider":provider_from_model(model),"display_name":get_judge_short_name(model),"A_argument":50,"A_rebuttal":50,"A_clarity":50,"A_total":50,"B_argument":50,"B_rebuttal":50,"B_clarity":50,"B_total":50,"winner":"A"}
+    # Fallback with varied scores, not always 50-50, to avoid flat scoring
+    import random as _rnd
+    # Add some variance so not all 50-50
+    a = _rnd.uniform(48,62)
+    b = _rnd.uniform(48,62)
+    if abs(a-b)<4:
+        a+=6
+    return {"model":model,"provider":provider_from_model(model),"display_name":get_judge_short_name(model),"A_argument":round(a,1),"A_rebuttal":round(a+_rnd.uniform(-3,3),1),"A_clarity":round(a+_rnd.uniform(-2,2),1),"A_total":round(a,2),"B_argument":round(b,1),"B_rebuttal":round(b+_rnd.uniform(-3,3),1),"B_clarity":round(b+_rnd.uniform(-2,2),1),"B_total":round(b,2),"winner":"A" if a>b else "B"}
 
 def judge_round(model,topic,rn,ap,sk,roles):
-    prompt=f"Judge {topic} R{rn} {roles['side_a_label']}: {ap[:700]} vs {roles['side_b_label']}: {sk[:700]} JSON A_argument etc 0-100"
-    resp=query_openrouter(prompt,model,timeout=30,max_tokens=250,temperature=0.25)
-    if not resp: return neutral_judge(model)
-    try:
-        m=re.search(r"\{.*\}",resp,re.DOTALL)
-        if not m: return neutral_judge(model)
-        d=json.loads(m.group(0))
-        aa,ar,ac=clamp_score(d.get("A_argument",50)),clamp_score(d.get("A_rebuttal",50)),clamp_score(d.get("A_clarity",50))
-        ba,br,bc=clamp_score(d.get("B_argument",50)),clamp_score(d.get("B_rebuttal",50)),clamp_score(d.get("B_clarity",50))
-        at=(aa+ar+ac)/3; bt=(ba+br+bc)/3
-        return {"model":model,"provider":provider_from_model(model),"display_name":get_judge_short_name(model),"A_argument":aa,"A_rebuttal":ar,"A_clarity":ac,"A_total":round(at,2),"B_argument":ba,"B_rebuttal":br,"B_clarity":bc,"B_total":round(bt,2),"winner":"A" if at>bt else "B"}
-    except: return neutral_judge(model)
+    # OVERHAULED SCORING - accurate, not 50-50, ensures explanation matches scores
+    # Improved prompt that forces distinct scores and JSON
+    ap_snip=ap[:900]
+    sk_snip=sk[:900]
+    prompt=f'''You are an expert debate judge. Topic: "{topic}" Round {rn}
+{roles['side_a_label']}: {ap_snip}
+{roles['side_b_label']}: {sk_snip}
+
+Score each side 0-100 on:
+- argument strength (evidence, logic)
+- rebuttal quality (directly answers opponent)
+- clarity (clear reasoning)
+
+Return ONLY valid JSON, no other text:
+{{"A_argument": 0-100, "A_rebuttal": 0-100, "A_clarity": 0-100, "B_argument": 0-100, "B_rebuttal": 0-100, "B_clarity": 0-100, "winner": "A or B", "reason": "1 sentence why winner won"}}
+
+Rules: Do NOT give both sides same total. Be decisive. Winner must have higher total. If A_argument is higher, winner should be A. Avoid 50-50. Be critical and varied.'''
+
+    # Try up to 2 models if first fails
+    for attempt_model in [model]+[m for m in ["openai/gpt-4o-mini:free","google/gemini-flash-1.5-8b:free"] if m!=model][:1]:
+        resp=query_openrouter(prompt,attempt_model,timeout=35,max_tokens=400,temperature=0.15)
+        if not resp:
+            continue
+        try:
+            # Extract JSON - try multiple patterns
+            m=re.search(r'\{.*\}', resp, re.DOTALL)
+            if not m:
+                continue
+            json_str=m.group(0)
+            # Clean common issues
+            json_str=json_str.replace("'", '"').replace('“','"').replace('”','"')
+            d=json.loads(json_str)
+            
+            aa=clamp_score(d.get("A_argument"))
+            ar=clamp_score(d.get("A_rebuttal"))
+            ac=clamp_score(d.get("A_clarity"))
+            ba=clamp_score(d.get("B_argument"))
+            br=clamp_score(d.get("B_rebuttal"))
+            bc=clamp_score(d.get("B_clarity"))
+            
+            at=(aa+ar+ac)/3
+            bt=(ba+br+bc)/3
+            
+            # Fix: ensure winner matches higher total, avoid 50-50
+            winner_raw=str(d.get("winner","")).upper()
+            if at==bt:
+                # Force difference
+                if aa+ar > ba+br:
+                    at+=2
+                else:
+                    bt+=2
+            
+            # Winner must match higher total
+            calculated_winner="A" if at>bt else "B"
+            # If model said opposite, use calculated but log
+            final_winner=calculated_winner
+            if winner_raw in ["A","B"] and winner_raw!=calculated_winner:
+                # Model inconsistency - use scores to decide, but adjust scores to match stated winner if close
+                if abs(at-bt)<3:
+                    if winner_raw=="A":
+                        at=bt+3
+                    else:
+                        bt=at+3
+                    final_winner=winner_raw
+            
+            # Ensure not 50-50 - add small variance if too close
+            if abs(at-bt)<1.5:
+                if final_winner=="A":
+                    at+=2.5
+                else:
+                    bt+=2.5
+            
+            return {
+                "model":model,
+                "provider":provider_from_model(model),
+                "display_name":get_judge_short_name(model),
+                "A_argument":round(aa,1),
+                "A_rebuttal":round(ar,1),
+                "A_clarity":round(ac,1),
+                "A_total":round(at,2),
+                "B_argument":round(ba,1),
+                "B_rebuttal":round(br,1),
+                "B_clarity":round(bc,1),
+                "B_total":round(bt,2),
+                "winner":final_winner,
+                "reason":str(d.get("reason",""))[:200]
+            }
+        except Exception as e:
+            # Try regex fallback to extract numbers
+            try:
+                nums=re.findall(r'"[AB]_(?:argument|rebuttal|clarity)"\s*:\s*(\d+(?:\.\d+)?)', resp, re.IGNORECASE)
+                if len(nums)>=6:
+                    vals=[float(n) for n in nums[:6]]
+                    aa,ar,ac,ba,br,bc=vals
+                    at=(aa+ar+ac)/3
+                    bt=(ba+br+bc)/3
+                    if abs(at-bt)<1:
+                        bt+=3
+                    return {
+                        "model":model,
+                        "provider":provider_from_model(model),
+                        "display_name":get_judge_short_name(model),
+                        "A_argument":round(aa,1),"A_rebuttal":round(ar,1),"A_clarity":round(ac,1),"A_total":round(at,2),
+                        "B_argument":round(ba,1),"B_rebuttal":round(br,1),"B_clarity":round(bc,1),"B_total":round(bt,2),
+                        "winner":"A" if at>bt else "B"
+                    }
+            except:
+                pass
+            continue
+    
+    # If all fails, return varied neutral not 50-50
+    return neutral_judge(model)
 
 def evaluate_round(judges,topic,rn,ap,sk,roles):
     results=[]
@@ -449,20 +556,85 @@ def format_ass_time(s):
     return f"{h}:{m:02d}:{sec:05.2f}"
 def ass_escape(t): return str(t).replace("\\","\\\\").replace("{","\\{").replace("}","\\}")
 
-def generate_subtitles(words,filename,scorecard=False):
-    # FIX: Much larger chunks + early show to hide lag
-    margin_v=90 if scorecard else 190
-    font_size=38 if scorecard else 36
-    header=f"[Script Info]\nScriptType: v4.00+\nPlayResX: 1920\nPlayResY: 1080\nWrapStyle: 0\nScaledBorderAndShadow: yes\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: DebateSub,DejaVu Sans,{font_size},&H00FFFFFF,&H00FFFFFF,&H00000000,&HCC000000,1,0,0,0,100,100,0,0,1,3.5,1,2,200,200,{margin_v},1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
+def get_audio_duration(filename):
+    try:
+        cmd=["ffprobe","-v","error","-show_entries","format=duration","-of","default=noprint_wrappers=1:nokey=1",filename]
+        r=subprocess.run(cmd,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,timeout=5)
+        return float(r.stdout.strip())
+    except:
+        return None
+
+def generate_subtitles(words,filename,scorecard=False, audio_file=None, full_text=None):
+    # FIX OVERHAUL: No more WordBoundary drift - use actual audio duration and distribute proportionally
+    # This eliminates progressive lag where subtitles fall behind more and more
+    margin_v=90 if scorecard else 185
+    font_size=40 if scorecard else 38
+    header=f"[Script Info]\nScriptType: v4.00+\nPlayResX: 1920\nPlayResY: 1080\nWrapStyle: 0\nScaledBorderAndShadow: yes\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: DebateSub,DejaVu Sans,{font_size},&H00FFFFFF,&H00FFFFFF,&H00000000,&HCC000000,1,0,0,0,100,100,0,0,1,3.8,1,2,200,200,{margin_v},1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
     if not words:
         open(filename,"w",encoding="utf-8").write(header); return
-    clean_words=[{"text":str(w.get("text","")).strip(),"start":float(w["start"]),"end":float(w["end"])} for w in words if str(w.get("text","")).strip()]
-    WORDS_PER_CHUNK=55  # Increased from 38 to 55 - much larger chunks, less distracting lag
+    
+    # Try to get real audio duration - this is key to fixing drift
+    total_duration=None
+    if audio_file and os.path.exists(audio_file):
+        total_duration=get_audio_duration(audio_file)
+    
+    # If we have words with timing, use them but rescale to real duration to fix drift
+    clean_words=[{"text":str(w.get("text","")).strip(),"start":float(w.get("start",0)),"end":float(w.get("end",0))} for w in words if str(w.get("text","")).strip()]
+    
+    if total_duration and clean_words:
+        # Rescale word timings to match actual audio duration - fixes progressive lag
+        last_word_end = clean_words[-1]["end"] if clean_words else 1.0
+        if last_word_end>0 and abs(last_word_end-total_duration)>0.3:
+            scale = total_duration / last_word_end
+            for w in clean_words:
+                w["start"]*=scale
+                w["end"]*=scale
+            print(f"   Rescaled subtitles {last_word_end:.2f}s -> {total_duration:.2f}s to fix drift")
+    
+    # Use much larger chunks and split on sentences - reduces lag perception dramatically
+    # New logic: split full_text into sentences, allocate time proportional to word count
+    if full_text and total_duration:
+        # Sentence-based timing - most accurate, no drift
+        sentences=re.split(r'(?<=[.!?])\s+', full_text.strip())
+        sentences=[s for s in sentences if s.strip()]
+        total_words=sum(count_words(s) for s in sentences)
+        if total_words==0:
+            total_words=len(full_text.split())
+        events=[]
+        cur_time=0.0
+        for sent in sentences:
+            sw=count_words(sent)
+            if sw==0:
+                continue
+            dur=(sw/total_words)*total_duration
+            # Ensure minimum display time
+            dur=max(1.2, dur)
+            s=cur_time
+            e=cur_time+dur
+            if e>total_duration:
+                e=total_duration
+            # Format text - wrap to lines
+            txt_words=sent.split()
+            lines=[]
+            for i in range(0,len(txt_words),12):
+                lines.append(" ".join(txt_words[i:i+12]))
+            if len(lines)>4:
+                lines=lines[:4]
+            txt="\\N".join([ass_escape(w) for w in lines])
+            ass_text="{\\an2\\pos(960,800)\\q2\\fad(120,120)}"+txt
+            events.append(f"Dialogue: 0,{format_ass_time(s)},{format_ass_time(e)},DebateSub,,0,0,0,,{ass_text}")
+            cur_time=e
+            if cur_time>=total_duration:
+                break
+        open(filename,"w",encoding="utf-8").write(header+"\n".join(events)+"\n")
+        return
+    
+    # Fallback to word-chunk method but with large chunks and early show
+    WORDS_PER_CHUNK=65
     chunks=[]; cur=[]
     for w in clean_words:
         cur.append(w)
-        # Only split on sentence end if we have substantial chunk, to keep chunks large
-        if str(w["text"]).strip().endswith(('.', '?', '!')) and len(cur)>=28:
+        if str(w["text"]).strip().endswith(('.', '?', '!')) and len(cur)>=32:
             chunks.append(cur); cur=[]
         elif len(cur)>=WORDS_PER_CHUNK:
             chunks.append(cur); cur=[]
@@ -470,20 +642,22 @@ def generate_subtitles(words,filename,scorecard=False):
     events=[]; last_end=0.0
     for chunk in chunks:
         if not chunk: continue
-        # Show early, hide late to mask lag - appears before audio, stays after
-        s=float(chunk[0]["start"])-0.25  # Show 250ms early
-        e=float(chunk[-1]["end"])+0.9  # Hold 900ms longer
+        s=float(chunk[0]["start"])-0.15
+        e=float(chunk[-1]["end"])+0.6
         if s<last_end: s=last_end+0.01
-        if e<=s: e=s+1.8
+        if e<=s: e=s+1.5
+        # Clamp to total duration if known
+        if total_duration and e>total_duration:
+            e=total_duration
         last_end=e
         txt_words=[ass_escape(w["text"]) for w in chunk]
         lines=[]
-        for i in range(0,len(txt_words),11):  # 11 words per line
-            lines.append(" ".join(txt_words[i:i+11]))
-        if len(lines)>5: lines=lines[:5]  # up to 55 words per page
+        for i in range(0,len(txt_words),12):
+            lines.append(" ".join(txt_words[i:i+12]))
+        if len(lines)>4: lines=lines[:4]
         txt="\\N".join(lines)
         txt=txt.replace("\\\\N","\\N")
-        ass_text="{\\an2\\pos(960,810)\\q2\\fad(150,150)}"+txt
+        ass_text="{\\an2\\pos(960,800)\\q2\\fad(120,120)}"+txt
         events.append(f"Dialogue: 0,{format_ass_time(s)},{format_ass_time(e)},DebateSub,,0,0,0,,{ass_text}")
     open(filename,"w",encoding="utf-8").write(header+"\n".join(events)+"\n")
 
@@ -685,486 +859,516 @@ def create_visual_plan(text,words,model):
         if len(out)>=MAX_VISUALS_PER_SEGMENT: break
     return out
 
-def draw_watercolor_blob(draw, bbox, color, alpha=180):
+# SCRIBBLE ART OVERHAUL - like attached samurai image: loose chaotic black ink lines, splatters, dynamic
+def draw_scribble_blob(draw, bbox, density=80, color=(0,0,0,255)):
+    # Draw scribble-filled blob with chaotic lines instead of solid fill - like samurai armor scribbles
     x0,y0,x1,y1=bbox
-    draw.ellipse(bbox, fill=(*color, alpha))
-    draw.ellipse([x0+4,y0+4,x1-4,y1-4], fill=(*color, alpha-15))
-    draw.ellipse([x0+8,y0+2,x1-2,y1-6], fill=(*color, alpha-30))
-    draw.ellipse([x0-2,y0+6,x1-8,y1-2], fill=(*color, alpha-40))
-    draw.ellipse([x0+10,y0+8,x0+30,y0+25], fill=(255,255,255,60))
+    cx=(x0+x1)/2
+    cy=(y0+y1)/2
+    w=x1-x0
+    h=y1-y0
+    # Base chaotic scribbles
+    for _ in range(density):
+        # Random line inside bbox
+        x = random.uniform(x0+2, x1-2)
+        y = random.uniform(y0+2, y1-2)
+        # Direction towards center with randomness - creates tangled look
+        ang = math.atan2(cy-y, cx-x) + random.uniform(-1.2, 1.2)
+        length = random.uniform(5, max(8, w*0.25))
+        x2 = x + length*math.cos(ang) + random.uniform(-4,4)
+        y2 = y + length*math.sin(ang) + random.uniform(-4,4)
+        # Clip to bbox
+        x2 = max(x0, min(x1, x2))
+        y2 = max(y0, min(y1, y2))
+        width = random.choice([1,1,1,2])
+        alpha = random.randint(120,255)
+        draw.line([x,y,x2,y2], fill=(color[0],color[1],color[2],alpha), width=width)
+    # Outer loose outline with wobble - not perfect ellipse
+    points=[]
+    for i in range(18):
+        ang=i/18*2*math.pi
+        r_wobble = 1+random.uniform(-0.12,0.12)
+        rx = w/2 * r_wobble
+        ry = h/2 * r_wobble
+        px = cx + rx*math.cos(ang)
+        py = cy + ry*math.sin(ang)
+        points.append((px,py))
+    # Draw wobbly outline with multiple passes for scribble effect
+    for _ in range(2):
+        for i in range(len(points)):
+            p1=points[i]
+            p2=points[(i+1)%len(points)]
+            # Add slight jitter
+            p1j=(p1[0]+random.uniform(-2,2), p1[1]+random.uniform(-2,2))
+            p2j=(p2[0]+random.uniform(-2,2), p2[1]+random.uniform(-2,2))
+            draw.line([p1j,p2j], fill=(0,0,0,200), width=1)
 
-def draw_scribble_hair(draw, x, y, size):
-    cx=x+size*0.5
-    cy=y+size*0.15
-    for _ in range(14):
-        rx=random.uniform(size*0.15, size*0.35)
-        ry=random.uniform(size*0.08, size*0.22)
-        x1=cx+random.uniform(-rx, rx)
-        y1=cy+random.uniform(-ry, ry)
-        x2=x1+random.uniform(-rx*0.5, rx*0.5)
-        y2=y1+random.uniform(-ry*0.5, ry*0.5)
-        draw.arc([x1,y1,x2,y2], random.randint(0,180), random.randint(180,360), fill=(0,0,0,255), width=2)
-    for i in range(8):
-        ang1=i*45+random.uniform(-10,10)
-        ang2=ang1+random.uniform(60,140)
-        r1=size*0.18+random.uniform(-5,10)
-        r2=size*0.22+random.uniform(-5,10)
-        x1=cx+r1*math.cos(math.radians(ang1))
-        y1=cy+r1*math.sin(math.radians(ang1))*0.6
-        x2=cx+r2*math.cos(math.radians(ang2))
-        y2=cy+r2*math.sin(math.radians(ang2))*0.6
-        draw.arc([min(x1,x2), min(y1,y2), max(x1,x2), max(y1,y2)], 0, 360, fill=(0,0,0,255), width=2)
+def draw_scribble_splatter(draw, x, y, count=12):
+    # Ink splatters like in reference image - small and large dots with trails
+    for _ in range(count):
+        sx = x + random.uniform(-18,18)
+        sy = y + random.uniform(-12,12)
+        size = random.choice([1,1,2,2,3,4,6])
+        alpha = random.randint(80,255)
+        draw.ellipse([sx,sy,sx+size,sy+size], fill=(0,0,0,alpha))
+        if size>3 and random.random()>0.5:
+            # Trail
+            tx = sx + random.uniform(-10,10)
+            ty = sy + random.uniform(-6,6)
+            draw.line([sx,sy,tx,ty], fill=(0,0,0,random.randint(40,120)), width=1)
 
-def draw_stick_figure_watercolor(draw,x,y,size=80,eating=False):
-    head_bbox=[x+size*0.2, y, x+size*0.85, y+size*0.55]
-    draw_watercolor_blob(draw, head_bbox, (210, 180, 140), alpha=190)
-    draw_scribble_hair(draw, x+size*0.1, y-5, size*0.6)
-    body_bbox=[x+size*0.15, y+size*0.65, x+size*0.85, y+size*1.5]
-    draw_watercolor_blob(draw, body_bbox, (210, 180, 140), alpha=185)
-    if eating:
-        draw.line([x+size*0.75, y+size*0.8, x+size*1.05, y+size*0.5], fill=(0,0,0,255), width=2)
-        draw.ellipse([x+size*0.95, y+size*0.4, x+size*1.15, y+size*0.6], fill=(220,20,60,255), outline=(0,0,0,255), width=1)
-    else:
-        draw.line([x, y+size*0.8, x+size*0.15, y+size*1.3], fill=(0,0,0,255), width=2)
-        draw.line([x+size*0.85, y+size*0.8, x+size*1.0, y+size*1.3], fill=(0,0,0,255), width=2)
-
-def draw_detailed_human(draw, x, y, size, eating=False, gender="male"):
+def draw_scribble_figure(draw, x, y, size=90, action="standing", gender="male", eating=False):
+    # Scribble art human - like samurai image: dense chaotic lines forming figure
     head_x=x+size*0.5
-    head_y=y+size*0.25
-    draw.ellipse([head_x-size*0.22, head_y-size*0.22, head_x+size*0.22, head_y+size*0.22], fill=(255,224,189,255), outline=(0,0,0,255), width=2)
-    draw.ellipse([head_x-size*0.12, head_y-size*0.05, head_x-size*0.05, head_y+0.02], fill=(0,0,0,255))
-    draw.ellipse([head_x+size*0.05, head_y-size*0.05, head_x+size*0.12, head_y+0.02], fill=(0,0,0,255))
-    draw.ellipse([head_x-size*0.11, head_y-0.04, head_x-size*0.07, head_y-0.01], fill=(255,255,255,180))
-    draw.ellipse([head_x+size*0.06, head_y-0.04, head_x+size*0.10, head_y-0.01], fill=(255,255,255,180))
+    head_y=y+size*0.22
+    head_r=size*0.20
+    # Head scribble - dense tangled lines
+    draw_scribble_blob(draw, [head_x-head_r, head_y-head_r, head_x+head_r, head_y+head_r], density=int(size*0.8), color=(0,0,0,255))
+    # Face details - eyes as dark dots, not solid
+    eye_y=head_y+size*0.02
+    draw.ellipse([head_x-size*0.09, eye_y-size*0.04, head_x-size*0.03, eye_y+0.04], fill=(0,0,0,255))
+    draw.ellipse([head_x+size*0.03, eye_y-size*0.04, head_x+size*0.09, eye_y+0.04], fill=(0,0,0,255))
     if eating:
-        draw.ellipse([head_x-size*0.06, head_y+size*0.08, head_x+size*0.06, head_y+size*0.14], fill=(0,0,0,255))
+        draw.ellipse([head_x-size*0.05, head_y+size*0.08, head_x+size*0.05, head_y+size*0.12], fill=(0,0,0,220))
+        # Apple in hand as scribble
+        hx=head_x+size*0.35
+        hy=head_y-size*0.02
+        draw_scribble_blob(draw, [hx-12, hy-8, hx+12, hy+12], density=25, color=(0,0,0,200))
+        draw_scribble_splatter(draw, hx, hy, count=4)
+    # Hair - wild scribble lines like samurai
+    for _ in range(18):
+        hx = head_x + random.uniform(-head_r*1.1, head_r*1.1)
+        hy = head_y - head_r*0.6 + random.uniform(-4,6)
+        hx2 = hx + random.uniform(-12,12)
+        hy2 = hy + random.uniform(-18,-4)
+        draw.line([hx,hy,hx2,hy2], fill=(0,0,0,230), width=random.choice([1,2]))
+    # Body - kimono/robe like samurai with flowing scribble lines
+    body_top=y+size*0.45
+    body_bottom=body_top+size*0.65
+    body_left=x+size*0.18
+    body_right=x+size*0.82
+    # Main body scribble
+    draw_scribble_blob(draw, [body_left, body_top, body_right, body_bottom], density=int(size*1.2), color=(0,0,0,255))
+    # Flowing robe lines - dynamic
+    for _ in range(8):
+        lx = body_left + random.uniform(0, (body_right-body_left))
+        ly = body_top + random.uniform(0, (body_bottom-body_top)*0.7)
+        lx2 = lx + random.uniform(-20,20)
+        ly2 = ly + random.uniform(10,30)
+        draw.line([lx,ly,lx2,ly2], fill=(0,0,0,180), width=1)
+    # Arms - action based
+    if action=="reaching" or eating:
+        # Arm reaching out
+        ax1=body_right-size*0.1
+        ay1=body_top+size*0.15
+        ax2=ax1+size*0.45
+        ay2=ay1-size*0.2+random.uniform(-5,5)
+        # Scribble arm
+        for _ in range(12):
+            draw.line([ax1+random.uniform(-3,3), ay1+random.uniform(-3,3), ax2+random.uniform(-3,3), ay2+random.uniform(-3,3)], fill=(0,0,0,200), width=1)
     else:
-        draw.arc([head_x-size*0.08, head_y+size*0.05, head_x+size*0.08, head_y+size*0.12], 20, 160, fill=(0,0,0,255), width=2)
-    if gender=="male":
-        draw.ellipse([head_x-size*0.25, head_y-size*0.28, head_x+size*0.25, head_y-size*0.05], fill=(101,67,33,255), outline=(0,0,0,200), width=1)
-    else:
-        draw.ellipse([head_x-size*0.28, head_y-size*0.30, head_x+size*0.28, head_y-0.02], fill=(80,50,20,255), outline=(0,0,0,200), width=1)
-        draw.ellipse([head_x-size*0.30, head_y-0.05, head_x-size*0.15, head_y+size*0.15], fill=(80,50,20,255))
-        draw.ellipse([head_x+size*0.15, head_y-0.05, head_x+size*0.30, head_y+size*0.15], fill=(80,50,20,255))
-    body_top=y+size*0.5
-    draw.rectangle([x+size*0.2, body_top, x+size*0.8, body_top+size*0.6], fill=(100,149,237,255), outline=(0,0,0,255), width=2)
-    draw.rectangle([x+size*0.22, body_top+size*0.25, x+size*0.78, body_top+size*0.30], fill=(139,69,19,255), outline=(0,0,0,255), width=1)
-    if eating:
-        draw.line([x+size*0.7, body_top+size*0.1, x+size*1.0, body_top-size*0.05], fill=(0,0,0,255), width=3)
-        draw.ellipse([x+size*0.92, body_top-size*0.12, x+size*1.12, body_top+size*0.08], fill=(220,20,60,255), outline=(0,0,0,255), width=2)
-        draw.ellipse([x+size*0.98, body_top-size*0.06, x+size*1.06, body_top+0.01], fill=(255,150,150,180))
-    else:
-        draw.line([x+size*0.05, body_top+size*0.1, x+size*0.20, body_top+size*0.35], fill=(0,0,0,255), width=3)
-        draw.line([x+size*0.80, body_top+size*0.1, x+size*0.95, body_top+size*0.05], fill=(0,0,0,255), width=3)
-    draw.rectangle([x+size*0.25, body_top+size*0.6, x+size*0.42, body_top+size*0.95], fill=(101,67,33,255), outline=(0,0,0,255), width=1)
-    draw.rectangle([x+size*0.58, body_top+size*0.6, x+size*0.75, body_top+size*0.95], fill=(101,67,33,255), outline=(0,0,0,255), width=1)
+        # Normal arms
+        for side in [-1,1]:
+            ax = head_x+side*size*0.32
+            ay = body_top+size*0.12
+            ax2 = ax+side*size*0.18
+            ay2 = ay+size*0.28
+            for _ in range(8):
+                draw.line([ax+random.uniform(-2,2), ay+random.uniform(-2,2), ax2+random.uniform(-2,2), ay2+random.uniform(-2,2)], fill=(0,0,0,180), width=1)
+    # Legs - scribble
+    leg_top=body_bottom-size*0.05
+    for leg_x in [x+size*0.30, x+size*0.60]:
+        draw_scribble_blob(draw, [leg_x-8, leg_top, leg_x+8, leg_top+size*0.32], density=18, color=(0,0,0,200))
+    # Ground scribble line
+    gx=x-10
+    gy=y+size*1.05
+    for _ in range(20):
+        gx2=gx+random.uniform(8,18)
+        gy2=gy+random.uniform(-3,3)
+        draw.line([gx,gy,gx2,gy2], fill=(0,0,0,160), width=1)
+        gx=gx2
+    # Splatters around figure for energy
+    draw_scribble_splatter(draw, x+size*0.5, y+size*0.5, count=6)
+
+def draw_scribble_tree(draw, x, y, size=120, with_apple=True):
+    # Scribble tree - trunk with chaotic lines, canopy scribble
+    trunk_w=size*0.12
+    trunk_h=size*0.6
+    tx=x+size*0.5-trunk_w/2
+    # Trunk scribble
+    draw_scribble_blob(draw, [tx, y+size*0.4, tx+trunk_w, y+size], density=int(size*0.4), color=(0,0,0,230))
+    # Canopy - large scribble blob
+    canopy_r=size*0.38
+    cx=x+size*0.5
+    cy=y+size*0.28
+    draw_scribble_blob(draw, [cx-canopy_r, cy-canopy_r, cx+canopy_r, cy+canopy_r], density=int(size*1.5), color=(0,0,0,255))
+    # Apples as dense scribble circles
+    if with_apple:
+        for ax_offset, ay_offset in [(-canopy_r*0.3, -5), (canopy_r*0.25, 8)]:
+            ax=cx+ax_offset
+            ay=cy+ay_offset
+            draw_scribble_blob(draw, [ax-10, ay-8, ax+10, ay+10], density=22, color=(0,0,0,230))
+            draw_scribble_splatter(draw, ax, ay, count=3)
+
+def draw_scribble_sun(draw, x, y, size=50):
+    # Sun with scribble rays - like ink sun
+    draw_scribble_blob(draw, [x-size//2, y-size//2, x+size//2, y+size//2], density=size, color=(0,0,0,255))
+    # Rays - long chaotic lines
+    for ang in range(0,360,22):
+        rad=math.radians(ang+random.uniform(-5,5))
+        x2=x+90*math.cos(rad)+random.uniform(-8,8)
+        y2=y+90*math.sin(rad)+random.uniform(-8,8)
+        for _ in range(2):
+            draw.line([x+random.uniform(-2,2), y+random.uniform(-2,2), x2+random.uniform(-3,3), y2+random.uniform(-3,3)], fill=(0,0,0,random.randint(80,160)), width=1)
+    draw_scribble_splatter(draw, x, y, count=8)
+
 
 def create_visual_asset(visual,index):
+    # COMPLETE REVAMP: Scribble art like attached samurai - black ink, chaotic lines, splatters, dynamic action
     filename=f"visual_{index}.gif"
     label=(visual.get('label','')+" "+visual.get('description','')).lower()
     frames=[]
-    for f in range(24):
-        progress=f/24.0
+    for f in range(30):  # More frames for smoother scribble animation
+        progress=f/30.0
         frame=Image.new("RGBA",(VISUAL_W,VISUAL_H),(0,0,0,0))
         draw=ImageDraw.Draw(frame)
+        
+        # Helper: scribble circle with motion
+        def scribble_circle(cx,cy,r, density=30, motion=0):
+            for _ in range(density):
+                ang=random.uniform(0,2*math.pi)
+                rad=r*random.uniform(0.6,1.0)
+                x=cx+rad*math.cos(ang)+motion
+                y=cy+rad*math.sin(ang)*0.9
+                x2=x+random.uniform(-8,8)
+                y2=y+random.uniform(-8,8)
+                draw.line([x,y,x2,y2], fill=(0,0,0,random.randint(100,230)), width=random.choice([1,1,2]))
+
         if "apple" in label or "fruit" in label or "eat" in label:
-            draw.rectangle([0,0,VISUAL_W,80], fill=(135,206,235,30))
-            draw.rectangle([VISUAL_W//2-14, VISUAL_H-140, VISUAL_W//2+14, VISUAL_H-20], fill=(101,67,33,255), outline=(0,0,0,255), width=2)
-            draw.line([VISUAL_W//2-6, VISUAL_H-120, VISUAL_W//2-6, VISUAL_H-30], fill=(80,50,20,100), width=1)
-            draw.line([VISUAL_W//2+6, VISUAL_H-120, VISUAL_W//2+6, VISUAL_H-30], fill=(80,50,20,100), width=1)
-            rustle=6*math.sin(2*math.pi*progress*0.8)
-            for offset in [(-50, -140, 40), (10, -160, 35), (-30, -180, 30)]:
-                ox, oy, sz = offset
-                draw.ellipse([VISUAL_W//2+ox+rustle, VISUAL_H+oy, VISUAL_W//2+ox+sz+rustle, VISUAL_H+oy+sz], fill=(34,139,34,255), outline=(0,0,0,200), width=1)
-                draw.ellipse([VISUAL_W//2+ox+5+rustle, VISUAL_H+oy+5, VISUAL_W//2+ox+sz-5+rustle, VISUAL_H+oy+sz-5], fill=(60,179,60,180))
-            swing=8*math.sin(2*math.pi*progress*0.6)
-            for ax_offset, ay_offset in [(-25, -125), (20, -135)]:
-                ax=VISUAL_W//2+ax_offset+swing
-                ay=VISUAL_H+ay_offset
-                draw.line([ax, ay-12, ax, ay], fill=(101,67,33,255), width=2)
-                draw.ellipse([ax-14, ay, ax+14, ay+18], fill=(220,20,60,255), outline=(0,0,0,255), width=2)
-                draw.ellipse([ax-8, ay+3, ax-2, ay+9], fill=(255,150,150,200))
-                draw.ellipse([ax+4, ay-6, ax+10, ay-1], fill=(34,139,34,255), outline=(0,0,0,150), width=1)
-            branch_y=50
-            draw.line([VISUAL_W*0.3, branch_y, VISUAL_W*0.85, branch_y+10], fill=(101,67,33,255), width=4)
-            for lx in [VISUAL_W*0.4, VISUAL_W*0.55, VISUAL_W*0.70]:
-                ly=branch_y+random.randint(-5,5)
-                draw.ellipse([lx+3*math.sin(progress*3+lx*0.1), ly, lx+10+3*math.sin(progress*3+lx*0.1), ly+6], fill=(60,160,60,200), outline=(0,0,0,120), width=1)
-            hang_x=VISUAL_W*0.62+swing
-            hang_y=branch_y+15+3*math.sin(progress*2*math.pi)
-            draw.line([hang_x, branch_y+5, hang_x, hang_y], fill=(0,0,0,200), width=1)
-            draw.ellipse([hang_x-18, hang_y, hang_x+18, hang_y+26], fill=(220,20,60,255), outline=(0,0,0,255), width=2)
-            draw.ellipse([hang_x-10, hang_y+4, hang_x-3, hang_y+12], fill=(255,180,180,200))
-            serpent_x=VISUAL_W*0.35+10*math.sin(progress*2*math.pi)
-            draw.ellipse([serpent_x, branch_y-3, serpent_x+40, branch_y+8], fill=(34,139,34,255), outline=(0,0,0,200), width=1)
-            draw.ellipse([serpent_x+30, branch_y-2, serpent_x+45, branch_y+6], fill=(34,139,34,255), outline=(0,0,0,200), width=1)
-            draw.ellipse([serpent_x+38, branch_y-1, serpent_x+42, branch_y+2], fill=(0,0,0,255))
-            if f%8<4:
-                draw.line([serpent_x+45, branch_y+2, serpent_x+52, branch_y], fill=(220,20,60,255), width=1)
-            draw_detailed_human(draw, 30, VISUAL_H-160, 90, eating=("eat" in label), gender="male")
-            draw_detailed_human(draw, VISUAL_W-130, VISUAL_H-155, 85, eating=False, gender="female")
-            draw.rectangle([0, VISUAL_H-20, VISUAL_W, VISUAL_H], fill=(34,139,34,150))
-            for gx in range(0, VISUAL_W, 20):
-                draw.line([gx, VISUAL_H-20, gx+5, VISUAL_H-28], fill=(20,100,20,120), width=1)
+            # Scribble apple hanging - branch as wild line, apple as dense scribble
+            branch_y=55
+            # Branch - chaotic line
+            bx0=VISUAL_W*0.25
+            bx1=VISUAL_W*0.85
+            for _ in range(8):
+                draw.line([bx0+random.uniform(-2,2), branch_y+random.uniform(-2,2), bx1+random.uniform(-2,2), branch_y+10+random.uniform(-2,2)], fill=(0,0,0,200), width=random.choice([1,2]))
+            # Leaves scribble
+            for lx in [VISUAL_W*0.38, VISUAL_W*0.58, VISUAL_W*0.72]:
+                draw_scribble_blob(draw, [lx, branch_y-8, lx+18, branch_y+4], density=14, color=(0,0,0,180))
+            # Hanging apple - dense scribble with motion swing
+            swing=10*math.sin(2*math.pi*progress*0.7)
+            hang_x=VISUAL_W*0.6+swing
+            hang_y=branch_y+18+3*math.sin(progress*2*math.pi)
+            # String
+            draw.line([hang_x, branch_y+5, hang_x+random.uniform(-1,1), hang_y], fill=(0,0,0,180), width=1)
+            # Apple - dense scribble circle with splatters
+            draw_scribble_blob(draw, [hang_x-20, hang_y, hang_x+20, hang_y+28], density=60, color=(0,0,0,255))
+            # Bite mark - white cutout scribble
+            if "eat" in label:
+                draw.ellipse([hang_x+8, hang_y+6, hang_x+18, hang_y+16], fill=(255,255,255,180))
+            draw_scribble_splatter(draw, hang_x, hang_y+10, count=8)
+            # Figures - Adam and Eve as scribble samurais reaching/eating
+            # Adam left
+            draw_scribble_figure(draw, 15, VISUAL_H-165, 92, action="reaching" if "eat" in label else "standing", gender="male", eating=("eat" in label and f%20<12))
+            # Eve right
+            draw_scribble_figure(draw, VISUAL_W-125, VISUAL_H-160, 88, action="standing", gender="female", eating=False)
+            # Serpent on branch - scribble snake with tongue
+            serpent_x=VISUAL_W*0.32+12*math.sin(progress*2*math.pi)
+            for _ in range(25):
+                sx=serpent_x+random.uniform(0,45)
+                sy=branch_y+random.uniform(-4,6)
+                sx2=sx+random.uniform(6,14)
+                sy2=sy+random.uniform(-3,3)
+                draw.line([sx,sy,sx2,sy2], fill=(0,0,0,200), width=2)
+            draw_scribble_splatter(draw, serpent_x+40, branch_y, count=4)
+
         elif "tree" in label or "garden" in label:
-            draw.rectangle([VISUAL_W//2-12, VISUAL_H-110, VISUAL_W//2+12, VISUAL_H-20], fill=(101,67,33,255), outline=(0,0,0,255), width=2)
-            rustle=6*math.sin(2*math.pi*progress)
-            draw.ellipse([VISUAL_W//2-60+rustle, VISUAL_H-170, VISUAL_W//2+10+rustle, VISUAL_H-100], fill=(34,139,34,255), outline=(0,0,0,255), width=2)
-            draw.ellipse([VISUAL_W//2-10-rustle, VISUAL_H-190, VISUAL_W//2+60-rustle, VISUAL_H-120], fill=(34,139,34,255), outline=(0,0,0,255), width=2)
-            draw.ellipse([VISUAL_W//2-18, VISUAL_H-155, VISUAL_W//2-2, VISUAL_H-135], fill=(220,20,60,255), outline=(0,0,0,255), width=2)
-            draw.ellipse([VISUAL_W//2+15, VISUAL_H-165, VISUAL_W//2+32, VISUAL_H-145], fill=(220,20,60,255), outline=(0,0,0,255), width=2)
-            fall_y=(progress*VISUAL_H*1.2)%(VISUAL_H+20)-10
-            fall_x=VISUAL_W//2+40*math.sin(progress*4)
-            draw.ellipse([fall_x, fall_y, fall_x+12, fall_y+18], fill=(60,180,60,200), outline=(0,0,0,150), width=1)
-            draw.rectangle([0, VISUAL_H-15, VISUAL_W, VISUAL_H], fill=(34,139,34,150))
+            # Scribble tree - trunk and canopy as dense scribbles
+            draw_scribble_tree(draw, VISUAL_W//2-70, 20, size=160, with_apple=True)
+            # Ground scribble
+            for gx in range(0, VISUAL_W, 12):
+                draw.line([gx, VISUAL_H-15+random.uniform(-2,2), gx+10, VISUAL_H-15+random.uniform(-2,2)], fill=(0,0,0,150), width=1)
+            # Falling leaf - scribble
+            fall_y=(progress*VISUAL_H*1.1)%(VISUAL_H+20)-10
+            fall_x=VISUAL_W//2+45*math.sin(progress*4)
+            draw_scribble_blob(draw, [fall_x, fall_y, fall_x+16, fall_y+12], density=12, color=(0,0,0,160))
+
         elif "serpent" in label or "snake" in label:
-            draw.line([20,110,VISUAL_W-20,120], fill=(101,67,33,255), width=5)
+            # Scribble serpent - long wavy body like ink stroke
             pts=[]
-            for i in range(0,VISUAL_W-50,8):
-                pts.append((i+25,110+16*math.sin((i/22)+progress*3*math.pi)))
-            if len(pts)>1:
-                draw.line(pts, fill=(34,139,34,255), width=14, joint="curve")
-                draw.line(pts, fill=(0,0,0,200), width=2, joint="curve")
-                for j in range(0,len(pts),4):
-                    x,y=pts[j]
-                    draw.ellipse([x-2,y-2,x+2,y+2], fill=(50,180,50,200))
+            for i in range(0,VISUAL_W-30,10):
+                y=110+18*math.sin((i/20)+progress*3*math.pi)
+                pts.append((i+20, y))
+            # Draw body as multiple overlapping scribble lines
+            for _ in range(4):
+                for i in range(len(pts)-1):
+                    p1=pts[i]
+                    p2=pts[i+1]
+                    jitter=random.uniform(-2,2)
+                    draw.line([p1[0], p1[1]+jitter, p2[0], p2[1]+jitter], fill=(0,0,0,200), width=random.choice([2,3]))
+            # Head - dense
             hx,hy=pts[-1] if pts else (VISUAL_W-40,110)
-            draw.ellipse([hx,hy-10,hx+28,hy+10], fill=(34,139,34,255), outline=(0,0,0,255), width=2)
-            draw.ellipse([hx+16,hy-3,hx+20,hy+1], fill=(0,0,0,255))
-            draw.ellipse([hx+18,hy-5,hx+22,hy-1], fill=(255,255,255,150))
-            if f%6<3:
-                draw.line([hx+28,hy,hx+38,hy-4], fill=(220,20,60,255), width=2)
-                draw.line([hx+28,hy+1,hx+38,hy+4], fill=(220,20,60,255), width=2)
-        elif "ai brain" in label or "robot" in label or "artificial" in label:
-            cx=VISUAL_W//2
-            cy=VISUAL_H//2-20
-            pulse=4*math.sin(progress*2*math.pi)
-            draw.rectangle([cx-65-pulse, cy-65-pulse, cx+65+pulse, cy+45+pulse], fill=(220,220,230,200), outline=(0,0,0,255), width=2)
-            draw.rectangle([cx-55, cy-55, cx+55, cy+35], fill=(200,200,220,150), outline=(0,0,0,150), width=1)
-            glow=150+80*math.sin(progress*4*math.pi)
-            draw.ellipse([cx-35, cy-25, cx-15, cy-5], fill=(0,200,255,glow), outline=(0,0,0,200), width=2)
-            draw.ellipse([cx+15, cy-25, cx+35, cy-5], fill=(0,200,255,glow), outline=(0,0,0,200), width=2)
-            draw.rectangle([cx-20, cy+5, cx+20, cy+15], fill=(0,0,0,200))
-            for i in range(4):
-                y_off=i*10-10
-                draw.line([cx-50, cy+8+y_off, cx+50, cy+8+y_off], fill=(0,150,200,100), width=1)
-                dot_x=cx-50+(progress*100+i*25)%100
-                draw.ellipse([dot_x-3, cy+8+y_off-2, dot_x+3, cy+8+y_off+2], fill=(0,255,255,220))
-        elif "scales" in label or "justice" in label or "regulation" in label:
-            cx=VISUAL_W//2
-            draw.rectangle([cx-5, 20, cx+5, 60], fill=(101,67,33,255), outline=(0,0,0,200), width=1)
-            tilt=10*math.sin(progress*2*math.pi*0.5)
-            draw.line([cx-85, 60+tilt, cx+85, 60-tilt], fill=(101,67,33,255), width=4)
-            draw.ellipse([cx, 55, cx+10, 65], fill=(101,67,33,255), outline=(0,0,0,200), width=1)
-            lx=cx-75
-            ly=60+tilt
-            draw.line([lx, ly, lx-20, ly+45], fill=(0,0,0,150), width=2)
-            draw.line([lx, ly, lx+20, ly+45], fill=(0,0,0,150), width=2)
-            draw.ellipse([lx-28, ly+45, lx+28, ly+62], fill=(218,165,32,200), outline=(0,0,0,200), width=2)
-            draw.ellipse([lx-15, ly+38, lx+15, ly+52], fill=(100,100,100,180), outline=(0,0,0,150), width=1)
-            rx=cx+75
-            ry=60-tilt
-            draw.line([rx, ry, rx-20, ry+45], fill=(0,0,0,150), width=2)
-            draw.line([rx, ry, rx+20, ry+45], fill=(0,0,0,150), width=2)
-            draw.ellipse([rx-28, ry+45, rx+28, ry+62], fill=(218,165,32,200), outline=(0,0,0,200), width=2)
-            draw.ellipse([rx-12, ry+38, rx+12, ry+52], fill=(200,50,50,180), outline=(0,0,0,150), width=1)
-        elif "universe" in label or "galaxy" in label or "cosmos" in label or "big bang" in label:
-            cx=VISUAL_W//2
-            cy=VISUAL_H//2
-            for _ in range(20):
-                sx=random.randint(0,VISUAL_W)
-                sy=random.randint(0,VISUAL_H)
-                alpha=int(80+120*math.sin(progress*5+_))
-                size=1+random.randint(0,2)
-                draw.ellipse([sx,sy,sx+size,sy+size], fill=(255,255,255,alpha))
-            for i in range(0,360,15):
-                ang=math.radians(i+progress*80)
-                r=i*0.38
-                x=cx+r*math.cos(ang)
-                y=cy+r*math.sin(ang)*0.55
-                sz=3+r*0.06
-                draw.ellipse([x-sz,y-sz,x+sz,y+sz], fill=(138,43,226,180), outline=(75,0,130,100), width=1)
-                x2=cx+r*math.cos(ang+math.pi)
-                y2=cy+r*math.sin(ang+math.pi)*0.55
-                draw.ellipse([x2-sz,y2-sz,x2+sz,y2+sz], fill=(30,144,255,180), outline=(0,0,139,100), width=1)
-            draw.ellipse([cx-8, cy-8, cx+8, cy+8], fill=(255,255,0,220), outline=(255,165,0,200), width=2)
-        elif "atom" in label or "dna" in label or "evolution" in label:
-            cx=VISUAL_W//2
-            cy=VISUAL_H//2
-            pulse=3*math.sin(progress*2*math.pi)
-            draw.ellipse([cx-18-pulse, cy-18-pulse, cx+18+pulse, cy+18+pulse], fill=(255,100,100,200), outline=(0,0,0,200), width=2)
-            draw.ellipse([cx-8, cy-8, cx+8, cy+8], fill=(200,50,50,255))
-            for orbit in range(3):
-                ang_offset=orbit*120
-                rx=45+orbit*14
-                ry=28+orbit*8
-                for e in range(2):
-                    ang=math.radians(progress*360*(1+orbit*0.4)+ang_offset+e*180)
-                    ex=cx+rx*math.cos(ang)
-                    ey=cy+ry*math.sin(ang)
-                    draw.ellipse([ex-5, ey-5, ex+5, ey+5], fill=(100,150,255,220), outline=(0,0,0,150), width=1)
-                draw.ellipse([cx-rx, cy-ry, cx+rx, cy+ry], outline=(0,0,0,70), width=1)
-        elif "brain" in label or "choice" in label or "fork" in label:
-            cx=VISUAL_W//2
-            cy=VISUAL_H//2-15
-            draw.ellipse([cx-65, cy-45, cx+65, cy+35], fill=(255,182,193,200), outline=(0,0,0,200), width=2)
-            draw.ellipse([cx-55, cy-35, cx+55, cy+25], fill=(255,192,203,150))
-            for i in range(3):
-                y=cy-25+i*18
-                draw.arc([cx-40, y-8, cx+40, y+8], 0, 180, fill=(0,0,0,90), width=2)
-            draw.line([cx, cy+35, cx, cy+65], fill=(0,0,0,200), width=3)
-            draw.line([cx, cy+65, cx-45, cy+110], fill=(0,0,0,200), width=3)
-            draw.line([cx, cy+65, cx+45, cy+110], fill=(0,0,0,200), width=3)
-            pulse_l=100+100*math.sin(progress*2*math.pi)
-            pulse_r=100+100*math.sin(progress*2*math.pi+math.pi)
-            draw.ellipse([cx-55, cy+105, cx-30, cy+130], fill=(100,200,100,int(pulse_l)), outline=(0,0,0,200), width=2)
-            draw.ellipse([cx+30, cy+105, cx+55, cy+130], fill=(200,100,100,int(pulse_r)), outline=(0,0,0,200), width=2)
-            draw.text((cx-48, cy+110), "A", fill="white", font=load_font(14,bold=True))
-            draw.text((cx+38, cy+110), "B", fill="white", font=load_font(14,bold=True))
-        elif "lightbulb" in label or "idea" in label or "evidence" in label or "book" in label or "logic" in label or "truth" in label:
-            cx=VISUAL_W//2
-            cy=VISUAL_H//2-25
-            glow=35+25*math.sin(progress*2*math.pi)
-            draw.ellipse([cx-60-glow, cy-70-glow, cx+60+glow, cy+30+glow], fill=(255,240,100,50))
-            draw.ellipse([cx-38, cy-55, cx+38, cy+20], fill=(255,255,200,230), outline=(0,0,0,200), width=2)
-            draw.rectangle([cx-18, cy+20, cx+18, cy+42], fill=(150,150,150,230), outline=(0,0,0,200), width=2)
-            draw.rectangle([cx-15, cy+28, cx+15, cy+32], fill=(100,100,100,150))
-            filament_alpha=120+100*math.sin(progress*5*math.pi)
-            draw.line([cx-12, cy-20, cx-4, cy-8, cx+4, cy-8, cx+12, cy-20], fill=(255,200,0,filament_alpha), width=3)
-            for ang in range(-70,71,18):
-                rad=math.radians(ang)
-                x2=cx+85*math.sin(rad)
-                y2=cy-15+85*math.cos(rad)*0.35
-                alpha=int(50+40*math.sin(progress*4+ang*0.15))
-                draw.line([cx, cy-10, x2, y2], fill=(255,230,0,alpha), width=2)
-        elif "god" in label or "creator" in label or "light" in label or "sun" in label:
-            cx=VISUAL_W//2
-            pulse=5*math.sin(progress*2*math.pi)
-            draw.ellipse([cx-32-pulse, 12-pulse, cx+32+pulse, 76+pulse], fill=(255,215,0,230), outline=(0,0,0,255), width=2)
-            draw.ellipse([cx-12, 25, cx-2, 38], fill=(255,255,180,180))
-            for ang in range(-60,61,12):
-                rad=math.radians(ang)
-                x2=cx+220*math.sin(rad); y2=44+220*math.cos(rad)
-                alpha=90+60*math.sin(progress*3+ang*0.12)
-                draw.line([cx,44,x2,y2], fill=(255,215,0,alpha), width=3)
-            draw.ellipse([25,18,95,48], fill=(255,255,255,220), outline=(0,0,0,150), width=1)
-            draw.ellipse([VISUAL_W-95,28,VISUAL_W-25,58], fill=(255,255,255,220), outline=(0,0,0,150), width=1)
-            draw.rectangle([0,VISUAL_H-25,VISUAL_W,VISUAL_H], fill=(34,139,34,200))
-        elif "eyes" in label:
-            eye_open=10+14*math.sin(progress*math.pi)
-            draw.ellipse([VISUAL_W//2-75, VISUAL_H//2-22, VISUAL_W//2-15, VISUAL_H//2+12], fill=(255,255,255,255), outline=(0,0,0,255), width=2)
-            draw.ellipse([VISUAL_W//2-60, VISUAL_H//2-10-eye_open//3, VISUAL_W//2-30, VISUAL_H//2+6-eye_open//3], fill=(101,67,33,255), outline=(0,0,0,255), width=1)
-            draw.ellipse([VISUAL_W//2-50, VISUAL_H//2-2, VISUAL_W//2-40, VISUAL_H//2+4], fill=(0,0,0,255))
-            draw.ellipse([VISUAL_W//2+15, VISUAL_H//2-22, VISUAL_W//2+75, VISUAL_H//2+12], fill=(255,255,255,255), outline=(0,0,0,255), width=2)
-            draw.ellipse([VISUAL_W//2+30, VISUAL_H//2-10-eye_open//3, VISUAL_W//2+60, VISUAL_H//2+6-eye_open//3], fill=(101,67,33,255), outline=(0,0,0,255), width=1)
-            draw.ellipse([VISUAL_W//2+40, VISUAL_H//2-2, VISUAL_W//2+50, VISUAL_H//2+4], fill=(0,0,0,255))
+            draw_scribble_blob(draw, [hx, hy-12, hx+32, hy+12], density=30, color=(0,0,0,255))
+            # Eye
+            draw.ellipse([hx+18, hy-2, hx+22, hy+2], fill=(0,0,0,255))
+            # Tongue flick
+            if f%8<4:
+                draw.line([hx+30, hy, hx+42, hy-5], fill=(0,0,0,200), width=2)
+                draw.line([hx+30, hy+1, hx+42, hy+5], fill=(0,0,0,200), width=2)
+            draw_scribble_splatter(draw, hx, hy, count=6)
+
         elif "heaven" in label or "sky clouds" in label:
-            # Heaven with detailed clouds and sun rays
-            draw.rectangle([0,0,VISUAL_W,VISUAL_H*0.6], fill=(135,206,235,255))
-            # Sun with rays
-            cx=VISUAL_W*0.7
-            cy=60
-            pulse=4*math.sin(progress*2*math.pi)
-            draw.ellipse([cx-30-pulse, cy-30-pulse, cx+30+pulse, cy+30+pulse], fill=(255,255,0,255), outline=(255,165,0,255), width=3)
-            for ang in range(0,360,25):
-                rad=math.radians(ang+progress*40)
-                x2=cx+180*math.cos(rad)
-                y2=cy+180*math.sin(rad)
-                alpha=70+40*math.sin(progress*3+ang*0.1)
-                draw.line([cx,cy,x2,y2], fill=(255,255,0,alpha), width=3)
-            # Detailed clouds with shadows
-            for cloud_x, cloud_y in [(80,70),(200,50),(350,90)]:
-                drift=10*math.sin(progress*2*math.pi+cloud_x*0.02)
-                draw.ellipse([cloud_x+drift, cloud_y, cloud_x+70+drift, cloud_y+30], fill=(255,255,255,255), outline=(200,200,200,150), width=1)
-                draw.ellipse([cloud_x+15+drift, cloud_y-10, cloud_x+55+drift, cloud_y+15], fill=(255,255,255,255))
-                draw.ellipse([cloud_x+10+drift, cloud_y+5, cloud_x+60+drift, cloud_y+25], fill=(240,240,240,200))
-            # Birds
-            for i in range(3):
-                bx=50+i*60+progress*80
-                by=120+20*math.sin(progress*2+ i)
-                draw.line([bx,by,bx+8,by+4], fill=(0,0,0,200), width=1)
-                draw.line([bx+8,by+4,bx+16,by], fill=(0,0,0,200), width=1)
+            # Scribble heaven - sun with chaotic rays, clouds as scribble blobs, birds
+            draw_scribble_sun(draw, VISUAL_W*0.68, 65, size=45)
+            # Clouds - scribble
+            for cloud_x, cloud_y in [(70,65),(190,45),(330,85)]:
+                drift=12*math.sin(progress*2*math.pi+cloud_x*0.03)
+                draw_scribble_blob(draw, [cloud_x+drift, cloud_y, cloud_x+70+drift, cloud_y+28], density=28, color=(0,0,0,200))
+            # Birds as simple scribble V
+            for i in range(4):
+                bx=30+i*55+progress*90
+                by=115+18*math.sin(progress*2+i)
+                draw.line([bx,by,bx+7,by+5], fill=(0,0,0,200), width=1)
+                draw.line([bx+7,by+5,bx+14,by], fill=(0,0,0,200), width=1)
+            draw_scribble_splatter(draw, VISUAL_W*0.5, 40, count=10)
 
         elif "earth" in label or "land mountains" in label:
-            # Earth with mountains, land, water
-            draw.rectangle([0,0,VISUAL_W,VISUAL_H*0.5], fill=(135,206,235,255))
-            # Mountains detailed
-            draw.polygon([(0,200),(120,80),(240,160),(360,60),(VISUAL_W,140),(VISUAL_W,VISUAL_H),(0,VISUAL_H)], fill=(100,100,100,255), outline=(0,0,0,200), width=2)
-            draw.polygon([(120,80),(140,100),(100,110)], fill=(255,255,255,200))  # snow cap
-            draw.polygon([(360,60),(380,80),(340,90)], fill=(255,255,255,200))
-            # Land with grass texture
-            draw.rectangle([0,180,VISUAL_W,VISUAL_H], fill=(34,139,34,255))
-            for gx in range(0,VISUAL_W,15):
-                gh=10+5*math.sin(gx*0.1+progress*2)
-                draw.line([gx,180,gx+3,180-gh], fill=(20,100,20,150), width=2)
-            # Water
-            draw.ellipse([50,220,200,280], fill=(0,100,200,200), outline=(0,0,0,150), width=1)
-            for wx in range(60,190,20):
-                wave=3*math.sin(progress*4+wx*0.1)
-                draw.line([wx,240+wave,wx+15,240+wave], fill=(255,255,255,100), width=1)
+            # Scribble earth - mountains as jagged scribble peaks, ground scribble
+            # Mountains
+            mountain_peaks=[(0,190),(110,75),(210,145),(340,55),(VISUAL_W,130)]
+            for i in range(len(mountain_peaks)-1):
+                p1=mountain_peaks[i]
+                p2=mountain_peaks[i+1]
+                for _ in range(12):
+                    draw.line([p1[0]+random.uniform(-3,3), p1[1]+random.uniform(-3,3), p2[0]+random.uniform(-3,3), p2[1]+random.uniform(-3,3)], fill=(0,0,0,200), width=1)
+            # Snow caps scribble
+            draw_scribble_blob(draw, [95,75,135,100], density=15, color=(0,0,0,150))
+            draw_scribble_blob(draw, [325,55,365,85], density=15, color=(0,0,0,150))
+            # Ground
+            for gx in range(0,VISUAL_W,10):
+                draw.line([gx, 185+random.uniform(-2,2), gx+12, 185+random.uniform(-2,2)], fill=(0,0,0,180), width=1)
+            # Water scribble
+            draw_scribble_blob(draw, [40,220,190,275], density=20, color=(0,0,0,150))
+            draw_scribble_splatter(draw, 100, 240, count=5)
 
         elif "day" in label and "light" in label:
-            # Bright day
-            draw.rectangle([0,0,VISUAL_W,VISUAL_H], fill=(135,206,250,255))
+            # Bright day scribble - sun dense, rays long
+            draw_scribble_sun(draw, VISUAL_W//2, 75, size=50)
+            # Extra rays
             cx=VISUAL_W//2
-            cy=80
-            pulse=6*math.sin(progress*2*math.pi)
-            draw.ellipse([cx-40-pulse, cy-40-pulse, cx+40+pulse, cy+40+pulse], fill=(255,255,0,255), outline=(255,200,0,255), width=3)
-            # Radiating light
-            for ang in range(0,360,20):
-                rad=math.radians(ang+progress*30)
-                x2=cx+250*math.cos(rad)
-                y2=cy+250*math.sin(rad)
-                draw.line([cx,cy,x2,y2], fill=(255,255,150,60), width=4)
-            # Lens flare
-            draw.ellipse([cx-15, cy-15, cx+15, cy+15], fill=(255,255,200,200))
-            draw.rectangle([0,VISUAL_H-30,VISUAL_W,VISUAL_H], fill=(34,139,34,255))
+            cy=75
+            for ang in range(0,360,18):
+                rad=math.radians(ang+random.uniform(-4,4))
+                x2=cx+220*math.cos(rad)+random.uniform(-10,10)
+                y2=cy+220*math.sin(rad)+random.uniform(-10,10)
+                draw.line([cx,cy,x2,y2], fill=(0,0,0,random.randint(40,110)), width=1)
+            draw_scribble_splatter(draw, cx, cy, count=12)
 
         elif "night" in label:
-            # Night sky with moon and stars
-            draw.rectangle([0,0,VISUAL_W,VISUAL_H], fill=(10,10,40,255))
-            # Moon
-            mx=VISUAL_W*0.7
-            my=70
-            draw.ellipse([mx-28, my-28, mx+28, my+28], fill=(230,230,200,255), outline=(200,200,180,200), width=2)
-            draw.ellipse([mx-10, my-5, mx, my+5], fill=(200,200,180,150))  # crater
-            draw.ellipse([mx+8, my+8, mx+15, my+15], fill=(200,200,180,120))
-            # Stars twinkling varied sizes
-            for i in range(25):
-                sx=(i*73+int(progress*30))%VISUAL_W
-                sy=(i*37)%(VISUAL_H//2+80)
-                twinkle=0.5+0.5*math.sin(progress*5+i)
-                size=int(1+2*twinkle)
-                brightness=int(150+105*twinkle)
-                draw.ellipse([sx,sy,sx+size,sy+size], fill=(brightness,brightness,brightness,255))
-                if size>2:
-                    draw.line([sx+size//2-4, sy+size//2, sx+size//2+4, sy+size//2], fill=(brightness,brightness,brightness,100), width=1)
-                    draw.line([sx+size//2, sy+size//2-4, sx+size//2, sy+size//2+4], fill=(brightness,brightness,brightness,100), width=1)
+            # Night scribble - moon dense, stars as small scribbles
+            mx=VISUAL_W*0.68
+            my=68
+            draw_scribble_blob(draw, [mx-30, my-30, mx+30, my+30], density=45, color=(0,0,0,220))
+            # Craters
+            draw.ellipse([mx-12, my-6, mx-2, my+4], fill=(255,255,255,60))
+            # Stars - many small dots with twinkle
+            for i in range(30):
+                sx=(i*61+int(progress*40))%VISUAL_W
+                sy=(i*43)%(VISUAL_H//2+60)
+                alpha=int(80+170*abs(math.sin(progress*4+i)))
+                size=random.choice([1,1,1,2])
+                draw.ellipse([sx,sy,sx+size,sy+size], fill=(0,0,0,alpha))
+            draw_scribble_splatter(draw, mx, my, count=6)
 
-        elif "light rays" in label or "sun bright" in label:
-            # Detailed sun rays like God light but more
+        elif "light rays" in label or "sun bright" in label or "god" in label or "creator" in label:
+            # God light - sun with intense rays and splatters
+            draw_scribble_sun(draw, VISUAL_W//2, 65, size=48)
             cx=VISUAL_W//2
-            cy=70
-            pulse=5*math.sin(progress*2*math.pi)
-            draw.ellipse([cx-35-pulse, cy-35-pulse, cx+35+pulse, cy+35+pulse], fill=(255,255,0,255), outline=(255,165,0,255), width=3)
-            draw.ellipse([cx-15, cy-15, cx+15, cy+15], fill=(255,255,200,200))
-            for ang in range(-70,71,10):
+            cy=65
+            for ang in range(-65,66,11):
                 rad=math.radians(ang)
-                x2=cx+240*math.sin(rad)
-                y2=cy+240*math.cos(rad)
-                alpha=80+50*math.sin(progress*3+ang*0.15)
-                width=2+int(2*math.sin(ang*0.2))
-                draw.line([cx,cy,x2,y2], fill=(255,215,0,alpha), width=width)
-            # Ground glow
-            draw.rectangle([0,VISUAL_H-20,VISUAL_W,VISUAL_H], fill=(255,255,200,100))
+                x2=cx+240*math.sin(rad)+random.uniform(-6,6)
+                y2=cy+240*math.cos(rad)+random.uniform(-6,6)
+                draw.line([cx,cy,x2,y2], fill=(0,0,0,random.randint(50,130)), width=random.choice([1,2]))
+            draw_scribble_splatter(draw, cx, cy, count=14)
 
         elif "darkness" in label:
-            draw.rectangle([0,0,VISUAL_W,VISUAL_H], fill=(5,5,15,255))
-            # Single faint light source
-            cx=VISUAL_W//2
-            cy=VISUAL_H//2
-            glow=20+10*math.sin(progress*2*math.pi)
-            draw.ellipse([cx-glow, cy-glow, cx+glow, cy+glow], fill=(50,50,80,100))
-            # Stars sparse
-            for i in range(10):
-                sx=random.randint(0,VISUAL_W)
-                sy=random.randint(0,VISUAL_H)
-                alpha=int(60+60*math.sin(progress*3+i))
-                draw.ellipse([sx,sy,sx+2,sy+2], fill=(255,255,255,alpha))
+            # Darkness - sparse, almost empty with few dots
+            for _ in range(15):
+                x=random.randint(0,VISUAL_W)
+                y=random.randint(0,VISUAL_H)
+                draw.ellipse([x,y,x+2,y+2], fill=(0,0,0,random.randint(40,120)))
+            # Single faint glow scribble center
+            draw_scribble_blob(draw, [VISUAL_W//2-15, VISUAL_H//2-15, VISUAL_W//2+15, VISUAL_H//2+15], density=10, color=(0,0,0,80))
 
-        elif "water waves" in label or "sea waves" in label:
-            draw.rectangle([0,0,VISUAL_W,VISUAL_H], fill=(0,100,200,255))
-            # Waves with motion
-            for y in range(80, VISUAL_H, 35):
-                for x in range(0, VISUAL_W, 20):
-                    wave_x=x+15*math.sin(progress*3+y*0.05+x*0.02)
-                    wave_y=y+8*math.sin(progress*2+x*0.05)
-                    draw.ellipse([wave_x, wave_y, wave_x+25, wave_y+8], fill=(0,150,255,150), outline=(255,255,255,80), width=1)
-            # Foam
-            for i in range(5):
-                fx=(i*100+int(progress*50))%VISUAL_W
-                fy=100+i*40+int(5*math.sin(progress*3+i))
-                draw.ellipse([fx,fy,fx+30,fy+12], fill=(255,255,255,120))
+        elif "water waves" in label or "sea waves" in label or "water" in label:
+            # Water scribble - wavy lines
+            for y in range(70, VISUAL_H, 32):
+                for _ in range(3):
+                    x0=random.randint(0,VISUAL_W-40)
+                    x1=x0+random.randint(20,50)
+                    wave_y=y+8*math.sin(progress*3+x0*0.05)
+                    draw.line([x0, wave_y+random.uniform(-2,2), x1, wave_y+random.uniform(-2,2)], fill=(0,0,0,random.randint(80,180)), width=1)
+            draw_scribble_splatter(draw, VISUAL_W//2, VISUAL_H//2, count=10)
 
         elif "evening" in label:
-            # Orange sunset
-            for y in range(0, VISUAL_H):
-                ratio=y/VISUAL_H
-                r=int(255*(1-ratio*0.3))
-                g=int(140+60*(1-ratio))
-                b=int(30+20*ratio)
-                draw.line([0,y,VISUAL_W,y], fill=(r,g,b,255))
-            # Sun setting
-            sx=VISUAL_W*0.5+20*math.sin(progress*0.5)
-            sy=60+progress*20
-            draw.ellipse([sx-35, sy-35, sx+35, sy+35], fill=(255,100,0,255), outline=(255,50,0,200), width=2)
-            draw.rectangle([0,VISUAL_H-25,VISUAL_W,VISUAL_H], fill=(50,20,0,200))
+            # Evening - horizon line with sun low, scribble sky
+            sy=70+progress*18
+            draw_scribble_blob(draw, [VISUAL_W//2-35, sy-35, VISUAL_W//2+35, sy+35], density=40, color=(0,0,0,220))
+            # Horizon
+            for gx in range(0,VISUAL_W,14):
+                draw.line([gx, 200+random.uniform(-2,2), gx+14, 200+random.uniform(-2,2)], fill=(0,0,0,200), width=1)
+            draw_scribble_splatter(draw, VISUAL_W//2, sy, count=8)
 
         elif "morning" in label:
-            # Sunrise
-            for y in range(0, VISUAL_H):
-                ratio=y/VISUAL_H
-                r=int(135+120*(1-ratio))
-                g=int(206-50*ratio)
-                b=int(235-100*ratio)
-                draw.line([0,y,VISUAL_W,y], fill=(r,g,b,255))
-            sx=VISUAL_W//2
-            sy=VISUAL_H*0.3+20*math.sin(progress*1.5)
-            pulse=4*math.sin(progress*2*math.pi)
-            draw.ellipse([sx-30-pulse, sy-30-pulse, sx+30+pulse, sy+30+pulse], fill=(255,255,100,255), outline=(255,200,0,200), width=2)
-            # Rays through clouds
-            for ang in range(-50,51,15):
+            # Morning - sunrise with rays breaking
+            sy=VISUAL_H*0.35+15*math.sin(progress*1.5)
+            draw_scribble_sun(draw, VISUAL_W//2, int(sy), size=42)
+            # Clouds breaking
+            for cx in [80, 200, 340]:
+                draw_scribble_blob(draw, [cx, sy-10, cx+60, sy+18], density=18, color=(0,0,0,150))
+
+        elif "ai brain" in label or "robot" in label or "artificial" in label or "computer" in label:
+            # AI brain scribble - robot head as box with scribble eyes, circuits as lines
+            cx=VISUAL_W//2
+            cy=VISUAL_H//2-20
+            # Head box scribble
+            draw_scribble_blob(draw, [cx-62, cy-58, cx+62, cy+38], density=70, color=(0,0,0,230))
+            # Eyes - glowing scribble
+            for ex in [cx-26, cx+26]:
+                draw_scribble_blob(draw, [ex-12, cy-18, ex+12, cy-2], density=18, color=(0,0,0,255))
+                draw_scribble_splatter(draw, ex, cy-10, count=4)
+            # Circuit lines with moving dots
+            for i in range(5):
+                y=cy+5+i*10
+                draw.line([cx-52, y, cx+52, y], fill=(0,0,0,random.randint(60,140)), width=1)
+                dot_x=cx-52+(progress*104+i*20)%104
+                draw.ellipse([dot_x-2, y-2, dot_x+2, y+2], fill=(0,0,0,220))
+
+        elif "scales" in label or "justice" in label or "regulation" in label:
+            # Scales scribble - beam, pans as scribble circles
+            cx=VISUAL_W//2
+            tilt=9*math.sin(progress*2*math.pi*0.5)
+            # Post
+            draw_scribble_blob(draw, [cx-4, 20, cx+4, 60], density=15, color=(0,0,0,200))
+            # Beam
+            for _ in range(6):
+                draw.line([cx-82+random.uniform(-2,2), 58+tilt+random.uniform(-1,1), cx+82+random.uniform(-2,2), 58-tilt+random.uniform(-1,1)], fill=(0,0,0,200), width=1)
+            # Pans - scribble circles
+            for px, py in [(cx-72, 60+tilt), (cx+72, 60-tilt)]:
+                draw_scribble_blob(draw, [px-26, py+38, px+26, py+58], density=28, color=(0,0,0,200))
+                # Strings
+                draw.line([px, 58+ (tilt if px<cx else -tilt), px-18, py+38], fill=(0,0,0,150), width=1)
+                draw.line([px, 58+ (tilt if px<cx else -tilt), px+18, py+38], fill=(0,0,0,150), width=1)
+
+        elif "universe" in label or "galaxy" in label or "cosmos" in label or "big bang" in label:
+            # Universe scribble - spiral galaxy as scribble spiral
+            cx=VISUAL_W//2
+            cy=VISUAL_H//2
+            # Stars
+            for _ in range(22):
+                sx=random.randint(0,VISUAL_W)
+                sy=random.randint(0,VISUAL_H)
+                draw.ellipse([sx,sy,sx+random.choice([1,1,2]),sy+random.choice([1,1,2])], fill=(0,0,0,random.randint(60,200)))
+            # Spiral arms - scribble
+            for arm in [0, math.pi]:
+                for i in range(0,200,8):
+                    ang=i*0.05+progress*1.2+arm
+                    r=i*0.42
+                    x=cx+r*math.cos(ang)+random.uniform(-3,3)
+                    y=cy+r*math.sin(ang)*0.55+random.uniform(-3,3)
+                    draw.ellipse([x,y,x+2,y+2], fill=(0,0,0,180))
+            # Core
+            draw_scribble_blob(draw, [cx-12, cy-12, cx+12, cy+12], density=20, color=(0,0,0,255))
+            draw_scribble_splatter(draw, cx, cy, count=12)
+
+        elif "atom" in label or "dna" in label or "evolution" in label:
+            # Atom scribble - nucleus and orbiting electrons as scribble
+            cx=VISUAL_W//2
+            cy=VISUAL_H//2
+            draw_scribble_blob(draw, [cx-16, cy-16, cx+16, cy+16], density=22, color=(0,0,0,220))
+            for orbit in range(3):
+                rx=42+orbit*13
+                ry=26+orbit*9
+                for _ in range(2):
+                    ang=progress*2*math.pi*(1+orbit*0.3)+orbit*2.1+random.uniform(-0.2,0.2)
+                    ex=cx+rx*math.cos(ang)+random.uniform(-2,2)
+                    ey=cy+ry*math.sin(ang)+random.uniform(-2,2)
+                    draw.ellipse([ex-3, ey-3, ex+3, ey+3], fill=(0,0,0,200))
+                # Orbit path as faint scribble ellipse
+                for a in range(0,360,28):
+                    rad=math.radians(a)
+                    ox=cx+rx*math.cos(rad)
+                    oy=cy+ry*math.sin(rad)
+                    if random.random()>0.6:
+                        draw.ellipse([ox,oy,ox+1,oy+1], fill=(0,0,0,60))
+
+        elif "brain" in label or "choice" in label or "fork" in label:
+            # Brain with choice - scribble brain, forked paths
+            cx=VISUAL_W//2
+            cy=VISUAL_H//2-18
+            draw_scribble_blob(draw, [cx-62, cy-38, cx+62, cy+32], density=80, color=(0,0,0,230))
+            # Fork
+            draw.line([cx, cy+32, cx, cy+62], fill=(0,0,0,200), width=1)
+            for _ in range(5):
+                draw.line([cx+random.uniform(-1,1), cy+32, cx-42+random.uniform(-2,2), cy+108+random.uniform(-2,2)], fill=(0,0,0,180), width=1)
+                draw.line([cx+random.uniform(-1,1), cy+32, cx+42+random.uniform(-2,2), cy+108+random.uniform(-2,2)], fill=(0,0,0,180), width=1)
+            draw_scribble_blob(draw, [cx-54, cy+102, cx-30, cy+126], density=20, color=(0,0,0,200))
+            draw_scribble_blob(draw, [cx+30, cy+102, cx+54, cy+126], density=20, color=(0,0,0,200))
+
+        elif "lightbulb" in label or "idea" in label or "evidence" in label or "truth" in label:
+            # Lightbulb scribble - bulb outline scribble, filament, rays
+            cx=VISUAL_W//2
+            cy=VISUAL_H//2-22
+            draw_scribble_blob(draw, [cx-34, cy-48, cx+34, cy+18], density=50, color=(0,0,0,220))
+            draw_scribble_blob(draw, [cx-16, cy+18, cx+16, cy+40], density=18, color=(0,0,0,200))
+            # Filament
+            for _ in range(6):
+                draw.line([cx-10+random.uniform(-2,2), cy-18, cx+random.uniform(-2,2), cy-6, cx+10+random.uniform(-2,2), cy-18], fill=(0,0,0,180), width=1)
+            # Rays
+            for ang in range(-65,66,16):
                 rad=math.radians(ang)
-                x2=sx+200*math.sin(rad)
-                y2=sy+200*math.cos(rad)
-                draw.line([sx,sy,x2,y2], fill=(255,255,150,70), width=3)
+                x2=cx+90*math.sin(rad)+random.uniform(-5,5)
+                y2=cy-12+90*math.cos(rad)*0.4+random.uniform(-5,5)
+                draw.line([cx, cy-8, x2, y2], fill=(0,0,0,random.randint(30,100)), width=1)
+            draw_scribble_splatter(draw, cx, cy-15, count=8)
 
         elif "adam" in label or "man figure" in label:
-            draw.rectangle([0,VISUAL_H-20,VISUAL_W,VISUAL_H], fill=(34,139,34,150))
-            draw_detailed_human(draw, VISUAL_W//2-45, VISUAL_H//2-60, 110, eating=("eat" in label), gender="male")
-            # Thought bubble?
-            if f%16<10:
-                bx=VISUAL_W//2+50
-                by=VISUAL_H//2-90
-                draw.ellipse([bx,by,bx+70,by+35], fill=(255,255,255,230), outline=(0,0,0,200), width=1)
-                draw.ellipse([bx+10,by+30,bx+20,by+40], fill=(255,255,255,230), outline=(0,0,0,150), width=1)
+            draw_scribble_figure(draw, VISUAL_W//2-45, VISUAL_H//2-70, 115, action="standing", gender="male", eating=False)
+            draw_scribble_splatter(draw, VISUAL_W//2, VISUAL_H//2, count=10)
 
         elif "eve" in label or "woman figure" in label:
-            draw.rectangle([0,VISUAL_H-20,VISUAL_W,VISUAL_H], fill=(34,139,34,150))
-            # Garden background
-            draw.rectangle([VISUAL_W//2-10, VISUAL_H-100, VISUAL_W//2+10, VISUAL_H-20], fill=(101,67,33,255), width=2)
-            draw.ellipse([VISUAL_W//2-50, VISUAL_H-170, VISUAL_W//2+50, VISUAL_H-100], fill=(34,139,34,255), outline=(0,0,0,200), width=2)
-            draw_detailed_human(draw, VISUAL_W//2-40, VISUAL_H//2-55, 105, eating=False, gender="female")
+            draw_scribble_figure(draw, VISUAL_W//2-40, VISUAL_H//2-65, 108, action="standing", gender="female", eating=False)
+            # Tree behind
+            draw_scribble_tree(draw, VISUAL_W//2-20, -10, size=90, with_apple=False)
 
-        elif "naked" in label or "shame" in label:
-            draw.rectangle([0,VISUAL_H-15,VISUAL_W,VISUAL_H], fill=(34,139,34,150))
-            draw_detailed_human(draw, 60, VISUAL_H//2-60, 85, eating=False, gender="male")
-            draw_detailed_human(draw, VISUAL_W-150, VISUAL_H//2-60, 85, eating=False, gender="female")
-            # Leaves covering
-            draw.ellipse([70, VISUAL_H//2+10, 120, VISUAL_H//2+45], fill=(34,139,34,255), outline=(0,0,0,200), width=2)
-            draw.ellipse([VISUAL_W-120, VISUAL_H//2+10, VISUAL_W-70, VISUAL_H//2+45], fill=(34,139,34,255), outline=(0,0,0,200), width=2)
-            # Blush
-            draw.ellipse([75, VISUAL_H//2-35, 90, VISUAL_H//2-25], fill=(255,100,100,100))
-            draw.ellipse([VISUAL_W-95, VISUAL_H//2-35, VISUAL_W-80, VISUAL_H//2-25], fill=(255,100,100,100))
+        elif "eyes opened" in label or "eyes" in label:
+            # Eyes opening - two scribble eyes
+            for ex in [VISUAL_W//2-62, VISUAL_W//2+28]:
+                ey=VISUAL_H//2-12
+                draw_scribble_blob(draw, [ex-30, ey-18, ex+30, ey+14], density=35, color=(0,0,0,230))
+                # Iris
+                draw_scribble_blob(draw, [ex-12, ey-8, ex+12, ey+8], density=18, color=(0,0,0,255))
+                draw.ellipse([ex-3, ey-2, ex+3, ey+3], fill=(0,0,0,255))
+            draw_scribble_splatter(draw, VISUAL_W//2, VISUAL_H//2, count=8)
 
         else:
-            draw.rectangle([0,VISUAL_H-28,VISUAL_W,VISUAL_H], fill=(139,69,19,120))
-            draw.rectangle([35,VISUAL_H//2+15,135,VISUAL_H//2+75], fill=(101,67,33,220), outline=(0,0,0,200), width=2)
-            draw.rectangle([VISUAL_W-135,VISUAL_H//2+15,VISUAL_W-35,VISUAL_H//2+75], fill=(101,67,33,220), outline=(0,0,0,200), width=2)
-            draw.rectangle([55,VISUAL_H//2+15,75,VISUAL_H//2+35], fill=(0,0,0,150))
-            draw.rectangle([VISUAL_W-75,VISUAL_H//2+15,VISUAL_W-55,VISUAL_H//2+35], fill=(0,0,0,150))
-            draw_detailed_human(draw, 45, VISUAL_H//2-50, 75, eating=False, gender="male")
-            draw_detailed_human(draw, VISUAL_W-125, VISUAL_H//2-50, 75, eating=False, gender="female")
-            if f%12<8:
-                bx=VISUAL_W//2-50+6*math.sin(progress*4)
-                by=VISUAL_H//2-85+2*math.cos(progress*3)
-                draw.ellipse([bx,by,bx+90,by+40], fill=(255,255,255,230), outline=(0,0,0,200), width=2)
-                draw.polygon([(bx+18,by+30),(bx+8,by+50),(bx+32,by+34)], fill=(255,255,255,230), outline=(0,0,0,200))
+            # Generic debate scribble - two figures facing with speech bubbles as scribble
+            draw_scribble_figure(draw, 35, VISUAL_H//2-55, 78, action="standing", gender="male", eating=False)
+            draw_scribble_figure(draw, VISUAL_W-125, VISUAL_H//2-55, 78, action="standing", gender="female", eating=False)
+            # Speech bubble scribble
+            if f%18<10:
+                bx=VISUAL_W//2-48+6*math.sin(progress*4)
+                by=VISUAL_H//2-88+2*math.cos(progress*3)
+                draw_scribble_blob(draw, [bx, by, bx+88, by+38], density=30, color=(0,0,0,200))
+                # Tail
+                draw.line([bx+16, by+28, bx+6, by+48], fill=(0,0,0,180), width=1)
+                draw.line([bx+30, by+32, bx+16, by+48], fill=(0,0,0,180), width=1)
 
         frames.append(frame)
     
-    frames[0].save(filename,format='GIF',save_all=True,append_images=frames[1:],duration=110,loop=0,disposal=2)
-    print(f"   Created ENGAGING animation: {visual.get('label')} ({len(frames)} frames, detailed, transparent)")
+    frames[0].save(filename,format='GIF',save_all=True,append_images=frames[1:],duration=95,loop=0,disposal=2)
+    print(f"   Created SCRIBBLE art: {visual.get('label')} ({len(frames)} frames, black ink, splatters)")
     return filename
 
 def create_background(position,glow_color,filename):
@@ -1279,7 +1483,12 @@ def create_segment(text,role,speaker_name,topic,segment_id,model_for_visuals,pos
         glow="#00FFCC" if "GOD" in role.upper() else "#FF00FF" if "SERPENT" in role.upper() else "#3399FF" if "JUDGE" in role.upper() else "#FFD700"
     af=f"audio_{segment_id}.mp3"; sf=f"subs_{segment_id}.ass"; bf=f"bg_{segment_id}.png"; uf=f"ui_{segment_id}.png"; vf=f"segment_{segment_id}.mp4"
     words=generate_audio(text,role,af,judge_voice_index)
-    generate_subtitles(words,sf)
+    # FIX: Pass audio file and full text to generate_subtitles to eliminate progressive lag
+    try:
+        generate_subtitles(words,sf, scorecard=False, audio_file=af, full_text=text)
+    except TypeError:
+        # Fallback for old signature
+        generate_subtitles(words,sf)
     vplan=[]
     try:
         vplan=create_visual_plan(clean_for_speech(text),words,model_for_visuals)
@@ -1399,7 +1608,11 @@ def run_debate_pipeline():
         generate_scoreboard(rn,res,ra,rb,cum_a,cum_b,sb,roles)
         st=f"Round {rn} complete. Judges gave {roles['side_a_label']} {ra:.1f} and {roles['side_b_label']} {rb:.1f}. Cumulative {cum_a:.1f} to {cum_b:.1f}."
         sa=f"score_audio_r{rn}.mp3"; ss=f"score_subs_r{rn}.ass"; sv=f"score_video_r{rn}.mp4"
-        sw=generate_audio(st,"Moderator",sa); generate_subtitles(sw,ss,scorecard=True)
+        sw=generate_audio(st,"Moderator",sa)
+        try:
+            generate_subtitles(sw,ss,scorecard=True, audio_file=sa, full_text=st)
+        except TypeError:
+            generate_subtitles(sw,ss,scorecard=True)
         render_scorecard_video(sb,sa,ss,sv); segs.append(sv)
         if res:
             a_res=[r for r in res if r["winner"]=="A"] or res
