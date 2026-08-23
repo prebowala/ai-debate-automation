@@ -44,8 +44,11 @@ JUDGE_VOICES = ["en-US-ChristopherNeural","en-US-EmmaMultilingualNeural","en-US-
 # TOP FREE MODELS - one per company will be enforced for judges
 FALLBACK_MODELS = [
     "openai/gpt-4o-mini:free",
+    "openai/gpt-3.5-turbo:free",
     "anthropic/claude-3-haiku:free",
+    "anthropic/claude-3-5-haiku:free",
     "google/gemini-flash-1.5-8b:free",
+    "google/gemini-2.0-flash-001:free",
     "google/gemma-2-9b-it:free",
     "meta-llama/llama-3.2-3b-instruct:free",
     "meta-llama/llama-3.1-8b-instruct:free",
@@ -168,8 +171,13 @@ def choose_primary_models(avail):
 
 def choose_judges(avail,primary):
     excl=set(primary)
-    # ONLY ONE MODEL PER COMPANY - strict
-    cands=[m for m in avail if m not in excl and ":free" in m]
+    # ONLY ONE MODEL PER COMPANY - strict - TOP COMPANIES ONLY
+    # Filter to only top-tier providers to avoid obscure AIs
+    top_providers = {"openai","anthropic","google","meta-llama","mistralai","deepseek","qwen","x-ai","xai"}
+    cands=[m for m in avail if m not in excl and ":free" in m and m.split("/")[0].lower() in top_providers]
+    if len(cands)<4:
+        # fallback to any free but still one per company
+        cands=[m for m in avail if m not in excl and ":free" in m]
     if len(cands)<3: cands=[m for m in avail if m not in excl]
     groups={}
     for m in cands:
@@ -228,31 +236,59 @@ def strip_filler(text):
     return text
 
 def generate_fallback_debate(side_label, topic, round_num, turn_num):
-    # Topic-adaptive fallback - works for ANY topic.txt, not just Genesis
+    # Topic-adaptive fallback with varied content - no repeating filler
+    topic_short = topic[:120] if len(topic)>120 else topic
     if "GOD TOLD TRUTH" in side_label.upper():
         templates=[
-            f"In Genesis 2:17 God says moth tamuth - surely die. Serpent in 3:4 says lo moth temuthun - not surely die. Direct contradiction. Genesis 3:8 shows spiritual death that day - hiding, shame. Hebrew yom can mean day but process began that day, expelled from tree of life 3:24. Serpent told half truth.",
-            f"God in 2:16 is generous - freely eat all. Serpent twists in 3:1 - hath God said ye shall not eat of every tree? He exaggerates to make God stingy. Deceiver misquotes. Genesis 3:22 God says man become as one of us knowing good and evil - serpent promised that in 3:5 and it happened, but omitted consequence. Half truth is whole lie.",
-            f"Genesis 3:7 eyes opened and knew naked - shame, fear, blame. 3:19 dust to dust - physical death process. Romans 5:12 sin entered and death through sin. Serpent said you shall not die, but death came. Even if not 24hr, they began dying, cut from eternal life source.",
+            f"Genesis 2:17 says in Hebrew moth tamuth - dying you shall die, emphatic certainty. Serpent says in 3:4 lo moth temuthun - you shall not surely die, negating God's certainty. Genesis 3:7 shows their eyes opened and they knew nakedness - shame enters. Genesis 3:8 they hide from God's presence. That relational rupture is death as separation. Physical death process begins, barred from tree of life 3:24.",
+            f"God's generosity in 2:16 - you may freely eat of every tree - only one limit. Serpent distorts in 3:1 - hath God said ye shall not eat of every tree? He makes God sound restrictive. Classic misrepresentation. Then 3:5 you shall be as gods knowing good and evil. Genesis 3:22 God confirms they have become like one of us knowing good and evil. Serpent's second claim came true, but first claim you shall not die failed - death entered through sin Romans 5:12.",
+            f"Look at immediate narrative outcome. Genesis 3:7 eyes opened, they sew fig leaves - new self-consciousness. 3:10 Adam says I was afraid because naked and hid. Fear and hiding are not life. 3:19 to dust you shall return introduces mortality. 3:23-24 expulsion from Eden, cherubim guarding way to tree of life. The day they ate, access to eternal life ended. That is death beginning that day.",
+            f"The Hebrew phrase beyom - in the day - can mean when, not necessarily within 24 hours, as in 2:4 in the day God made earth. The emphasis is on certainty of consequence when you eat, not stopwatch. Serpent says you shall not die, yet death is now inevitable. Genesis 3:22-24 shows life cut short, toil, pain, return to dust. Serpent omitted consequence while telling partial truth about eyes opening.",
         ]
     elif "SERPENT TOLD TRUTH" in side_label.upper():
         templates=[
-            f"Genesis 2:17 beyom - in the day you shall die. Genesis 5:5 Adam lived 930 years. Not same day. Serpent 3:4 you shall not surely die, 3:5 eyes opened you shall be as gods. Genesis 3:7 eyes opened - as serpent said. Genesis 3:22 God confirms - man become as one of us knowing good and evil. God confirms serpent. Who was accurate?",
-            f"Yom in Genesis 1 is 24hr. Beyom implies same day. Adam did not die that day. Serpent said you shall be as gods knowing - God in 3:22 says exactly that. Two claims, both verified by narrator, while God's threat not carried out same day. Simple reading - serpent described immediate outcome.",
-            f"Spiritual death imports theology not in text. Text says nothing about spiritual death in Genesis 2-3. Dust to dust 3:19 later. Immediate test: did they die that day as God said? No. Did eyes open as serpent said? Yes 3:7. Serpent told what would happen, God threatened more than happened.",
+            f"Genesis 2:17 says beyom akhalcha - in the day you eat, moth tamuth - you shall surely die. Plain reading suggests same day death. Genesis 5:5 says Adam lived 930 years then died. He did not die that day. Serpent says in 3:4 lo moth temuthun - you shall not surely die. That matches what happened - they lived. Serpent says 3:5 your eyes shall be opened, you shall be as gods. Genesis 3:7 their eyes were opened. God confirms in 3:22 man become as one of us knowing good and evil. Serpent described outcome.",
+            f"Consider Hebrew yom in Genesis 1 - evening and morning were first day - 24 hours. Beyom in 2:17 naturally means that same day. Adam does not die that day. James Barr argued God does not carry out threat. Serpent says you shall not die - true that day. Serpent says you shall be as gods knowing good and evil - God himself says in 3:22 behold man is become as one of us to know good and evil. Two predictions, both validated by narrator, unlike God's.",
+            f"Traditional spiritual death reading imports later theology. Genesis 2-3 text never mentions spiritual death. It mentions nakedness, shame, cursing of ground, pain, toil, and eventually dust to dust 3:19. The immediate testable claim was death that day versus eyes opened. Genesis 3:7 says eyes opened - serpent right. Genesis records no death that day - serpent right about that too. Simple narrative reading favors serpent's accuracy.",
+            f"God says you shall surely die if you eat. Serpent says you shall not surely die, you shall be as gods. After eating, Genesis 3:7 eyes opened, 3:11 God asks who told you naked, 3:22 God says man become like us. No one dies that day. Instead they receive knowledge. If serpent lied, why does God confirm his second claim? And why does threatened death not occur? Text presents tension - serpent more accurate about immediate events.",
         ]
     else:
-        # GENERIC for ANY topic in topic.txt - topic-adaptive
-        templates=[
-            f"On the question {topic}, the evidence points clearly one way. The core claim is {side_label}. Look at what actually happened versus what was promised. The immediate outcome, the logical consistency, and the burden of proof all matter. We must weigh facts not assumptions.",
-            f"Regarding {topic}, we must ask what the best explanation is. {side_label} has stronger reasoning. Consider examples, counterexamples, and whether alternative explanations have been considered. The opposing view fails on key points.",
-            f"The topic {topic} requires careful analysis. {side_label} argues from specific evidence, not vague claims. We should examine the text, the context, and the consequences. The other side relies on importing ideas not present.",
-        ]
-    idx=(round_num*3+turn_num)%len(templates)
+        # GENERIC for ANY topic.txt - must be varied and specific to topic
+        tl = topic_short.lower()
+        if any(w in tl for w in ["ai","artificial","regulation","should ai"]):
+            templates=[
+                f"On {topic_short}, the key is risk versus innovation. {side_label} argues that unchecked capability without oversight leads to harm. Examples of bias, misinformation, and concentration of power show need for guardrails. Opponent claims innovation suffers, but regulation can be pro-innovation by building trust.",
+                f"Regarding {topic_short}, we must weigh who bears cost. {side_label} says developers must be accountable for foreseeable misuse. The precautionary principle matters when systems affect millions. Saying let market decide ignores externalities.",
+                f"The question {topic_short} is about balance. {side_label} does not argue for ban but for standards - testing, transparency, liability. Other domains like aviation and medicine have this. Why should AI be exempt from accountability that we demand elsewhere?",
+            ]
+        elif any(w in tl for w in ["creator","universe","god","exist","cosmos"]):
+            templates=[
+                f"On {topic_short}, the cosmological argument matters. {side_label} points to contingency - universe began, has cause. Borde-Guth-Vilenkin theorem suggests past finite. Opponent says quantum vacuum, but vacuum is not nothing, has laws. Where do laws come from?",
+                f"Regarding {topic_short}, {side_label} argues fine-tuning and intelligibility suggest mind. Constants within narrow life-permitting range. Multiverse is speculative, not observed, and still needs mechanism. Simpler explanation is intentional cause.",
+                f"The topic {topic_short} asks about ultimate explanation. {side_label} says self-existent creator avoids infinite regress. Opponent says universe is brute fact, but brute fact is not explanation. The question is which is more reasonable as stopping point.",
+            ]
+        else:
+            templates=[
+                f"On {topic_short}, {side_label} has stronger case. Look at evidence, not just intuition. What do examples show? What are consequences if we accept opposite? The burden is on who makes broader claim.",
+                f"Regarding {topic_short}, {side_label} argues from observed outcomes. The opposing view relies on assumptions that fail when tested. Consider counterexamples and whether theory predicts what we see.",
+                f"The question {topic_short} needs clarity. {side_label} defines terms precisely and follows logic. The other side shifts definitions or appeals to consequences. We should prefer coherent explanation that fits facts.",
+            ]
+    idx=(round_num*4+turn_num)%len(templates)
     base=templates[idx]
-    while count_words(base)<120:
-        base+=" The text, context, and outcome must be weighed without importing later ideas. Hebrew, logic, and narrative flow matter."
+    # Ensure length without repeating same sentence
+    extras=[
+        " The narrative context and immediate fulfillment matter more than imported theology.",
+        " Hebrew grammar and story flow should guide reading, not later doctrines.",
+        " We must let text speak rather than adding meanings not present in chapter.",
+        " The contrast between promise and outcome is central to deciding who was truthful.",
+        " For any topic, evidence and logical consistency are the test, not rhetoric.",
+    ]
+    ei=0
+    while count_words(base)<125 and ei<5:
+        base+=" "+extras[ei]
+        ei+=1
     return base
+
 
 def generate_turn(side, topic, round_num, turn_num, previous_exchange, model, role_label, role_desc, opponent_label, opponent_desc):
     prev_snip=(previous_exchange or "")[-500:]
@@ -502,51 +538,71 @@ def create_visual_asset(visual,index):
         frame=Image.new("RGBA",(VISUAL_W,VISUAL_H),(0,0,0,0))
         draw=ImageDraw.Draw(frame)
         if "apple" in label or "fruit" in label:
-            draw.line([20,80,VISUAL_W-20,90],fill=(101,67,33,255),width=4)
-            swing=10*math.sin(2*math.pi*progress)
-            ax=VISUAL_W//2+10+swing; ay=120+5*math.sin(4*math.pi*progress)
-            draw.ellipse([ax-25,ay,ax+25,ay+40],fill=(220,20,60,255),outline=(0,0,0,255),width=2)
+            draw.line([30,90,VISUAL_W-30,100],fill=(101,67,33,255),width=4)
+            swing=12*math.sin(2*math.pi*progress*0.8)
+            ax=VISUAL_W//2+10+swing; ay=125+6*math.sin(4*math.pi*progress)
+            # Apple with highlight
+            draw.ellipse([ax-28,ay,ax+28,ay+42],fill=(220,20,60,255),outline=(0,0,0,255),width=2)
+            draw.ellipse([ax-15,ay+5,ax-5,ay+15],fill=(255,100,100,200)) # highlight
+            draw.line([ax,ay-10,ax,ay],fill=(101,67,33,255),width=2)
+            draw.ellipse([ax+5,ay-8,ax+18,ay+2],fill=(34,139,34,255))
             draw_stick_figure(draw,VISUAL_W//2-60,VISUAL_H-160,size=100,eating=("eat" in label))
-            if "eat" in label and progress>0.5:
-                by=VISUAL_H-110-40*(progress-0.5)*2
-                draw.ellipse([VISUAL_W//2+15,by,VISUAL_W//2+35,by+20],fill=(220,20,60,255),outline=(0,0,0,255),width=2)
+            if "eat" in label:
+                # Apple moves to mouth when eating
+                eat_prog = (math.sin(progress*2*math.pi)+1)/2
+                if eat_prog>0.5:
+                    by=VISUAL_H-110-30*eat_prog
+                    draw.ellipse([VISUAL_W//2+15,by,VISUAL_W//2+35,by+20],fill=(220,20,60,255),outline=(0,0,0,255),width=2)
         elif "tree" in label or "garden" in label:
             draw.rectangle([VISUAL_W//2-15,VISUAL_H-100,VISUAL_W//2+15,VISUAL_H-20],fill=(101,67,33,255),outline=(0,0,0,255),width=2)
-            rustle=8*math.sin(2*math.pi*progress)
-            for lx,ly in [(VISUAL_W//2-60+rustle,VISUAL_H-180),(VISUAL_W//2+20-rustle,VISUAL_H-200)]:
-                draw.ellipse([lx,ly,lx+80,ly+60],fill=(34,139,34,200),outline=(0,0,0,150),width=1)
-            fall_y=(progress*VISUAL_H)%(VISUAL_H-50); fall_x=VISUAL_W//2+40*math.sin(progress*6)
-            draw.ellipse([fall_x,fall_y,fall_x+12,fall_y+18],fill=(34,139,34,180))
+            rustle=10*math.sin(2*math.pi*progress)
+            for lx,ly,sz in [(VISUAL_W//2-70+rustle,VISUAL_H-190,85),(VISUAL_W//2+15-rustle,VISUAL_H-210,90),(VISUAL_W//2-30,VISUAL_H-230+rustle//2,75)]:
+                draw.ellipse([lx,ly,lx+sz,ly+sz*0.7],fill=(34,139,34,220),outline=(0,0,0,180),width=2)
+            fall_y=(progress*VISUAL_H*1.2)%(VISUAL_H+20)-10
+            fall_x=VISUAL_W//2+50*math.sin(progress*5)
+            draw.ellipse([fall_x,fall_y,fall_x+14,fall_y+20],fill=(60,180,60,200),outline=(0,0,0,100),width=1)
+            draw.ellipse([VISUAL_W//2-35,VISUAL_H-165,VISUAL_W//2-15,VISUAL_H-145],fill=(220,20,60,255),outline=(0,0,0,255),width=2)
         elif "serpent" in label or "snake" in label:
-            draw.line([20,100,VISUAL_W-20,110],fill=(101,67,33,255),width=4)
+            draw.line([30,110,VISUAL_W-30,120],fill=(101,67,33,255),width=5)
             pts=[]
-            for i in range(0,VISUAL_W-40,10):
-                pts.append((i+20,100+15*math.sin((i/30)+progress*4*math.pi)))
+            for i in range(0,VISUAL_W-50,12):
+                pts.append((i+25,110+18*math.sin((i/25)+progress*4*math.pi)))
             if len(pts)>1:
-                draw.line(pts,fill=(34,139,34,255),width=8,joint="curve")
+                draw.line(pts,fill=(34,139,34,255),width=10,joint="curve")
                 draw.line(pts,fill=(0,0,0,255),width=2,joint="curve")
-            hx,hy=pts[-1] if pts else (VISUAL_W-40,100)
-            draw.ellipse([hx,hy-6,hx+18,hy+6],fill=(34,139,34,255),outline=(0,0,0,255),width=2)
-            if f%6<3: draw.line([hx+18,hy,hx+28,hy-3],fill=(220,20,60,255),width=2)
-        elif "god" in label or "creator" in label or "universe" in label:
+            hx,hy=pts[-1] if pts else (VISUAL_W-40,110)
+            draw.ellipse([hx,hy-7,hx+20,hy+7],fill=(34,139,34,255),outline=(0,0,0,255),width=2)
+            draw.ellipse([hx+12,hy-2,hx+16,hy+2],fill=(0,0,0,255))
+            if f%6<3: draw.line([hx+20,hy,hx+32,hy-4],fill=(220,20,60,255),width=2)
+        elif "god" in label or "creator" in label or "universe" in label or "light" in label:
             cx=VISUAL_W//2
-            for ang in range(-40,41,15):
+            # Pulsing sun
+            pulse=5*math.sin(progress*2*math.pi)
+            draw.ellipse([cx-32-pulse//2,12-pulse//2,cx+32+pulse//2,76+pulse//2],fill=(255,215,0,230),outline=(0,0,0,255),width=2)
+            for ang in range(-50,51,12):
                 rad=math.radians(ang)
-                x2=cx+200*math.sin(rad); y2=30+200*math.cos(rad)
-                draw.line([cx,10,x2,y2],fill=(255,215,0,100+int(50*math.sin(progress*3))),width=3)
-            draw.ellipse([cx-30,10,cx+30,70],fill=(255,215,0,200),outline=(0,0,0,255),width=2)
+                x2=cx+220*math.sin(rad); y2=40+220*math.cos(rad)
+                alpha=110+int(60*math.sin(progress*4+ang/20))
+                draw.line([cx,40,x2,y2],fill=(255,215,0,alpha),width=3)
+            # Green wavy ground
+            draw.line([(20,VISUAL_H//2+20+10*math.sin(progress*2*math.pi)),(VISUAL_W//2,VISUAL_H//2+10),(VISUAL_W-20,VISUAL_H//2+20+10*math.sin(progress*2*math.pi+1))],fill=(34,139,34,200),width=4)
         else:
-            draw_stick_figure(draw,VISUAL_W//2-50,VISUAL_H//2-40,size=120)
-            by=VISUAL_H//2-80+5*math.sin(progress*2*math.pi)
-            draw.ellipse([VISUAL_W//2+30,by-30,VISUAL_W//2+110,by+20],fill=(255,255,255,200),outline=(0,0,0,255),width=2)
-        mask=Image.new("L",(VISUAL_W,VISUAL_H),0)
-        ImageDraw.Draw(mask).rounded_rectangle((0,0,VISUAL_W,VISUAL_H),radius=28,fill=255)
-        final=Image.new("RGBA",(VISUAL_W,VISUAL_H),(0,0,0,0))
-        final.paste(frame,(0,0),frame)
-        final.putalpha(mask)
-        frames.append(final)
-    frames[0].save(filename,format='GIF',save_all=True,append_images=frames[1:],duration=160,loop=0,disposal=2,transparency=0)
-    print(f"   Created transparent animation: {visual.get('label')} ({len(frames)} frames, moves, transparent bg)")
+            # Generic: two figures debating with speech bubbles that appear/disappear
+            draw_stick_figure(draw,80,VISUAL_H//2-30,size=90,eating=False)
+            draw_stick_figure(draw,VISUAL_W-170,VISUAL_H//2-30,size=90,eating=False)
+            # Speech bubbles popping
+            if f%9<6:
+                bx=VISUAL_W//2-40+5*math.sin(progress*6)
+                by=VISUAL_H//2-100+3*math.cos(progress*4)
+                draw.ellipse([bx,by,bx+80,by+35],fill=(255,255,255,220),outline=(0,0,0,255),width=2)
+                draw.ellipse([bx-10,by+20,bx+10,by+35],fill=(255,255,255,220),outline=(0,0,0,200),width=1)
+        # NO rounded mask - square transparent to avoid black corner dots
+        # Directly use frame with transparent bg - no putalpha mask that causes corner artifacts
+        frames.append(frame)
+    # Save GIF with transparent background handling - use disposal 2 and no transparency index that causes black dots
+    # Convert to P mode with transparent color handling to avoid black corners
+    frames[0].save(filename,format='GIF',save_all=True,append_images=frames[1:],duration=160,loop=0,disposal=2)
+    print(f"   Created animation: {visual.get('label')} ({len(frames)} frames, transparent, no black dots)")
     return filename
 
 def create_background(position,glow_color,filename):
