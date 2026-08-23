@@ -31,27 +31,26 @@ MAX_TURN_WORDS = 180
 MAX_JUDGES = 7
 JUDGE_WORKERS = 7
 
-MAX_VISUALS_PER_SEGMENT = 4
-MIN_VISUAL_GAP = 0.8
+MAX_VISUALS_PER_SEGMENT = 8
+MIN_VISUAL_GAP = 0.35
 VISUAL_W = 520
 VISUAL_H = 520
 VISUAL_Y = 160
 
-# FIX: UNIQUE VOICE PER PERSON - no duplicate voices
-# God and Judge had same voice before - now all distinct
+# UNIQUE VOICES - no duplicates
 VOICES = {
-    "A": "en-US-BrianMultilingualNeural",  # GOD - warm male, unique
-    "B": "en-US-AvaMultilingualNeural",   # SERPENT - expressive female, unique
-    "Moderator": "en-US-AndrewMultilingualNeural",  # Moderator - distinct
+    "A": "en-US-BrianMultilingualNeural",
+    "B": "en-US-AvaMultilingualNeural",
+    "Moderator": "en-US-AndrewMultilingualNeural",
 }
 JUDGE_VOICES = [
-    "en-US-EmmaMultilingualNeural",  # Judge 1 - distinct
-    "en-US-JennyNeural",              # Judge 2 - distinct
-    "en-US-GuyNeural",                # Judge 3 - distinct
-    "en-US-AriaNeural",               # Judge 4 - distinct
-    "en-US-ChristopherNeural",        # Judge 5 - distinct
-    "en-US-JaneNeural",               # Judge 6 - distinct
-    "en-US-JasonNeural",              # Judge 7 - distinct
+    "en-US-EmmaMultilingualNeural",
+    "en-US-JennyNeural",
+    "en-US-GuyNeural",
+    "en-US-AriaNeural",
+    "en-US-ChristopherNeural",
+    "en-US-JaneNeural",
+    "en-US-JasonNeural",
 ]
 
 FALLBACK_MODELS = [
@@ -263,7 +262,6 @@ def strip_filler(text):
     return text
 
 def generate_fallback_debate(side_label, topic, round_num, turn_num):
-    # Improved to be full sentences, not phrases, less repetition
     topic_short = topic[:130] if len(topic)>130 else topic
     if "GOD TOLD TRUTH" in side_label.upper():
         if round_num==1:
@@ -298,7 +296,6 @@ def generate_fallback_debate(side_label, topic, round_num, turn_num):
             else:
                 return "The question is not who we want to be truthful, but what the text reports. It reports God threatening death in the day, the serpent promising no death but knowledge, and then it reports knowledge coming and death not coming that day. It reports God Himself saying they have become like us knowing good and evil. The serpent promised that exact thing. So two promises from the serpent, both happen in the story. One threat from God, does not happen that day. On the immediate facts of what happened that day, the serpent was right about what would occur when they ate."
     else:
-        # Generic versatile for any topic - full sentences, not phrases
         if round_num==1:
             return f"On the question of {topic_short}, {side_label} has the stronger case when you look at the evidence carefully. The facts and the logic both point in one direction. The opposing view relies on assumptions that do not hold up under scrutiny. We should prefer the explanation that fits what we actually see in the real world, not just what sounds nice in theory. That is why {side_label} should be preferred in this opening round."
         elif round_num==2:
@@ -330,7 +327,6 @@ def generate_turn(side, topic, round_num, turn_num, previous_exchange, model, ro
             cleaned=cleaned.replace(" - ", ". ").replace(" -",".")
             cleaned=re.sub(r"https?://\S+"," ",cleaned)
             cleaned=re.sub(r"www\.\S+"," ",cleaned)
-            # Ensure not repeating - check if sentence already in prev
             sentences=cleaned.split('. ')
             unique_sents=[]
             for s in sentences:
@@ -454,18 +450,19 @@ def format_ass_time(s):
 def ass_escape(t): return str(t).replace("\\","\\\\").replace("{","\\{").replace("}","\\}")
 
 def generate_subtitles(words,filename,scorecard=False):
-    # FIX: More words per chunk to reduce lag perception
-    margin_v=90 if scorecard else 200
-    font_size=36 if scorecard else 34
-    header=f"[Script Info]\nScriptType: v4.00+\nPlayResX: 1920\nPlayResY: 1080\nWrapStyle: 0\nScaledBorderAndShadow: yes\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: DebateSub,DejaVu Sans,{font_size},&H00FFFFFF,&H00FFFFFF,&H00000000,&HCC000000,1,0,0,0,100,100,0,0,1,3.0,1,2,200,200,{margin_v},1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
+    # FIX: Much larger chunks + early show to hide lag
+    margin_v=90 if scorecard else 190
+    font_size=38 if scorecard else 36
+    header=f"[Script Info]\nScriptType: v4.00+\nPlayResX: 1920\nPlayResY: 1080\nWrapStyle: 0\nScaledBorderAndShadow: yes\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: DebateSub,DejaVu Sans,{font_size},&H00FFFFFF,&H00FFFFFF,&H00000000,&HCC000000,1,0,0,0,100,100,0,0,1,3.5,1,2,200,200,{margin_v},1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
     if not words:
         open(filename,"w",encoding="utf-8").write(header); return
     clean_words=[{"text":str(w.get("text","")).strip(),"start":float(w["start"]),"end":float(w["end"])} for w in words if str(w.get("text","")).strip()]
-    WORDS_PER_CHUNK=38  # Increased from 28 to 38 - more words per page, less lag noticeable
+    WORDS_PER_CHUNK=55  # Increased from 38 to 55 - much larger chunks, less distracting lag
     chunks=[]; cur=[]
     for w in clean_words:
         cur.append(w)
-        if str(w["text"]).strip().endswith(('.', '?', '!')) and len(cur)>=18:
+        # Only split on sentence end if we have substantial chunk, to keep chunks large
+        if str(w["text"]).strip().endswith(('.', '?', '!')) and len(cur)>=28:
             chunks.append(cur); cur=[]
         elif len(cur)>=WORDS_PER_CHUNK:
             chunks.append(cur); cur=[]
@@ -473,99 +470,163 @@ def generate_subtitles(words,filename,scorecard=False):
     events=[]; last_end=0.0
     for chunk in chunks:
         if not chunk: continue
-        s=float(chunk[0]["start"])-0.06
-        e=float(chunk[-1]["end"])+0.5  # longer hold
+        # Show early, hide late to mask lag - appears before audio, stays after
+        s=float(chunk[0]["start"])-0.25  # Show 250ms early
+        e=float(chunk[-1]["end"])+0.9  # Hold 900ms longer
         if s<last_end: s=last_end+0.01
-        if e<=s: e=s+1.5
+        if e<=s: e=s+1.8
         last_end=e
         txt_words=[ass_escape(w["text"]) for w in chunk]
         lines=[]
-        for i in range(0,len(txt_words),10):  # 10 words per line
-            lines.append(" ".join(txt_words[i:i+10]))
-        if len(lines)>5: lines=lines[:5]  # up to 5 lines = 50 words per page
+        for i in range(0,len(txt_words),11):  # 11 words per line
+            lines.append(" ".join(txt_words[i:i+11]))
+        if len(lines)>5: lines=lines[:5]  # up to 55 words per page
         txt="\\N".join(lines)
         txt=txt.replace("\\\\N","\\N")
-        ass_text="{\\an2\\pos(960,820)\\q2\\fad(100,100)}"+txt
+        ass_text="{\\an2\\pos(960,810)\\q2\\fad(150,150)}"+txt
         events.append(f"Dialogue: 0,{format_ass_time(s)},{format_ass_time(e)},DebateSub,,0,0,0,,{ass_text}")
     open(filename,"w",encoding="utf-8").write(header+"\n".join(events)+"\n")
 
 def fallback_visual_plan(text):
+    # OVERHAULED: Animate many more words including heaven, earth, day, etc. - much less repetitive
     tl=text.lower()
     visuals=[]
+    # Genesis expanded - many more words
     genesis_kws=[
-        ("apple","Apple on branch","red apple hanging from branch, watercolor"),
-        ("fruit","Eating fruit","person eating fruit, watercolor"),
-        ("tree","Tree in garden","tree with leaves, watercolor"),
-        ("garden","Garden of Eden","garden with trees, watercolor"),
-        ("serpent","Serpent on branch","snake on branch, watercolor"),
-        ("snake","Snake","snake slithering, watercolor"),
-        ("god","God light","sun with rays, watercolor"),
-        ("eyes opened","Eyes opened","eyes opening, watercolor"),
+        ("heaven","Heaven","heaven with sun and clouds, detailed"),
+        ("earth","Earth","earth with mountains and land, detailed"),
+        ("day","Day light","bright day with sun, detailed"),
+        ("night","Night sky","night with moon and stars, detailed"),
+        ("light","Light rays","sun with bright rays, detailed"),
+        ("darkness","Darkness","dark sky with stars, detailed"),
+        ("evening","Evening","evening sky with orange sunset, detailed"),
+        ("morning","Morning","morning sunrise, detailed"),
+        ("water","Water waves","blue water waves, detailed"),
+        ("sky","Sky clouds","sky with clouds, detailed"),
+        ("land","Land mountains","land with mountains, detailed"),
+        ("sun","Sun bright","bright sun with rays, detailed"),
+        ("moon","Moon night","moon in night sky, detailed"),
+        ("stars","Stars constellation","stars in night sky, detailed"),
+        ("sea","Sea waves","sea with waves, detailed"),
+        ("tree","Tree in garden","tree with leaves and apples, detailed"),
+        ("fruit","Eating fruit","person eating fruit, detailed"),
+        ("apple","Apple on branch","red apple hanging from branch, detailed"),
+        ("garden","Garden of Eden","garden with trees and flowers, detailed"),
+        ("serpent","Serpent on branch","snake on branch with tongue, detailed"),
+        ("snake","Snake","snake slithering, detailed"),
+        ("god","God light","sun with bright rays, detailed"),
+        ("lord","Lord light","bright light from above, detailed"),
+        ("adam","Adam figure","man figure detailed"),
+        ("eve","Eve figure","woman figure detailed"),
+        ("man","Man figure","man figure detailed"),
+        ("woman","Woman figure","woman figure detailed"),
+        ("eyes opened","Eyes opened","eyes opening wide, detailed"),
+        ("naked","Naked shame","figures covering with leaves, detailed"),
+        ("hide","Hiding","figures hiding behind tree, detailed"),
+        ("dust","Dust ground","dust and ground, detailed"),
+        ("cherubim","Cherubim angel","angel with sword, detailed"),
+        ("sword","Sword flaming","flaming sword, detailed"),
     ]
     ai_kws=[
-        ("ai","AI brain","robot brain with circuits, watercolor"),
-        ("artificial","Artificial intelligence","robot head, watercolor"),
-        ("robot","Robot","robot head, watercolor"),
-        ("regulation","Scales of justice","balanced scales, watercolor"),
-        ("regulate","Regulation","scales of justice, watercolor"),
-        ("bias","Bias warning","warning sign, watercolor"),
-        ("algorithm","Algorithm","flowing code blocks, watercolor"),
-        ("data","Data","database with data points, watercolor"),
+        ("ai","AI brain","robot brain with circuits, detailed"),
+        ("artificial","Artificial intelligence","robot head detailed"),
+        ("robot","Robot","robot head detailed"),
+        ("regulation","Scales of justice","balanced scales detailed"),
+        ("regulate","Regulation","scales of justice detailed"),
+        ("bias","Bias warning","warning sign detailed"),
+        ("algorithm","Algorithm","flowing data blocks detailed"),
+        ("data","Data","database with data points detailed"),
+        ("computer","Computer","computer with screen detailed"),
+        ("technology","Technology","tech with circuits detailed"),
     ]
     cosmos_kws=[
-        ("universe","Universe","galaxy with stars, watercolor"),
-        ("creator","Creator light","bright sun with rays, watercolor"),
-        ("cosmos","Cosmos","galaxy spiral, watercolor"),
-        ("big bang","Big Bang","explosion with stars, watercolor"),
-        ("galaxy","Galaxy","spiral galaxy, watercolor"),
-        ("star","Stars","stars and constellation, watercolor"),
-        ("atom","Atom","atom with electrons, watercolor"),
-        ("evolution","Evolution","DNA helix, watercolor"),
-        ("dna","DNA","dna helix, watercolor"),
-        ("fine tuning","Fine tuning","dial with precise tuning, watercolor"),
+        ("universe","Universe","galaxy with stars detailed"),
+        ("creator","Creator light","bright sun with rays detailed"),
+        ("cosmos","Cosmos","galaxy spiral detailed"),
+        ("big bang","Big Bang","explosion with stars detailed"),
+        ("galaxy","Galaxy","spiral galaxy detailed"),
+        ("planet","Planet","planet with rings detailed"),
+        ("atom","Atom","atom with electrons detailed"),
+        ("evolution","Evolution","DNA helix detailed"),
+        ("dna","DNA","dna helix detailed"),
+        ("creation","Creation","creation light detailed"),
+        ("exist","Existence","question mark with stars detailed"),
     ]
     generic_kws=[
-        ("evidence","Evidence","open book with light, watercolor"),
-        ("logic","Logic","lightbulb with gears, watercolor"),
-        ("truth","Truth","lightbulb glowing, watercolor"),
-        ("choice","Choice","fork in road with two paths, watercolor"),
-        ("free will","Free will","brain with choice, watercolor"),
-        ("determin","Determinism","chain links, watercolor"),
-        ("moral","Morality","scales balancing heart and brain, watercolor"),
-        ("ethic","Ethics","scales of justice, watercolor"),
-        ("justice","Justice","balanced scales, watercolor"),
-        ("argument","Debate","two podiums facing, watercolor"),
-        ("debate","Debate stage","debate stage with podiums, watercolor"),
-        ("question","Question","question mark with light, watercolor"),
+        ("evidence","Evidence","open book with light detailed"),
+        ("logic","Logic","lightbulb with gears detailed"),
+        ("truth","Truth","lightbulb glowing detailed"),
+        ("choice","Choice","fork in road with two paths detailed"),
+        ("free will","Free will","brain with choice detailed"),
+        ("determin","Determinism","chain links detailed"),
+        ("moral","Morality","scales balancing heart and brain detailed"),
+        ("ethic","Ethics","scales of justice detailed"),
+        ("justice","Justice","balanced scales detailed"),
+        ("argument","Debate","two podiums facing detailed"),
+        ("debate","Debate stage","debate stage with podiums detailed"),
+        ("question","Question","question mark with light detailed"),
+        ("life","Life","heart with pulse detailed"),
+        ("death","Death","skull with time detailed"),
+        ("knowledge","Knowledge","book with light detailed"),
+        ("wisdom","Wisdom","owl with book detailed"),
     ]
     all_kws = genesis_kws + ai_kws + cosmos_kws + generic_kws
+    # Use all occurrences, not just first, for more variety
     for kw,label,desc in all_kws:
-        if kw in tl and len(visuals)<MAX_VISUALS_PER_SEGMENT:
-            idx=tl.find(kw)
-            phrase=text[max(0,idx-10):idx+len(kw)+20].strip() or kw
-            visuals.append({"phrase":phrase,"label":label,"description":desc,"kind":"concept"})
-    if len(visuals)<2:
+        # Find all occurrences for more animations
+        start=0
+        while len(visuals)<MAX_VISUALS_PER_SEGMENT:
+            idx=tl.find(kw, start)
+            if idx==-1:
+                break
+            phrase=text[max(0,idx-15):idx+len(kw)+25].strip() or kw
+            # Avoid exact duplicate phrases
+            if not any(v["phrase"]==phrase for v in visuals):
+                visuals.append({"phrase":phrase,"label":label,"description":desc,"kind":"concept"})
+            start=idx+len(kw)
+            if len(visuals)>=MAX_VISUALS_PER_SEGMENT:
+                break
+        if len(visuals)>=MAX_VISUALS_PER_SEGMENT:
+            break
+    
+    # If still less than 3, add diverse defaults based on topic
+    if len(visuals)<3:
         if any(w in tl for w in ["ai","artificial","robot","regulation","algorithm","tech"]):
-            visuals=[
-                {"phrase":text[:30],"label":"AI brain","description":"robot brain with circuits, watercolor, transparent","kind":"concept"},
-                {"phrase":text[:30],"label":"Scales of justice","description":"balanced scales of justice, watercolor","kind":"concept"},
-            ]
-        elif any(w in tl for w in ["universe","creator","cosmos","god","exist","big bang","galaxy"]):
-            visuals=[
-                {"phrase":text[:30],"label":"Universe","description":"galaxy with stars, watercolor","kind":"concept"},
-                {"phrase":text[:30],"label":"Atom","description":"atom with orbiting electrons, watercolor","kind":"concept"},
-            ]
-        elif any(w in tl for w in ["free will","determin","choice","moral","ethic"]):
-            visuals=[
-                {"phrase":text[:30],"label":"Brain with choice","description":"brain with forked paths, watercolor","kind":"concept"},
-                {"phrase":text[:30],"label":"Scales of justice","description":"scales balancing heart and brain, watercolor","kind":"concept"},
-            ]
+            visuals.extend([
+                {"phrase":text[:30],"label":"AI brain","description":"robot brain with circuits, detailed","kind":"concept"},
+                {"phrase":text[:30],"label":"Scales of justice","description":"balanced scales detailed","kind":"concept"},
+                {"phrase":text[:30],"label":"Computer data","description":"computer with data flowing detailed","kind":"concept"},
+            ])
+        elif any(w in tl for w in ["heaven","earth","god","creator","universe"]):
+            visuals.extend([
+                {"phrase":text[:30],"label":"Heaven","description":"heaven with clouds and sun detailed","kind":"concept"},
+                {"phrase":text[:30],"label":"Earth","description":"earth with land and water detailed","kind":"concept"},
+                {"phrase":text[:30],"label":"Day light","description":"day with bright sun detailed","kind":"concept"},
+                {"phrase":text[:30],"label":"Tree in garden","description":"tree with apples detailed","kind":"concept"},
+            ])
         else:
-            visuals=[
-                {"phrase":text[:30],"label":"Debate stage","description":"two podiums with watercolor figures, transparent","kind":"concept"},
-                {"phrase":text[:30],"label":"Lightbulb idea","description":"lightbulb glowing with idea, watercolor","kind":"concept"},
-            ]
-    return visuals[:MAX_VISUALS_PER_SEGMENT]
+            visuals.extend([
+                {"phrase":text[:30],"label":"Debate stage","description":"two podiums with figures detailed","kind":"concept"},
+                {"phrase":text[:30],"label":"Lightbulb idea","description":"lightbulb glowing detailed","kind":"concept"},
+                {"phrase":text[:30],"label":"Evidence book","description":"open book with light detailed","kind":"concept"},
+            ])
+    # Deduplicate labels to avoid repetition - ensure varied animations
+    seen_labels=set()
+    unique=[]
+    for v in visuals:
+        if v["label"] not in seen_labels:
+            unique.append(v)
+            seen_labels.add(v["label"])
+        if len(unique)>=MAX_VISUALS_PER_SEGMENT:
+            break
+    # If deduplication removed too many, fill with varied
+    if len(unique)<MAX_VISUALS_PER_SEGMENT:
+        for v in visuals:
+            if v not in unique:
+                unique.append(v)
+            if len(unique)>=MAX_VISUALS_PER_SEGMENT:
+                break
+    return unique[:MAX_VISUALS_PER_SEGMENT]
 
 def plan_visuals(text,model):
     prompt=f"Find up to {MAX_VISUALS_PER_SEGMENT} simple visual moments in: {text} JSON [phrase,label]"
@@ -624,7 +685,6 @@ def create_visual_plan(text,words,model):
         if len(out)>=MAX_VISUALS_PER_SEGMENT: break
     return out
 
-# OVERHAUL: Much less abstract, more engaging, concrete detailed drawings
 def draw_watercolor_blob(draw, bbox, color, alpha=180):
     x0,y0,x1,y1=bbox
     draw.ellipse(bbox, fill=(*color, alpha))
@@ -669,33 +729,26 @@ def draw_stick_figure_watercolor(draw,x,y,size=80,eating=False):
         draw.line([x+size*0.85, y+size*0.8, x+size*1.0, y+size*1.3], fill=(0,0,0,255), width=2)
 
 def draw_detailed_human(draw, x, y, size, eating=False, gender="male"):
-    # Much more detailed and less abstract than before
-    # Head with face
     head_x=x+size*0.5
     head_y=y+size*0.25
     draw.ellipse([head_x-size*0.22, head_y-size*0.22, head_x+size*0.22, head_y+size*0.22], fill=(255,224,189,255), outline=(0,0,0,255), width=2)
-    # Eyes
     draw.ellipse([head_x-size*0.12, head_y-size*0.05, head_x-size*0.05, head_y+0.02], fill=(0,0,0,255))
     draw.ellipse([head_x+size*0.05, head_y-size*0.05, head_x+size*0.12, head_y+0.02], fill=(0,0,0,255))
     draw.ellipse([head_x-size*0.11, head_y-0.04, head_x-size*0.07, head_y-0.01], fill=(255,255,255,180))
     draw.ellipse([head_x+size*0.06, head_y-0.04, head_x+size*0.10, head_y-0.01], fill=(255,255,255,180))
-    # Mouth
     if eating:
         draw.ellipse([head_x-size*0.06, head_y+size*0.08, head_x+size*0.06, head_y+size*0.14], fill=(0,0,0,255))
     else:
         draw.arc([head_x-size*0.08, head_y+size*0.05, head_x+size*0.08, head_y+size*0.12], 20, 160, fill=(0,0,0,255), width=2)
-    # Hair - more detailed
     if gender=="male":
         draw.ellipse([head_x-size*0.25, head_y-size*0.28, head_x+size*0.25, head_y-size*0.05], fill=(101,67,33,255), outline=(0,0,0,200), width=1)
     else:
         draw.ellipse([head_x-size*0.28, head_y-size*0.30, head_x+size*0.28, head_y-0.02], fill=(80,50,20,255), outline=(0,0,0,200), width=1)
         draw.ellipse([head_x-size*0.30, head_y-0.05, head_x-size*0.15, head_y+size*0.15], fill=(80,50,20,255))
         draw.ellipse([head_x+size*0.15, head_y-0.05, head_x+size*0.30, head_y+size*0.15], fill=(80,50,20,255))
-    # Body with clothing
     body_top=y+size*0.5
     draw.rectangle([x+size*0.2, body_top, x+size*0.8, body_top+size*0.6], fill=(100,149,237,255), outline=(0,0,0,255), width=2)
     draw.rectangle([x+size*0.22, body_top+size*0.25, x+size*0.78, body_top+size*0.30], fill=(139,69,19,255), outline=(0,0,0,255), width=1)
-    # Arms
     if eating:
         draw.line([x+size*0.7, body_top+size*0.1, x+size*1.0, body_top-size*0.05], fill=(0,0,0,255), width=3)
         draw.ellipse([x+size*0.92, body_top-size*0.12, x+size*1.12, body_top+size*0.08], fill=(220,20,60,255), outline=(0,0,0,255), width=2)
@@ -703,7 +756,6 @@ def draw_detailed_human(draw, x, y, size, eating=False, gender="male"):
     else:
         draw.line([x+size*0.05, body_top+size*0.1, x+size*0.20, body_top+size*0.35], fill=(0,0,0,255), width=3)
         draw.line([x+size*0.80, body_top+size*0.1, x+size*0.95, body_top+size*0.05], fill=(0,0,0,255), width=3)
-    # Legs
     draw.rectangle([x+size*0.25, body_top+size*0.6, x+size*0.42, body_top+size*0.95], fill=(101,67,33,255), outline=(0,0,0,255), width=1)
     draw.rectangle([x+size*0.58, body_top+size*0.6, x+size*0.75, body_top+size*0.95], fill=(101,67,33,255), outline=(0,0,0,255), width=1)
 
@@ -715,34 +767,26 @@ def create_visual_asset(visual,index):
         progress=f/24.0
         frame=Image.new("RGBA",(VISUAL_W,VISUAL_H),(0,0,0,0))
         draw=ImageDraw.Draw(frame)
-        
         if "apple" in label or "fruit" in label or "eat" in label:
-            # OVERHAULED: Detailed Garden of Eden with two figures, tree, serpent, less abstract
-            # Sky gradient hint
             draw.rectangle([0,0,VISUAL_W,80], fill=(135,206,235,30))
-            # Detailed tree with trunk texture
             draw.rectangle([VISUAL_W//2-14, VISUAL_H-140, VISUAL_W//2+14, VISUAL_H-20], fill=(101,67,33,255), outline=(0,0,0,255), width=2)
             draw.line([VISUAL_W//2-6, VISUAL_H-120, VISUAL_W//2-6, VISUAL_H-30], fill=(80,50,20,100), width=1)
             draw.line([VISUAL_W//2+6, VISUAL_H-120, VISUAL_W//2+6, VISUAL_H-30], fill=(80,50,20,100), width=1)
-            # Canopy with detailed leaves - multiple layers
             rustle=6*math.sin(2*math.pi*progress*0.8)
             for offset in [(-50, -140, 40), (10, -160, 35), (-30, -180, 30)]:
                 ox, oy, sz = offset
                 draw.ellipse([VISUAL_W//2+ox+rustle, VISUAL_H+oy, VISUAL_W//2+ox+sz+rustle, VISUAL_H+oy+sz], fill=(34,139,34,255), outline=(0,0,0,200), width=1)
                 draw.ellipse([VISUAL_W//2+ox+5+rustle, VISUAL_H+oy+5, VISUAL_W//2+ox+sz-5+rustle, VISUAL_H+oy+sz-5], fill=(60,179,60,180))
-            # Apples with stems and highlights - concrete
             swing=8*math.sin(2*math.pi*progress*0.6)
             for ax_offset, ay_offset in [(-25, -125), (20, -135)]:
                 ax=VISUAL_W//2+ax_offset+swing
                 ay=VISUAL_H+ay_offset
                 draw.line([ax, ay-12, ax, ay], fill=(101,67,33,255), width=2)
                 draw.ellipse([ax-14, ay, ax+14, ay+18], fill=(220,20,60,255), outline=(0,0,0,255), width=2)
-                draw.ellipse([ax-8, ay+3, ax-2, ay+9], fill=(255,150,150,200))  # highlight
+                draw.ellipse([ax-8, ay+3, ax-2, ay+9], fill=(255,150,150,200))
                 draw.ellipse([ax+4, ay-6, ax+10, ay-1], fill=(34,139,34,255), outline=(0,0,0,150), width=1)
-            # Hanging apple from branch like reference but more detailed
             branch_y=50
             draw.line([VISUAL_W*0.3, branch_y, VISUAL_W*0.85, branch_y+10], fill=(101,67,33,255), width=4)
-            # Small leaves on branch
             for lx in [VISUAL_W*0.4, VISUAL_W*0.55, VISUAL_W*0.70]:
                 ly=branch_y+random.randint(-5,5)
                 draw.ellipse([lx+3*math.sin(progress*3+lx*0.1), ly, lx+10+3*math.sin(progress*3+lx*0.1), ly+6], fill=(60,160,60,200), outline=(0,0,0,120), width=1)
@@ -751,21 +795,17 @@ def create_visual_asset(visual,index):
             draw.line([hang_x, branch_y+5, hang_x, hang_y], fill=(0,0,0,200), width=1)
             draw.ellipse([hang_x-18, hang_y, hang_x+18, hang_y+26], fill=(220,20,60,255), outline=(0,0,0,255), width=2)
             draw.ellipse([hang_x-10, hang_y+4, hang_x-3, hang_y+12], fill=(255,180,180,200))
-            # Serpent on branch - more detailed
             serpent_x=VISUAL_W*0.35+10*math.sin(progress*2*math.pi)
             draw.ellipse([serpent_x, branch_y-3, serpent_x+40, branch_y+8], fill=(34,139,34,255), outline=(0,0,0,200), width=1)
             draw.ellipse([serpent_x+30, branch_y-2, serpent_x+45, branch_y+6], fill=(34,139,34,255), outline=(0,0,0,200), width=1)
-            draw.ellipse([serpent_x+38, branch_y-1, serpent_x+42, branch_y+2], fill=(0,0,0,255))  # eye
+            draw.ellipse([serpent_x+38, branch_y-1, serpent_x+42, branch_y+2], fill=(0,0,0,255))
             if f%8<4:
                 draw.line([serpent_x+45, branch_y+2, serpent_x+52, branch_y], fill=(220,20,60,255), width=1)
-            # Adam and Eve figures - detailed, not abstract blobs
             draw_detailed_human(draw, 30, VISUAL_H-160, 90, eating=("eat" in label), gender="male")
             draw_detailed_human(draw, VISUAL_W-130, VISUAL_H-155, 85, eating=False, gender="female")
-            # Ground with grass texture
             draw.rectangle([0, VISUAL_H-20, VISUAL_W, VISUAL_H], fill=(34,139,34,150))
             for gx in range(0, VISUAL_W, 20):
                 draw.line([gx, VISUAL_H-20, gx+5, VISUAL_H-28], fill=(20,100,20,120), width=1)
-
         elif "tree" in label or "garden" in label:
             draw.rectangle([VISUAL_W//2-12, VISUAL_H-110, VISUAL_W//2+12, VISUAL_H-20], fill=(101,67,33,255), outline=(0,0,0,255), width=2)
             rustle=6*math.sin(2*math.pi*progress)
@@ -777,7 +817,6 @@ def create_visual_asset(visual,index):
             fall_x=VISUAL_W//2+40*math.sin(progress*4)
             draw.ellipse([fall_x, fall_y, fall_x+12, fall_y+18], fill=(60,180,60,200), outline=(0,0,0,150), width=1)
             draw.rectangle([0, VISUAL_H-15, VISUAL_W, VISUAL_H], fill=(34,139,34,150))
-
         elif "serpent" in label or "snake" in label:
             draw.line([20,110,VISUAL_W-20,120], fill=(101,67,33,255), width=5)
             pts=[]
@@ -796,7 +835,6 @@ def create_visual_asset(visual,index):
             if f%6<3:
                 draw.line([hx+28,hy,hx+38,hy-4], fill=(220,20,60,255), width=2)
                 draw.line([hx+28,hy+1,hx+38,hy+4], fill=(220,20,60,255), width=2)
-
         elif "ai brain" in label or "robot" in label or "artificial" in label:
             cx=VISUAL_W//2
             cy=VISUAL_H//2-20
@@ -812,7 +850,6 @@ def create_visual_asset(visual,index):
                 draw.line([cx-50, cy+8+y_off, cx+50, cy+8+y_off], fill=(0,150,200,100), width=1)
                 dot_x=cx-50+(progress*100+i*25)%100
                 draw.ellipse([dot_x-3, cy+8+y_off-2, dot_x+3, cy+8+y_off+2], fill=(0,255,255,220))
-
         elif "scales" in label or "justice" in label or "regulation" in label:
             cx=VISUAL_W//2
             draw.rectangle([cx-5, 20, cx+5, 60], fill=(101,67,33,255), outline=(0,0,0,200), width=1)
@@ -831,7 +868,6 @@ def create_visual_asset(visual,index):
             draw.line([rx, ry, rx+20, ry+45], fill=(0,0,0,150), width=2)
             draw.ellipse([rx-28, ry+45, rx+28, ry+62], fill=(218,165,32,200), outline=(0,0,0,200), width=2)
             draw.ellipse([rx-12, ry+38, rx+12, ry+52], fill=(200,50,50,180), outline=(0,0,0,150), width=1)
-
         elif "universe" in label or "galaxy" in label or "cosmos" in label or "big bang" in label:
             cx=VISUAL_W//2
             cy=VISUAL_H//2
@@ -852,7 +888,6 @@ def create_visual_asset(visual,index):
                 y2=cy+r*math.sin(ang+math.pi)*0.55
                 draw.ellipse([x2-sz,y2-sz,x2+sz,y2+sz], fill=(30,144,255,180), outline=(0,0,139,100), width=1)
             draw.ellipse([cx-8, cy-8, cx+8, cy+8], fill=(255,255,0,220), outline=(255,165,0,200), width=2)
-
         elif "atom" in label or "dna" in label or "evolution" in label:
             cx=VISUAL_W//2
             cy=VISUAL_H//2
@@ -869,7 +904,6 @@ def create_visual_asset(visual,index):
                     ey=cy+ry*math.sin(ang)
                     draw.ellipse([ex-5, ey-5, ex+5, ey+5], fill=(100,150,255,220), outline=(0,0,0,150), width=1)
                 draw.ellipse([cx-rx, cy-ry, cx+rx, cy+ry], outline=(0,0,0,70), width=1)
-
         elif "brain" in label or "choice" in label or "fork" in label:
             cx=VISUAL_W//2
             cy=VISUAL_H//2-15
@@ -887,7 +921,6 @@ def create_visual_asset(visual,index):
             draw.ellipse([cx+30, cy+105, cx+55, cy+130], fill=(200,100,100,int(pulse_r)), outline=(0,0,0,200), width=2)
             draw.text((cx-48, cy+110), "A", fill="white", font=load_font(14,bold=True))
             draw.text((cx+38, cy+110), "B", fill="white", font=load_font(14,bold=True))
-
         elif "lightbulb" in label or "idea" in label or "evidence" in label or "book" in label or "logic" in label or "truth" in label:
             cx=VISUAL_W//2
             cy=VISUAL_H//2-25
@@ -904,7 +937,6 @@ def create_visual_asset(visual,index):
                 y2=cy-15+85*math.cos(rad)*0.35
                 alpha=int(50+40*math.sin(progress*4+ang*0.15))
                 draw.line([cx, cy-10, x2, y2], fill=(255,230,0,alpha), width=2)
-
         elif "god" in label or "creator" in label or "light" in label or "sun" in label:
             cx=VISUAL_W//2
             pulse=5*math.sin(progress*2*math.pi)
@@ -918,7 +950,6 @@ def create_visual_asset(visual,index):
             draw.ellipse([25,18,95,48], fill=(255,255,255,220), outline=(0,0,0,150), width=1)
             draw.ellipse([VISUAL_W-95,28,VISUAL_W-25,58], fill=(255,255,255,220), outline=(0,0,0,150), width=1)
             draw.rectangle([0,VISUAL_H-25,VISUAL_W,VISUAL_H], fill=(34,139,34,200))
-
         elif "eyes" in label:
             eye_open=10+14*math.sin(progress*math.pi)
             draw.ellipse([VISUAL_W//2-75, VISUAL_H//2-22, VISUAL_W//2-15, VISUAL_H//2+12], fill=(255,255,255,255), outline=(0,0,0,255), width=2)
@@ -927,6 +958,194 @@ def create_visual_asset(visual,index):
             draw.ellipse([VISUAL_W//2+15, VISUAL_H//2-22, VISUAL_W//2+75, VISUAL_H//2+12], fill=(255,255,255,255), outline=(0,0,0,255), width=2)
             draw.ellipse([VISUAL_W//2+30, VISUAL_H//2-10-eye_open//3, VISUAL_W//2+60, VISUAL_H//2+6-eye_open//3], fill=(101,67,33,255), outline=(0,0,0,255), width=1)
             draw.ellipse([VISUAL_W//2+40, VISUAL_H//2-2, VISUAL_W//2+50, VISUAL_H//2+4], fill=(0,0,0,255))
+        elif "heaven" in label or "sky clouds" in label:
+            # Heaven with detailed clouds and sun rays
+            draw.rectangle([0,0,VISUAL_W,VISUAL_H*0.6], fill=(135,206,235,255))
+            # Sun with rays
+            cx=VISUAL_W*0.7
+            cy=60
+            pulse=4*math.sin(progress*2*math.pi)
+            draw.ellipse([cx-30-pulse, cy-30-pulse, cx+30+pulse, cy+30+pulse], fill=(255,255,0,255), outline=(255,165,0,255), width=3)
+            for ang in range(0,360,25):
+                rad=math.radians(ang+progress*40)
+                x2=cx+180*math.cos(rad)
+                y2=cy+180*math.sin(rad)
+                alpha=70+40*math.sin(progress*3+ang*0.1)
+                draw.line([cx,cy,x2,y2], fill=(255,255,0,alpha), width=3)
+            # Detailed clouds with shadows
+            for cloud_x, cloud_y in [(80,70),(200,50),(350,90)]:
+                drift=10*math.sin(progress*2*math.pi+cloud_x*0.02)
+                draw.ellipse([cloud_x+drift, cloud_y, cloud_x+70+drift, cloud_y+30], fill=(255,255,255,255), outline=(200,200,200,150), width=1)
+                draw.ellipse([cloud_x+15+drift, cloud_y-10, cloud_x+55+drift, cloud_y+15], fill=(255,255,255,255))
+                draw.ellipse([cloud_x+10+drift, cloud_y+5, cloud_x+60+drift, cloud_y+25], fill=(240,240,240,200))
+            # Birds
+            for i in range(3):
+                bx=50+i*60+progress*80
+                by=120+20*math.sin(progress*2+ i)
+                draw.line([bx,by,bx+8,by+4], fill=(0,0,0,200), width=1)
+                draw.line([bx+8,by+4,bx+16,by], fill=(0,0,0,200), width=1)
+
+        elif "earth" in label or "land mountains" in label:
+            # Earth with mountains, land, water
+            draw.rectangle([0,0,VISUAL_W,VISUAL_H*0.5], fill=(135,206,235,255))
+            # Mountains detailed
+            draw.polygon([(0,200),(120,80),(240,160),(360,60),(VISUAL_W,140),(VISUAL_W,VISUAL_H),(0,VISUAL_H)], fill=(100,100,100,255), outline=(0,0,0,200), width=2)
+            draw.polygon([(120,80),(140,100),(100,110)], fill=(255,255,255,200))  # snow cap
+            draw.polygon([(360,60),(380,80),(340,90)], fill=(255,255,255,200))
+            # Land with grass texture
+            draw.rectangle([0,180,VISUAL_W,VISUAL_H], fill=(34,139,34,255))
+            for gx in range(0,VISUAL_W,15):
+                gh=10+5*math.sin(gx*0.1+progress*2)
+                draw.line([gx,180,gx+3,180-gh], fill=(20,100,20,150), width=2)
+            # Water
+            draw.ellipse([50,220,200,280], fill=(0,100,200,200), outline=(0,0,0,150), width=1)
+            for wx in range(60,190,20):
+                wave=3*math.sin(progress*4+wx*0.1)
+                draw.line([wx,240+wave,wx+15,240+wave], fill=(255,255,255,100), width=1)
+
+        elif "day" in label and "light" in label:
+            # Bright day
+            draw.rectangle([0,0,VISUAL_W,VISUAL_H], fill=(135,206,250,255))
+            cx=VISUAL_W//2
+            cy=80
+            pulse=6*math.sin(progress*2*math.pi)
+            draw.ellipse([cx-40-pulse, cy-40-pulse, cx+40+pulse, cy+40+pulse], fill=(255,255,0,255), outline=(255,200,0,255), width=3)
+            # Radiating light
+            for ang in range(0,360,20):
+                rad=math.radians(ang+progress*30)
+                x2=cx+250*math.cos(rad)
+                y2=cy+250*math.sin(rad)
+                draw.line([cx,cy,x2,y2], fill=(255,255,150,60), width=4)
+            # Lens flare
+            draw.ellipse([cx-15, cy-15, cx+15, cy+15], fill=(255,255,200,200))
+            draw.rectangle([0,VISUAL_H-30,VISUAL_W,VISUAL_H], fill=(34,139,34,255))
+
+        elif "night" in label:
+            # Night sky with moon and stars
+            draw.rectangle([0,0,VISUAL_W,VISUAL_H], fill=(10,10,40,255))
+            # Moon
+            mx=VISUAL_W*0.7
+            my=70
+            draw.ellipse([mx-28, my-28, mx+28, my+28], fill=(230,230,200,255), outline=(200,200,180,200), width=2)
+            draw.ellipse([mx-10, my-5, mx, my+5], fill=(200,200,180,150))  # crater
+            draw.ellipse([mx+8, my+8, mx+15, my+15], fill=(200,200,180,120))
+            # Stars twinkling varied sizes
+            for i in range(25):
+                sx=(i*73+int(progress*30))%VISUAL_W
+                sy=(i*37)%(VISUAL_H//2+80)
+                twinkle=0.5+0.5*math.sin(progress*5+i)
+                size=int(1+2*twinkle)
+                brightness=int(150+105*twinkle)
+                draw.ellipse([sx,sy,sx+size,sy+size], fill=(brightness,brightness,brightness,255))
+                if size>2:
+                    draw.line([sx+size//2-4, sy+size//2, sx+size//2+4, sy+size//2], fill=(brightness,brightness,brightness,100), width=1)
+                    draw.line([sx+size//2, sy+size//2-4, sx+size//2, sy+size//2+4], fill=(brightness,brightness,brightness,100), width=1)
+
+        elif "light rays" in label or "sun bright" in label:
+            # Detailed sun rays like God light but more
+            cx=VISUAL_W//2
+            cy=70
+            pulse=5*math.sin(progress*2*math.pi)
+            draw.ellipse([cx-35-pulse, cy-35-pulse, cx+35+pulse, cy+35+pulse], fill=(255,255,0,255), outline=(255,165,0,255), width=3)
+            draw.ellipse([cx-15, cy-15, cx+15, cy+15], fill=(255,255,200,200))
+            for ang in range(-70,71,10):
+                rad=math.radians(ang)
+                x2=cx+240*math.sin(rad)
+                y2=cy+240*math.cos(rad)
+                alpha=80+50*math.sin(progress*3+ang*0.15)
+                width=2+int(2*math.sin(ang*0.2))
+                draw.line([cx,cy,x2,y2], fill=(255,215,0,alpha), width=width)
+            # Ground glow
+            draw.rectangle([0,VISUAL_H-20,VISUAL_W,VISUAL_H], fill=(255,255,200,100))
+
+        elif "darkness" in label:
+            draw.rectangle([0,0,VISUAL_W,VISUAL_H], fill=(5,5,15,255))
+            # Single faint light source
+            cx=VISUAL_W//2
+            cy=VISUAL_H//2
+            glow=20+10*math.sin(progress*2*math.pi)
+            draw.ellipse([cx-glow, cy-glow, cx+glow, cy+glow], fill=(50,50,80,100))
+            # Stars sparse
+            for i in range(10):
+                sx=random.randint(0,VISUAL_W)
+                sy=random.randint(0,VISUAL_H)
+                alpha=int(60+60*math.sin(progress*3+i))
+                draw.ellipse([sx,sy,sx+2,sy+2], fill=(255,255,255,alpha))
+
+        elif "water waves" in label or "sea waves" in label:
+            draw.rectangle([0,0,VISUAL_W,VISUAL_H], fill=(0,100,200,255))
+            # Waves with motion
+            for y in range(80, VISUAL_H, 35):
+                for x in range(0, VISUAL_W, 20):
+                    wave_x=x+15*math.sin(progress*3+y*0.05+x*0.02)
+                    wave_y=y+8*math.sin(progress*2+x*0.05)
+                    draw.ellipse([wave_x, wave_y, wave_x+25, wave_y+8], fill=(0,150,255,150), outline=(255,255,255,80), width=1)
+            # Foam
+            for i in range(5):
+                fx=(i*100+int(progress*50))%VISUAL_W
+                fy=100+i*40+int(5*math.sin(progress*3+i))
+                draw.ellipse([fx,fy,fx+30,fy+12], fill=(255,255,255,120))
+
+        elif "evening" in label:
+            # Orange sunset
+            for y in range(0, VISUAL_H):
+                ratio=y/VISUAL_H
+                r=int(255*(1-ratio*0.3))
+                g=int(140+60*(1-ratio))
+                b=int(30+20*ratio)
+                draw.line([0,y,VISUAL_W,y], fill=(r,g,b,255))
+            # Sun setting
+            sx=VISUAL_W*0.5+20*math.sin(progress*0.5)
+            sy=60+progress*20
+            draw.ellipse([sx-35, sy-35, sx+35, sy+35], fill=(255,100,0,255), outline=(255,50,0,200), width=2)
+            draw.rectangle([0,VISUAL_H-25,VISUAL_W,VISUAL_H], fill=(50,20,0,200))
+
+        elif "morning" in label:
+            # Sunrise
+            for y in range(0, VISUAL_H):
+                ratio=y/VISUAL_H
+                r=int(135+120*(1-ratio))
+                g=int(206-50*ratio)
+                b=int(235-100*ratio)
+                draw.line([0,y,VISUAL_W,y], fill=(r,g,b,255))
+            sx=VISUAL_W//2
+            sy=VISUAL_H*0.3+20*math.sin(progress*1.5)
+            pulse=4*math.sin(progress*2*math.pi)
+            draw.ellipse([sx-30-pulse, sy-30-pulse, sx+30+pulse, sy+30+pulse], fill=(255,255,100,255), outline=(255,200,0,200), width=2)
+            # Rays through clouds
+            for ang in range(-50,51,15):
+                rad=math.radians(ang)
+                x2=sx+200*math.sin(rad)
+                y2=sy+200*math.cos(rad)
+                draw.line([sx,sy,x2,y2], fill=(255,255,150,70), width=3)
+
+        elif "adam" in label or "man figure" in label:
+            draw.rectangle([0,VISUAL_H-20,VISUAL_W,VISUAL_H], fill=(34,139,34,150))
+            draw_detailed_human(draw, VISUAL_W//2-45, VISUAL_H//2-60, 110, eating=("eat" in label), gender="male")
+            # Thought bubble?
+            if f%16<10:
+                bx=VISUAL_W//2+50
+                by=VISUAL_H//2-90
+                draw.ellipse([bx,by,bx+70,by+35], fill=(255,255,255,230), outline=(0,0,0,200), width=1)
+                draw.ellipse([bx+10,by+30,bx+20,by+40], fill=(255,255,255,230), outline=(0,0,0,150), width=1)
+
+        elif "eve" in label or "woman figure" in label:
+            draw.rectangle([0,VISUAL_H-20,VISUAL_W,VISUAL_H], fill=(34,139,34,150))
+            # Garden background
+            draw.rectangle([VISUAL_W//2-10, VISUAL_H-100, VISUAL_W//2+10, VISUAL_H-20], fill=(101,67,33,255), width=2)
+            draw.ellipse([VISUAL_W//2-50, VISUAL_H-170, VISUAL_W//2+50, VISUAL_H-100], fill=(34,139,34,255), outline=(0,0,0,200), width=2)
+            draw_detailed_human(draw, VISUAL_W//2-40, VISUAL_H//2-55, 105, eating=False, gender="female")
+
+        elif "naked" in label or "shame" in label:
+            draw.rectangle([0,VISUAL_H-15,VISUAL_W,VISUAL_H], fill=(34,139,34,150))
+            draw_detailed_human(draw, 60, VISUAL_H//2-60, 85, eating=False, gender="male")
+            draw_detailed_human(draw, VISUAL_W-150, VISUAL_H//2-60, 85, eating=False, gender="female")
+            # Leaves covering
+            draw.ellipse([70, VISUAL_H//2+10, 120, VISUAL_H//2+45], fill=(34,139,34,255), outline=(0,0,0,200), width=2)
+            draw.ellipse([VISUAL_W-120, VISUAL_H//2+10, VISUAL_W-70, VISUAL_H//2+45], fill=(34,139,34,255), outline=(0,0,0,200), width=2)
+            # Blush
+            draw.ellipse([75, VISUAL_H//2-35, 90, VISUAL_H//2-25], fill=(255,100,100,100))
+            draw.ellipse([VISUAL_W-95, VISUAL_H//2-35, VISUAL_W-80, VISUAL_H//2-25], fill=(255,100,100,100))
 
         else:
             draw.rectangle([0,VISUAL_H-28,VISUAL_W,VISUAL_H], fill=(139,69,19,120))
@@ -1185,11 +1404,31 @@ def run_debate_pipeline():
         if res:
             a_res=[r for r in res if r["winner"]=="A"] or res
             b_res=[r for r in res if r["winner"]=="B"] or res
-            ja=random.choice(a_res); jb=random.choice(b_res)
+            # FIX: Ensure 2 commentaries are from DIFFERENT models/companies, not both ChatGPT
+            ja=random.choice(a_res)
+            # Filter B to exclude same model and same provider as A
+            b_filtered=[r for r in b_res if r["model"]!=ja["model"] and r["provider"]!=ja["provider"]]
+            if b_filtered:
+                jb=random.choice(b_filtered)
+            else:
+                # If no different provider in B, pick from B excluding same model
+                b_filtered2=[r for r in b_res if r["model"]!=ja["model"]]
+                jb=random.choice(b_filtered2) if b_filtered2 else random.choice(b_res)
+                # If still same provider, try pick from opposite side A with different provider
+                if jb["provider"]==ja["provider"]:
+                    alt=[r for r in res if r["provider"]!=ja["provider"] and r["model"]!=ja["model"]]
+                    if alt:
+                        jb=random.choice(alt)
             ca=generate_panel_commentary(ja["model"],"A",topic,rn,a_full,s_full,pcom,roles); pcom.append(ca)
-            add_segment(ca,"AI Judge",f"AI JUDGE — {ja['display_name'].upper()}","center","#3399FF",judge_voice_index=0)
+            # Use actual judge index for voice to match model
+            ja_voice_idx = next((i for i,m in enumerate(judges) if m==ja["model"]), 0)
+            add_segment(ca,"AI Judge",f"AI JUDGE — {ja['display_name'].upper()} ({ja['provider'].upper()})","center","#3399FF",judge_voice_index=ja_voice_idx)
             cb=generate_panel_commentary(jb["model"],"B",topic,rn,a_full,s_full,pcom,roles); pcom.append(cb)
-            add_segment(cb,"AI Judge",f"AI JUDGE — {jb['display_name'].upper()}","center","#3399FF",judge_voice_index=1)
+            jb_voice_idx = next((i for i,m in enumerate(judges) if m==jb["model"]), 1)
+            # Ensure different voice index
+            if jb_voice_idx==ja_voice_idx:
+                jb_voice_idx=(ja_voice_idx+1)%len(JUDGE_VOICES)
+            add_segment(cb,"AI Judge",f"AI JUDGE — {jb['display_name'].upper()} ({jb['provider'].upper()})","center","#3399FF",judge_voice_index=jb_voice_idx)
     add_segment(build_outro(len(judges),cum_a,cum_b,roles),"Moderator","MODERATOR")
     stitch_segments(segs,OUTPUT_FILE)
     print(f"\nCOMPLETE: {OUTPUT_FILE} — {cum_a:.1f} vs {cum_b:.1f}")
