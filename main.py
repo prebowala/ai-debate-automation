@@ -7,7 +7,7 @@ import random
 import asyncio
 import requests
 import subprocess
-import concurrent.futures
+import concurrent.fuatures
 import time
 from io import BytesIO
 import edge_tts
@@ -1042,7 +1042,7 @@ def render_video_segment(bg_path,ui_path,audio_path,subs_path,output_path,positi
     filter_parts.append(f"{last_label}format=yuv420p,subtitles={safe_subs}[out]")
     filter_complex=";".join(filter_parts)
     input_args=[]
-    for vp in visual_inputs: input_args.extend(["-i", vp])
+    for gif_path, _, _ in visual_inputs: input_args.extend(["-i", gif_path])
     cmd.extend(input_args)
     cmd.extend(["-filter_complex", filter_complex, "-map", "[out]", "-map", "2:a", "-c:v", "libx264", "-c:a", "aac", "-shortest", "-t", str(duration+0.5), output_path])
     r=subprocess.run(cmd,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
@@ -1050,8 +1050,8 @@ def render_video_segment(bg_path,ui_path,audio_path,subs_path,output_path,positi
         print("Filter:", filter_complex[:3000])
         print(r.stderr[-8000:])
         raise RuntimeError("Render failed")
-    for vp in visual_inputs:
-        try: os.remove(vp)
+    for gif_path, _, _ in visual_inputs:
+        try: os.remove(gif_path)
         except: pass
 
 def generate_scoreboard(round_num,results,avg_a,avg_b,cum_a,cum_b,output_path,roles):
