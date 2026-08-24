@@ -30,26 +30,27 @@ MAX_TURN_WORDS = 180
 MAX_JUDGES = 7
 JUDGE_WORKERS = 7
 
-MAX_VISUALS_PER_SEGMENT = 8
-MIN_VISUAL_GAP = 0.35
+MAX_VISUALS_PER_SEGMENT = 3
+MIN_VISUAL_GAP = 2.8
+USED_VISUAL_LABELS = set()
 VISUAL_W = 520
 VISUAL_H = 520
 VISUAL_Y = 160
 
-# UNIQUE VOICES - each person and each judge different, no overlaps
+# UNIQUE VOICES - highly distinct across accents/genders - no more similar voices
 VOICES = {
-    "A": "en-US-BrianMultilingualNeural",
-    "B": "en-US-AvaMultilingualNeural",
-    "Moderator": "en-US-AndrewMultilingualNeural",
+    "A": "en-US-BrianMultilingualNeural",  # Deep US male - GOD
+    "B": "en-GB-SoniaNeural",  # British female - SERPENT - very distinct from GOD
+    "Moderator": "en-AU-NatashaNeural",  # Australian female - MODERATOR - distinct
 }
 JUDGE_VOICES = [
-    "en-US-EmmaMultilingualNeural",
-    "en-US-JennyNeural",
-    "en-US-GuyNeural",
-    "en-US-AriaNeural",
-    "en-US-ChristopherNeural",
-    "en-US-JaneNeural",
-    "en-US-JasonNeural",
+    "en-US-JennyNeural",        # US female warm
+    "en-GB-RyanNeural",         # British male deep - distinct accent
+    "en-US-GuyNeural",          # US male casual
+    "en-GB-LibbyNeural",        # British female bright - distinct
+    "en-US-DavisNeural",        # US male deep serious - distinct
+    "en-AU-WilliamNeural",      # Australian male - distinct accent
+    "en-CA-ClaraNeural",        # Canadian female - distinct accent
 ]
 assert len(set(list(VOICES.values()) + JUDGE_VOICES)) == 10
 JUDGE_VOICE_MAP = {}
@@ -711,22 +712,97 @@ def fallback_visual_plan(text):
             if len(unique)>=MAX_VISUALS_PER_SEGMENT: break
     return unique[:MAX_VISUALS_PER_SEGMENT]
 
+def find_phrase_timing(phrase, words):
+    if not words or not phrase:
+        return None
+    phrase_words = phrase.lower().split()
+    if len(phrase_words) < 1:
+        return None
+    text_words = [w.get("text","").lower() for w in words]
+    # Find sequence
+    for i in range(len(text_words) - len(phrase_words) + 1):
+        if text_words[i:i+len(phrase_words)] == phrase_words:
+            start = float(words[i].get("start",0))
+            end_idx = min(len(words)-1, i+len(phrase_words)-1+8)
+            end = float(words[end_idx].get("end", start+2.5))
+            return {"start": max(0.0, start-0.15), "end": max(start+2.5, end)}
+    # Fallback: find single keyword
+    for kw in phrase_words:
+        if len(kw) < 4:
+            continue
+        for idx, tw in enumerate(text_words):
+            if kw == tw:
+                s = float(words[idx].get("start",0))
+                e_idx = min(len(words)-1, idx+10)
+                e = float(words[e_idx].get("end", s+2.5))
+                return {"start": s, "end": max(s+2.5, e)}
+    return None
+
+def fallback_visual_timing(idx, total, words):
+    if not words:
+        return {"start": float(idx*2.8), "end": float(idx*2.8+2.5)}
+    last_end = float(words[-1].get("end", 20))
+    usable_start = 0.15 * last_end
+    usable_end = 0.85 * last_end
+    if total <= 1:
+        start = usable_start
+    else:
+        start = usable_start + ((usable_end - usable_start) * idx / max(1, total-1))
+    return {"start": max(0.0, start), "end": max(start+2.5, start+2.5)}
+
 def create_visual_plan(text, words, model_for_visuals):
+    # Get candidates - try LLM then fallback
+    candidates = []
     try:
-        prompt=f"Extract up to {MAX_VISUALS_PER_SEGMENT} visual concepts from: {text[:600]} Return JSON list [{{phrase,label,description}}] phrases must be exact substrings, labels short like Apple, Serpent, Heaven, Earth, AI brain, Scales, Universe, etc."
+        prompt=f"Extract up to {MAX_VISUALS_PER_SEGMENT} visual concepts from: {text[:600]} Return JSON list [{{phrase,label,description}}] phrases must be exact substrings, labels short like Apple, Serpent, Heaven, Earth, AI brain, Scales, Universe, Pain, Toil, Exile, etc."
         resp=query_openrouter(prompt, model_for_visuals, timeout=20, max_tokens=400, temperature=0.5)
         if resp:
             m=re.search(r"\[.*\]", resp, re.DOTALL)
             if m:
                 data=json.loads(m.group(0))
-                visuals=[]
-                for it in data[:MAX_VISUALS_PER_SEGMENT]:
+                for it in data[:MAX_VISUALS_PER_SEGMENT*2]:
                     ph=str(it.get("phrase",""))[:80]
                     if ph and ph.lower() in text.lower():
-                        visuals.append({"phrase":ph,"label":str(it.get("label","Concept"))[:30],"description":str(it.get("description",""))[:80],"kind":"concept"})
-                if len(visuals)>=2: return visuals
-    except: pass
-    return fallback_visual_plan(text)
+                        label = str(it.get("label","Concept"))[:30]
+                        # Skip if already used globally - only new animations
+                        if label.lower() in USED_VISUAL_LABELS:
+                            continue
+                        candidates.append({"phrase":ph,"label":label,"description":str(it.get("description",""))[:80],"kind":"concept"})
+    except:
+        pass
+    if len(candidates) < 2:
+        fb = fallback_visual_plan(text)
+        for v in fb:
+            if v["label"].lower() not in USED_VISUAL_LABELS and v["label"].lower() not in [c["label"].lower() for c in candidates]:
+                candidates.append(v)
+    # Add timing
+    timed=[]
+    for idx, item in enumerate(candidates):
+        timing = find_phrase_timing(item["phrase"], words)
+        if not timing:
+            timing = fallback_visual_timing(idx, len(candidates), words)
+        if not timing:
+            continue
+        new_item = dict(item)
+        new_item.update(timing)
+        timed.append(new_item)
+    timed.sort(key=lambda x: x["start"])
+    output=[]
+    for item in timed:
+        # No overlap - gap 2.8s ensures one at a time
+        if any(abs(item["start"] - prev["start"]) < MIN_VISUAL_GAP for prev in output):
+            continue
+        # No duplicate labels in this segment
+        if any(item["label"].lower()==prev["label"].lower() for prev in output):
+            continue
+        # No global repeats
+        if item["label"].lower() in USED_VISUAL_LABELS:
+            continue
+        output.append(item)
+        USED_VISUAL_LABELS.add(item["label"].lower())
+        if len(output) >= MAX_VISUALS_PER_SEGMENT:
+            break
+    return output
 
 # === SCRIBBLE ART - FORMED NARRATIVE, STORY-DRIVEN, DRAWING+FADE ===
 
@@ -1083,14 +1159,18 @@ def render_video_segment(bg_path,ui_path,audio_path,subs_path,output_path,positi
     filter_parts=[]
     filter_parts.append(f"[0:v]scale={VIDEO_W}:{VIDEO_H}:flags=lanczos[bg]")
     filter_parts.append(f"[1:v]scale={VIDEO_W}:{VIDEO_H}:flags=lanczos[ui]")
-    # Restore sound bars - showwaves from audio
+        # FIXED: Sound bars like attached - mirrored rounded bars, closer to name, color-matched to speaker block
     glow_hex = glow.lstrip('#')
-    filter_parts.append(f"[2:a]showwaves=s=300x58:mode=cline:colors=0x{glow_hex}:rate=30[wave]")
+    # Create waveform like attached: mirrored vertical bars, rounded caps, centered
+    # Use p2p mode for mirrored top/bottom, larger size, colored by speaker glow
+    # Split audio to mono and create waveform with thick bars
+    filter_parts.append(f"[2:a]aformat=channel_layouts=mono,compand=gain=-6,showwaves=s=520x72:mode=p2p:colors=0x{glow_hex}:rate=30:draw=full:scale=sqrt[wave_raw]")
+    filter_parts.append(f"[wave_raw]format=rgba,colorchannelmixer=aa=0.95[wave]")
     filter_parts.append(f"[bg][ui]overlay=0:0:shortest=1[bg_ui]")
-    # Overlay sound bars near speaker card
-    wave_x = cx + 330
-    wave_y = cy + 47
-    filter_parts.append(f"[bg_ui][wave]overlay={wave_x}:{wave_y}[bg_ui_wave]")
+    # Place closer to name - just below speaker name inside card, color-matched to speaker block
+    wave_x = cx + 70
+    wave_y = cy + 52
+    filter_parts.append(f"[bg_ui][wave]overlay={wave_x}:{wave_y}:shortest=1[bg_ui_wave]")
     last_label="[bg_ui_wave]"
     visual_inputs=[]
     for idx, vis in enumerate(visual_plan):
@@ -1165,18 +1245,20 @@ def generate_scoreboard(round_num,results,avg_a,avg_b,cum_a,cum_b,output_path,ro
     col_b_x = 1050
     col_winner_x = 1350
     
-    # Header background
-    draw.rectangle([60, header_y-10, W-60, header_y+45], fill=(255,255,255,25), outline=(255,215,0,100), width=2)
-    draw.text((col_judge_x, header_y), "Judge", font=font_head, fill=(255,255,255,200))
+    # Header background - dark, no white
+    draw.rectangle([60, header_y-10, W-60, header_y+45], fill=(25,35,70,255), outline=(255,215,0,180), width=2)
+    draw.text((col_judge_x, header_y), "Judge", font=font_head, fill=(255,255,255,230))
     draw.text((col_a_x, header_y), f"{roles['side_a_label'][:18]}", font=font_head, fill=(0,255,204,255))
-    draw.text((col_b_x, header_y), f"{roles['side_b_label'][:18]}", font=font_head, fill=(255,100,255,255))
+    draw.text((col_b_x, header_y), f"{roles['side_b_label'][:18]}", font=font_head, fill=(255,120,255,255))
     draw.text((col_winner_x, header_y), "Winner", font=font_head, fill=(255,215,0,255))
     
     y = header_y + 65
     for idx, res in enumerate(results):
-        # Alternating row bg
+        # Alternating row bg - dark, no white, high contrast
         if idx % 2 == 0:
-            draw.rectangle([60, y-8, W-60, y+42], fill=(255,255,255,10))
+            draw.rectangle([60, y-8, W-60, y+42], fill=(20,28,50,255))
+        else:
+            draw.rectangle([60, y-8, W-60, y+42], fill=(15,22,40,255))
         # Judge name - full, not truncated too much
         judge_text = f"{res['display_name']} ({res['provider']})"
         if len(judge_text) > 32:
@@ -1252,14 +1334,29 @@ def generate_panel_commentary(model,side,topic,rn,ap,sk,prev,roles):
 def build_intro(topic,jc,roles):
     return f"Welcome to the AI Debate Arena. Today, {roles['side_a_label']} faces {roles['side_b_label']} on the question: {topic}. Three rounds, equal time. An independent panel of {jc} AI judges from leading companies will score argument strength, rebuttal quality, and clarity. Let's begin."
 
+USED_JUDGE_INTROS = set()
 def build_judge_intro(judge_model, jc):
     name=get_judge_short_name(judge_model); comp=get_company_name(judge_model)
+    # 10+ unique intros with different personalities, lengths, styles - never same
     intros=[
-        f"Hello, I am {name} from {comp}. I am one of the {jc} judges on today's panel. I will be scoring on argument, rebuttal, and clarity. Looking forward to a great debate.",
-        f"Hi everyone, {name} here, from {comp}. Excited to be one of your {jc} judges today. I will be looking for specific evidence and clear reasoning. Let us begin.",
-        f"Greetings, I am {name}, representing {comp}. I am honored to be among the {jc} judges. I will evaluate based on strength of argument and how well each side answers the other.",
+        f"Hey, I'm {name} from {comp}. I've judged a lot of these, and I care about one thing: does the argument actually match what the text says that day? I'll be scoring tight.",
+        f"Hello everyone, {name} here at {comp}. I look at Hebrew, plain sense, and whether you hide the cost. If you skip exile and toil, I'll notice. Let's go.",
+        f"I'm {name}, representing {comp}. I want clear definitions and no shifting goalposts. If you say 'in the day' means something, stick to it all round. Excited for this.",
+        f"Greetings, {name} from {comp}. I focus on rebuttal quality. Did you answer the other side's best point about Genesis 5 verse 5 or Genesis 3 verse 22? That's what matters to me.",
+        f"Hi, {name} here, {comp}. I love close reading. Moth tamuth versus lo moth temuthun - that emphatic Hebrew matters. Show me you read the actual verses, not just ideas about them.",
+        f"I'm {name} from {comp}, one of your {jc} judges. My bias is for evidence that day: eyes opened, God confirming knowledge, no death that day. Convince me with text.",
+        f"Hey folks, {name}, {comp}. I score clarity highest. If I can't follow your logic in two sentences, you lose points with me. Keep it tight, keep it textual.",
+        f"Hello, {name}, {comp} here. I watch for half-truths. Serpent said your eyes will open - true - but left out pain, toil, cherubim. Omission is a form of misleading. I'll be tracking that.",
+        f"I'm {name} at {comp}. Three criteria for me: argument strength, rebuttal, reasoning. But I weigh whether you handle the strongest counter - like beyom in Genesis 2 verse 4 meaning 'when'.",
+        f"Hi, I'm {name} from {comp}. Different perspective: I care about character. Who warns upfront about cost? God says freely eat every tree but one. Serpent twists to 'every tree'. That framing matters.",
     ]
-    return random.choice(intros)
+    # Pick unused intro
+    available = [i for i in intros if i[:50] not in USED_JUDGE_INTROS]
+    if not available:
+        available = intros
+    chosen = random.choice(available)
+    USED_JUDGE_INTROS.add(chosen[:50])
+    return chosen
 
 def build_outro(jc,ca,cb,roles):
     if math.isclose(ca,cb,abs_tol=0.01): res="a draw"
