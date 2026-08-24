@@ -317,17 +317,36 @@ USED_ARGUMENTS = set()
 USED_ARGUMENTS = set()
 USED_PHRASES = set()
 
-def generate_turn(side, topic, round_num, turn_num, previous_exchange, model, role_label, role_desc, opponent_label, opponent_desc):
-    prev_snip=(previous_exchange or "")[-1000:]
-    used_list = list(USED_ARGUMENTS)[-15:]
-    used_str = "; ".join(used_list) if used_list else "None yet"
-    if round_num==1:
-        round_focus=f"Opening round {turn_num}/4. Establish NEW foundation with evidence NOT used before. Avoid these already used: {used_str}"
-    elif round_num==2:
-        round_focus=f"Rebuttal round {turn_num}/4. Directly rebut opponent's last point with FRESH evidence and NEW angle. Do NOT repeat: {used_str}"
+
+def generate_turn(role_key, topic, round_num, turn_num, prev_history, model, role_label, role_desc, opponent_label, opponent_desc):
+    global USED_ARGUMENTS, USED_PHRASES
+    # Round focus to avoid repetition
+    if round_num == 1:
+        round_focus = "OPENING: Define terms, present your strongest textual evidence from Genesis 2-3. Quote chapter and verse."
+    elif round_num == 2:
+        round_focus = "REBUTTAL: Directly answer opponent's last point, point out what they omitted (pain, toil, exile, tree of life, dust). Show their weakness."
     else:
-        round_focus=f"Closing round {turn_num}/4. Summarize with NEW synthesis, strongest FRESH points. Avoid repeating: {used_str}"
-    prompt=f"You are {role_label} debating live on YouTube about: {topic}. Your position: {role_desc}. Opponent is {opponent_label} who argues: {opponent_desc}. {round_focus} Previous opponent said: {prev_snip}. Write {WORDS_PER_TURN} words as REAL HUMAN would speak - natural, conversational, passionate. Use contractions (I'm, don't, can't, it's). Vary sentence length. Each sentence full with subject+verb. No dashes, no bullet points. Quote specific evidence. Rebut directly. Start immediately with point, no greeting. CRITICAL: Bring completely fresh arguments not used before. Sound like confident human debater. {MIN_TURN_WORDS}-{MAX_TURN_WORDS} words."
+        round_focus = "CLOSING: Summarize why your view fits ALL evidence, expose opponent's redefinition, end with powerful question."
+    prev_snip = prev_history[-600:] if prev_history else "No previous"
+    used_str = "; ".join(list(USED_ARGUMENTS)[-8:])[:400]
+    # Force natural human speech, full sentences, no repeats
+    prompt=f"""You are {role_label} in a LIVE YouTube debate. Topic: {topic}
+Your stance: {role_desc}
+Opponent: {opponent_label} = {opponent_desc}
+{round_focus}
+Opponent last said: {prev_snip}
+DO NOT REPEAT these arguments you already used: {used_str}
+Write {WORDS_PER_TURN} words as a REAL HUMAN debater would actually speak on stage:
+- Use contractions naturally: I'm, don't, can't, it's, we're, you've, that's
+- Every sentence must be complete with subject + verb, not fragments. No "God warned death." Instead "God warned that death would come."
+- Vary length: mix short punchy sentences with longer thoughtful ones
+- Sound conversational, passionate, slightly informal, like a person talking, not a textbook
+- Quote specific verses: Genesis 2:17, 3:4, 3:7, 3:22, 5:5
+- Rebut directly: "My opponent says... but look at..."
+- Start immediately with your point, no "Ladies and gentlemen"
+- CRITICAL: Bring FRESH angle not in {used_str}. If you already said "eyes opened" find new angle like "tree of life" or "cherubim" or "dust" or "shame"
+- {MIN_TURN_WORDS}-{MAX_TURN_WORDS} words, natural flow
+"""
     for m in [model]+FALLBACK_MODELS[:4]:
         temp = 0.88 + (turn_num*0.03) + random.uniform(0,0.08)
         resp=query_openrouter(prompt,m,max_tokens=850,temperature=temp)
@@ -588,118 +607,60 @@ def generate_subtitles(words,filename,scorecard=False,audio_file=None,full_text=
     open(filename,"w",encoding="utf-8").write(header+"\n".join(events)+"\n")
 
 def fallback_visual_plan(text):
-    # GENERALIZED - works for any topic.txt, not just Genesis
+    # OVERHAULED: Animation every couple sentences, clear story, style like attached pushing rock / sitting
     tl=text.lower()
+    sents = re.split(r'[.!?]+', text)
+    sents = [s.strip() for s in sents if len(s.strip())>15]
     visuals=[]
-    genesis_kws=[
-        ("heaven","Heaven","heaven with sun and clouds, detailed"),
-        ("earth","Earth","earth with mountains and land, detailed"),
-        ("day","Day light","bright day with sun, detailed"),
-        ("night","Night sky","night with moon and stars, detailed"),
-        ("light","Light rays","sun with bright rays, detailed"),
-        ("darkness","Darkness","dark sky with stars, detailed"),
-        ("evening","Evening","evening sky with orange sunset, detailed"),
-        ("morning","Morning","morning sunrise, detailed"),
-        ("water","Water waves","blue water waves, detailed"),
-        ("sky","Sky clouds","sky with clouds, detailed"),
-        ("land","Land mountains","land with mountains, detailed"),
-        ("sun","Sun bright","bright sun with rays, detailed"),
-        ("moon","Moon night","moon in night sky, detailed"),
-        ("stars","Stars constellation","stars in night sky, detailed"),
-        ("sea","Sea waves","sea with waves, detailed"),
-        ("tree","Tree in garden","tree with leaves and apples, detailed"),
-        ("fruit","Eating fruit","person eating fruit, detailed"),
-        ("apple","Apple on branch","red apple hanging from branch, detailed"),
-        ("garden","Garden of Eden","garden with trees and flowers, detailed"),
-        ("serpent","Serpent on branch","snake on branch with tongue, detailed"),
-        ("snake","Snake","snake slithering, detailed"),
-        ("god","God light","sun with bright rays, detailed"),
-        ("lord","Lord light","bright light from above, detailed"),
-        ("adam","Adam figure","man figure detailed"),
-        ("eve","Eve figure","woman figure detailed"),
-        ("man","Man figure","man figure detailed"),
-        ("woman","Woman figure","woman figure detailed"),
-        ("eyes opened","Eyes opened","eyes opening wide, detailed"),
-        ("naked","Naked shame","figures covering with leaves, detailed"),
-        ("hide","Hiding","figures hiding behind tree, detailed"),
-        ("dust","Dust ground","dust and ground, detailed"),
-        ("cherubim","Cherubim angel","angel with sword, detailed"),
-        ("sword","Sword flaming","flaming sword, detailed"),
-        ("die","Dying","figure lying dying, detailed"),
-        ("death","Death","death and dust, detailed"),
+    # Map sentence content to story action like attached images
+    story_map=[
+        ("god.*truth|truth.*god", "God warns", "God figure warning with hand raised, detailed"),
+        ("serpent.*truth|serpent.*lie|snake", "Serpent talks", "serpent on branch talking, detailed"),
+        ("eat|apple|fruit", "Eating fruit", "figures eating apple from tree, detailed"),
+        ("eyes.*open|open.*eyes|naked|shame", "Eyes opened", "two figures eyes wide, hands covering, detailed"),
+        ("hide|hid|afraid|fear", "Hiding", "figures hiding behind tree, fearful, detailed"),
+        ("pain|childbirth|sorrow", "Pain", "figure holding head in pain, detailed"),
+        ("toil|sweat|thorns|ground|work", "Toil - pushing rock", "figure pushing large boulder like Sisyphus, straining, detailed"),
+        ("exile|driven|cherubim|sword|gate|eden", "Exile", "figure walking away from garden gate, angel with sword, detailed"),
+        ("dust|die|death|return", "Dust to dust", "figure lying, dust rising, detailed"),
+        ("tree of life|live forever|immortal", "Tree of life blocked", "tree with cherubim blocking path, detailed"),
+        ("knowledge|know.*good.*evil|wise", "Knowledge", "brain with lightbulb, eyes opening, detailed"),
+        ("lie|deceive|beguile|trick", "Deception", "masks, serpent whispering, detailed"),
+        ("warn|command|day you eat", "Warning", "God figure pointing to tree with warning sign, detailed"),
+        ("day|yom|same day|930 years", "Day count", "calendar with sun, 930 years timeline, detailed"),
     ]
-    ai_kws=[
-        ("ai","AI brain","robot brain with circuits, detailed"),
-        ("artificial","Artificial intelligence","robot head detailed"),
-        ("robot","Robot","robot head detailed"),
-        ("regulation","Scales of justice","balanced scales detailed"),
-        ("regulate","Regulation","scales of justice detailed"),
-        ("bias","Bias warning","warning sign detailed"),
-        ("algorithm","Algorithm","flowing data blocks detailed"),
-        ("data","Data","database with data points detailed"),
-        ("computer","Computer","computer with screen detailed"),
-        ("technology","Technology","tech with circuits detailed"),
-        ("intelligence","Intelligence brain","brain with circuits detailed"),
-    ]
-    cosmos_kws=[
-        ("universe","Universe","galaxy with stars detailed"),
-        ("creator","Creator light","bright sun with rays detailed"),
-        ("cosmos","Cosmos","galaxy spiral detailed"),
-        ("big bang","Big Bang","explosion with stars detailed"),
-        ("galaxy","Galaxy","spiral galaxy detailed"),
-        ("planet","Planet","planet with rings detailed"),
-        ("atom","Atom","atom with electrons detailed"),
-        ("evolution","Evolution","DNA helix detailed"),
-        ("dna","DNA","dna helix detailed"),
-        ("creation","Creation","creation light detailed"),
-        ("exist","Existence","question mark with stars detailed"),
-    ]
-    generic_kws=[
-        ("evidence","Evidence","open book with light detailed"),
-        ("logic","Logic","lightbulb with gears detailed"),
-        ("truth","Truth","lightbulb glowing detailed"),
-        ("choice","Choice","fork in road with two paths detailed"),
-        ("free will","Free will","brain with choice detailed"),
-        ("determin","Determinism","chain links detailed"),
-        ("moral","Morality","scales balancing heart and brain detailed"),
-        ("ethic","Ethics","scales of justice detailed"),
-        ("justice","Justice","balanced scales detailed"),
-        ("argument","Debate","two podiums facing detailed"),
-        ("debate","Debate stage","debate stage with podiums detailed"),
-        ("question","Question","question mark with light detailed"),
-        ("life","Life","heart with pulse detailed"),
-        ("knowledge","Knowledge","book with light detailed"),
-        ("wisdom","Wisdom","owl with book detailed"),
-    ]
-    all_kws = genesis_kws + ai_kws + cosmos_kws + generic_kws
-    for kw,label,desc in all_kws:
-        start=0
-        while len(visuals)<MAX_VISUALS_PER_SEGMENT:
-            idx=tl.find(kw, start)
-            if idx==-1: break
-            phrase=text[max(0,idx-15):idx+len(kw)+25].strip() or kw
-            if not any(v["phrase"]==phrase for v in visuals):
-                visuals.append({"phrase":phrase,"label":label,"description":desc,"kind":"concept"})
-            start=idx+len(kw)
-            if len(visuals)>=MAX_VISUALS_PER_SEGMENT: break
-        if len(visuals)>=MAX_VISUALS_PER_SEGMENT: break
-    if len(visuals)<3:
-        if any(w in tl for w in ["ai","artificial","robot","regulation","algorithm","tech"]):
-            visuals.extend([
-                {"phrase":text[:30],"label":"AI brain","description":"robot brain with circuits, detailed","kind":"concept"},
-                {"phrase":text[:30],"label":"Scales of justice","description":"balanced scales detailed","kind":"concept"},
-            ])
-        elif any(w in tl for w in ["heaven","earth","god","creator","universe"]):
-            visuals.extend([
-                {"phrase":text[:30],"label":"Heaven","description":"heaven with clouds and sun detailed","kind":"concept"},
-                {"phrase":text[:30],"label":"Earth","description":"earth with land and water detailed","kind":"concept"},
-                {"phrase":text[:30],"label":"Tree in garden","description":"tree with apples detailed","kind":"concept"},
-            ])
-        else:
-            visuals.extend([
-                {"phrase":text[:30],"label":"Debate stage","description":"two podiums with figures detailed","kind":"concept"},
-                {"phrase":text[:30],"label":"Lightbulb idea","description":"lightbulb glowing detailed","kind":"concept"},
-            ])
+    used_labels=set()
+    for idx, sent in enumerate(sents[:8]):  # One visual per 1-2 sentences
+        sent_low=sent.lower()
+        matched=False
+        for pattern, label, desc in story_map:
+            if re.search(pattern, sent_low):
+                if label.lower() not in used_labels and label.lower() not in USED_VISUAL_LABELS:
+                    visuals.append({"phrase":sent[:80], "label":label, "description":desc, "kind":"story"})
+                    used_labels.add(label.lower())
+                    matched=True
+                    break
+        if not matched and idx%2==0:  # Ensure animation every couple sentences even if no keyword
+            generic_labels=["Debate point", "Rebuttal", "Evidence", "Question"]
+            gl = generic_labels[idx % len(generic_labels)]
+            if gl.lower() not in used_labels and gl.lower() not in USED_VISUAL_LABELS:
+                visuals.append({"phrase":sent[:80], "label":gl, "description":f"{gl.lower()} illustration, clear story, detailed", "kind":"generic"})
+                used_labels.add(gl.lower())
+        if len(visuals)>=MAX_VISUALS_PER_SEGMENT:
+            break
+    # If still less than 3, add story progression
+    if len(visuals)<2:
+        visuals.extend([
+            {"phrase":text[:60], "label":"Garden scene", "description":"garden with tree and two figures, clear story, detailed", "kind":"story"},
+            {"phrase":text[:60], "label":"Choice moment", "description":"figure reaching for apple, decision moment, detailed", "kind":"story"},
+        ])
+    seen=set(); unique=[]
+    for v in visuals:
+        if v["label"].lower() not in seen and v["label"].lower() not in USED_VISUAL_LABELS:
+            unique.append(v); seen.add(v["label"].lower())
+        if len(unique)>=MAX_VISUALS_PER_SEGMENT: break
+    return unique[:MAX_VISUALS_PER_SEGMENT]
+
     seen=set(); unique=[]
     for v in visuals:
         if v["label"] not in seen:
@@ -1159,17 +1120,21 @@ def render_video_segment(bg_path,ui_path,audio_path,subs_path,output_path,positi
     filter_parts=[]
     filter_parts.append(f"[0:v]scale={VIDEO_W}:{VIDEO_H}:flags=lanczos[bg]")
     filter_parts.append(f"[1:v]scale={VIDEO_W}:{VIDEO_H}:flags=lanczos[ui]")
-        # FIXED: Sound bars like attached - mirrored rounded bars, closer to name, color-matched to speaker block
+            # FIXED: Sound bars less wide, vertical orientation safe for both sides, color-matched
     glow_hex = glow.lstrip('#')
-    # Create waveform like attached: mirrored vertical bars, rounded caps, centered
-    # Use p2p mode for mirrored top/bottom, larger size, colored by speaker glow
-    # Split audio to mono and create waveform with thick bars
-    filter_parts.append(f"[2:a]aformat=channel_layouts=mono,compand=gain=-6,showwaves=s=520x72:mode=p2p:colors=0x{glow_hex}:rate=30:draw=full:scale=sqrt[wave_raw]")
-    filter_parts.append(f"[wave_raw]format=rgba,colorchannelmixer=aa=0.95[wave]")
+    # Less wide: 280px max to fit on screen for right debator, vertical bars like attached but compact
+    # Use p2p mode mirrored, smaller, centered on card to never go off-screen
+    filter_parts.append(f"[2:a]aformat=channel_layouts=mono,compand=gain=-6,showwaves=s=280x48:mode=p2p:colors=0x{glow_hex}:rate=30:draw=full:scale=sqrt[wave_raw]")
+    filter_parts.append(f"[wave_raw]format=rgba,colorchannelmixer=aa=0.92[wave]")
     filter_parts.append(f"[bg][ui]overlay=0:0:shortest=1[bg_ui]")
-    # Place closer to name - just below speaker name inside card, color-matched to speaker block
-    wave_x = cx + 70
-    wave_y = cy + 52
+    # Place centered on speaker card, just above card, never off-screen - different orientation safe
+    # Card is 650 wide, waveform 280 wide, so centered: cx + (650-280)//2
+    wave_w = 280
+    wave_x = cx + (650 - wave_w)//2
+    wave_y = cy - 58  # Just above card, not inside, so visible and not clipped
+    # For right side, ensure not off-screen: max x 1920-300
+    if position == "right":
+        wave_x = min(wave_x, VIDEO_W - wave_w - 20)
     filter_parts.append(f"[bg_ui][wave]overlay={wave_x}:{wave_y}:shortest=1[bg_ui_wave]")
     last_label="[bg_ui_wave]"
     visual_inputs=[]
@@ -1248,8 +1213,11 @@ def generate_scoreboard(round_num,results,avg_a,avg_b,cum_a,cum_b,output_path,ro
     # Header background - dark, no white
     draw.rectangle([60, header_y-10, W-60, header_y+45], fill=(25,35,70,255), outline=(255,215,0,180), width=2)
     draw.text((col_judge_x, header_y), "Judge", font=font_head, fill=(255,255,255,230))
-    draw.text((col_a_x, header_y), f"{roles['side_a_label'][:18]}", font=font_head, fill=(0,255,204,255))
-    draw.text((col_b_x, header_y), f"{roles['side_b_label'][:18]}", font=font_head, fill=(255,120,255,255))
+    # Short labels to avoid truncation - GOD / SERPENT - ensures all letters show
+    short_a = roles['side_a_label'].split()[0][:12] if roles['side_a_label'] else "A"
+    short_b = roles['side_b_label'].split()[0][:12] if roles['side_b_label'] else "B"
+    draw.text((col_a_x, header_y), short_a, font=font_head, fill=(0,255,204,255))
+    draw.text((col_b_x, header_y), short_b, font=font_head, fill=(255,120,255,255))
     draw.text((col_winner_x, header_y), "Winner", font=font_head, fill=(255,215,0,255))
     
     y = header_y + 65
