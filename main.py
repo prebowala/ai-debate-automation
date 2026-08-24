@@ -257,58 +257,61 @@ def strip_filler(text):
     return text
 
 def generate_fallback_debate(side_label, topic, round_num, turn_num):
+    # FIXED: Natural human speech - full sentences, contractions, varied length, not robotic fragments
     topic_short = topic[:130] if len(topic)>130 else topic
     if "GOD TOLD TRUTH" in side_label.upper():
         god_templates = {
-            (1,1): "Genesis 2:17 is clear. God says in the day you eat you shall surely die. Hebrew moth tamuth, dying you shall die. Serpent says in 3:4 lo moth temuthun, you shall not surely die. Direct contradiction. What happens that day? Chapter 3:7 eyes opened, they knew naked. Shame first time. Verse 8 hid from God's presence. Hiding is separation, Bible calls death.",
-            (1,2): "Notice God's generosity in 2:16. You may freely eat of every tree, every tree, one limit. Incredibly generous. Serpent twists in 3:1 did God really say you shall not eat of every tree? Makes God sound stingy, holding out. Classic deception, misrepresenting to plant doubt.",
-            (1,3): "Chapter 2:17 God commanded you shall surely die. Serpent 3:4 says you shall not surely die. One says die, other says won't. Can't both be true. Chapter 3:7-10 shows eyes opened, fear, shame, hiding. God warned death, relational death starts immediately.",
-            (1,4): "Look at Hebrew ki, for in the day. Genesis 2:4 says in the day Lord God made earth and heavens. Not 24-hour deadline, means when. When you eat, death becomes certain. 3:19 to dust you shall return. Serpent promised no death, false.",
-            (2,1): "Opponent says serpent told truth because they didn't drop dead that day. Misses what death means. Genesis 3:10 Adam afraid, hid. Fear not full life. Verse 19 dust you return. Mortality enters. Verses 23-24 driven out, cherubim block tree of life. That day they lost access to eternal life. Process started that day as warned.",
-            (2,2): "Argument they did not die that day ignores beyom usage. Genesis 2:4 beyom Lord God made earth and heavens. Means when. About certainty, not countdown. When you eat, death certain. Serpent half-truth: eyes opened, yes, but left out terrible consequence. Half-truth omitting crucial consequence is still lie.",
-            (2,3): "If serpent told whole truth, where warning about pain, toil, exile? Genesis 3:16-19 curses: pain, thorns, sweat, dust. Serpent said nothing. Said you shall be as gods. Chapter 3:22 they did become like God knowing good and evil, but at what cost? God told cost upfront. Serpent hid cost.",
-            (2,4): "Think tree of life 3:22-24. God says lest he take also tree of life and live forever, therefore drove man out, placed cherubim to guard. So that day they lost immortality. Death beginning. Serpent said you shall not surely die, but they lost everlasting life that day.",
-            (3,1): "Pull together. God warned in day you eat you shall surely die. Serpent said you shall not surely die, you shall be as gods. What happened? Eyes opened, yes, but also shame, fear, hiding, toil, pain, cut off from tree of life. That is death biblical sense, separation and mortality. Romans 5:12 sin entered and death through sin.",
-            (3,2): "Who told truth? God said death would come. Serpent said no death, just enlightenment. Story shows both enlightenment and death same time. Eyes opened, but also shame, blame, cursing, exile. If serpent told whole truth, where warning about losing Eden? Where warning returning to dust? He omitted cost. God did not.",
-            (3,3): "Consider character of God versus serpent. God creates, provides every tree, warns clearly. Serpent questions, distorts, promises without warning. 3:1 did God really say? Doubt. Verse 4 you shall not surely die. Denial. Verse 5 you shall be as gods. Desire. Pattern classic temptation: doubt, denial, desire. God told truth to protect.",
-            (3,4): "Final: Hebrew moth tamuth in 2:17 infinitive absolute, emphasizing surely die. Serpent lo moth temuthun, not surely die, directly negating emphasis. What happens? They do die, not instant drop. They die relationally that day, spiritually, begin dying physically. Adam lives 930 years but does die. God's surely came true.",
+            (1,1): "I think Genesis 2 verse 17 is really clear when you actually read it. God says, in the day you eat of it, you shall surely die. The Hebrew is emphatic, it's moth tamuth, literally dying you shall die. Now look at what the serpent says in chapter 3 verse 4. He says, you shall not surely die. That's a direct contradiction, right? So what happens that day? Chapter 3 verse 7 says their eyes were opened and they knew they were naked. They felt shame for the first time. Verse 8 says they hid from God's presence. That hiding is separation, and in the Bible, separation is called death.",
+            (1,2): "I want you to notice how generous God is in chapter 2 verse 16. He says you may freely eat of every tree in the garden. Every tree, with only one limit. That's incredibly generous. Then the serpent twists it in chapter 3 verse 1. He says, did God really say you shall not eat of every tree? He's making God sound stingy, like God is holding out on them. That's classic deception. He's misrepresenting what God said to plant doubt in their minds.",
+            (1,3): "Chapter 2 verse 17 says God commanded the man, you shall surely die. The serpent in chapter 3 verse 4 says to the woman, you shall not surely die. One says you will die, the other says you won't. They can't both be true. And chapter 3 verses 7 to 10 shows what actually follows. Yes, their eyes were opened, but they also felt fear, shame, and they hid. God warned about death, and relational death starts immediately that day.",
+            (1,4): "Look at the Hebrew phrase, in the day you eat. In Genesis 2 verse 4 it says in the day that the Lord God made the earth and the heavens. It doesn't mean a 24-hour deadline, it means when. When you eat, death becomes certain. Chapter 3 verse 19 confirms it, to dust you shall return. The serpent promised no death at all, and that's just false. God told the truth about the ultimate outcome.",
+            (2,1): "My opponent says the serpent told the truth because they didn't drop dead that day. But I think that misses what death really means in this story. Genesis chapter 3 verse 10 says Adam was afraid because he was naked and he hid. Fear and hiding aren't full life. Verse 19 says to dust you shall return. Mortality enters right there. Verses 23 and 24 say they're driven out of Eden and cherubim block the way to the tree of life. So on the very day they ate, they lost access to eternal life. The process of death started that exact day, just as God warned it would.",
+            (2,2): "The argument that they didn't die that day ignores how the phrase in the day is used elsewhere. In Genesis 2 verse 4 it says in the day the Lord God made the earth and heavens. It means when, not a countdown. It's about certainty. When you eat, death becomes certain. And the serpent told a half-truth. He said your eyes would be opened, and they were. But he left out the terrible consequence. A half-truth that omits the crucial consequence is still a lie. That's what deception looks like.",
+            (2,3): "If the serpent told the whole truth, where's the warning about pain, toil, and exile? Genesis 3 verses 16 to 19 lists curses. There's pain in childbirth, thorns, sweat, dust. The serpent said nothing about that. He just said you shall be as gods. Chapter 3 verse 22 says they did become like God knowing good and evil, but at what cost? God told them the cost upfront. The serpent hid the cost. So who told the fuller truth?",
+            (2,4): "Think about the tree of life in Genesis 3 verses 22 to 24. God says, lest he put forth his hand and take also of the tree of life and live forever, therefore He drove man out and placed cherubim to guard it. So on that day, they lost immortality. That is death beginning. The serpent said you shall not surely die, but they lost everlasting life that day. God's warning was accurate about losing life.",
+            (3,1): "Let me pull this together. God warned, in the day you eat you shall surely die. The serpent said, you shall not surely die, you shall be as gods. What actually happened? Their eyes were opened, yes, just as the serpent said. But they also experienced shame, fear, hiding, toil, pain, and they were cut off from the tree of life. That's death in the biblical sense, it's separation and mortality beginning. Romans chapter 5 verse 12 says sin entered the world and death through sin. The serpent promised no death, but death is now the human condition. God told the truth about the consequence.",
+            (3,2): "So who told the truth? God said death would come when they ate. The serpent said no death, just enlightenment. The story shows both enlightenment and death entering at the same time. Their eyes were opened, but they also felt shame, blame, cursing, and exile. If the serpent told the whole truth, where's the warning about losing Eden? Where's the warning about returning to dust? He omitted the cost. God didn't. God told them the full cost upfront. That's what truth telling looks like, even when it's hard to hear.",
+            (3,3): "Consider the character of God versus the serpent. God creates, provides every tree, warns clearly. The serpent questions, distorts, and promises without warning. Genesis 3 verse 1, did God really say? That's doubt. Verse 4, you shall not surely die. That's denial. Verse 5, you shall be as gods. That's desire. The pattern is classic temptation, doubt, denial, desire. God told the truth to protect them, the serpent told a half-truth to entice them.",
+            (3,4): "Final point. The Hebrew phrase moth tamuth in chapter 2 verse 17 is an infinitive absolute, it emphasizes certainty, you shall surely die. The serpent uses lo moth temuthun, you shall not surely die, directly negating God's emphasis. What happens? They do die, just not an instant physical drop. They die relationally that day, spiritually, and they begin dying physically. Adam lives 930 years but he does die. God's surely came true. The serpent's not surely failed.",
         }
         key = (round_num, turn_num if turn_num<=4 else ((turn_num-1)%4+1))
         return god_templates.get(key, god_templates[(3,4)])
     elif "SERPENT TOLD TRUTH" in side_label.upper():
         serpent_templates = {
-            (1,1): "Read what text actually says, not what we think it should say. Genesis 2:17 God told Adam in day you eat you shall surely die. Hebrew beyom, in the day. Plain sense same day. Yet Genesis 5:5 Adam lived 930 years then died. Did not die that day. Lived centuries. Serpent says 3:4 you shall not surely die. Exactly what happened. They did not die that day. He says verse 5 eyes opened as gods knowing good and evil. 3:7 eyes opened. God Himself says verse 22 man become as one of us to know good and evil. God confirms serpent right.",
-            (1,2): "Think Hebrew yom, day. Genesis 1 evening and morning first day, literal 24 hours. So when God says in day you eat you die, natural reading same day. Adam did not die that day. Serpent prediction more accurate about immediate outcome. Said you shall not die, and they did not. Said you shall be as gods knowing good and evil. God says 3:22 they have become like one of us. Two claims, both validated. God's threat didn't happen as stated that day.",
-            (1,3): "Genesis 2:17 threatens death in the day. Genesis 3:6 woman saw tree good for food, pleasant to eyes, desired to make wise. She ate, gave husband, he ate. Verse 7 eyes both opened, knew naked. Exactly serpent promised verse 5 eyes opened. Death that day? No mention anyone dying that day. Verse 8 they heard sound Lord walking. Alive, hiding, not dead.",
-            (1,4): "If God meant spiritual death, why didn't He say spiritual death? Text Genesis 2-3 never mentions spiritual death. Later theology read back. Text mentions nakedness, shame, cursing ground, pain, hard work, dust to dust. Test simple. Did they die that day as God said? No. Did eyes open as serpent said? Yes 3:7 eyes opened. Straightforward reading serpent described what would actually happen more accurately.",
-            (2,1): "Opponent talks spiritual death, but text Genesis 2-3 never mentions spiritual death. Idea imported from later theology. Text mentions nakedness, shame, cursing ground, pain, hard work, eventually dust. Test simple. Did they die that day as God said? No. Did eyes open as serpent said? Yes 3:7 eyes opened. Straightforward reading serpent described what would actually happen that day more accurately.",
-            (2,2): "If God meant they would begin dying, why say in day you shall surely die? Why not say you shall become mortal? That would be clear. And if serpent lied, why does God confirm second claim? 3:22 behold man become as one of us to know good and evil. Almost word for word serpent promised verse 5. If serpent liar, why God echoing promise? Story presents real tension who more accurate.",
-            (2,3): "Consider 3:22. God says man become as one of us to know good and evil. Exactly serpent said would happen verse 5. If serpent father of lies, why God confirming prophecy? And where death that day? 3:20 Adam called wife Eve, mother of all living. 4:1 Adam knew Eve and she conceived. Very much alive, building family, not dead. Serpent said you shall not die, and they didn't that day.",
-            (2,4): "Look 3:13. God asks woman what is this you have done? Woman says serpent beguiled me and I did eat. Doesn't say serpent lied about death. Says he beguiled. Beguiled means tricked, but tricked about what? If he lied about death and they didn't die, she'd have evidence he lied. But text never says she realized he lied about death. Instead she got exactly what he said: eyes opened, knowing good and evil.",
-            (3,1): "Weigh evidence. God said in day you eat you die. Serpent said you will not die, you will be enlightened, eyes opened. What does story actually report? Eyes opened, yes. Enlightenment, yes. Death that day, no. Adam lives 930 years. God even acknowledges enlightenment in 3:22. No acknowledgment they died that day. If we let text speak without adding later ideas, serpent description immediate outcome more accurate than God's warning.",
-            (3,2): "Question not who we want truthful, but what text reports. Reports God threatening death in day, serpent promising no death but knowledge, then reports knowledge coming and death not coming that day. Reports God Himself saying they have become like us knowing good and evil. Serpent promised exact thing. Two promises both happen. One threat does not happen that day. On immediate facts, serpent right about what would occur when they ate.",
-            (3,3): "Final assessment: Genesis presents two contradictory predictions. God: in day you eat, dying you shall die. Serpent: you shall not dying die, but eyes opened, as gods knowing good and evil. What happens? Verse 7 eyes opened. Verse 22 God says man become as one of us knowing good and evil. Serpent's two predictions both occur. God's prediction death in day does not occur as stated, Adam lives 930 years per 5:5. On textual facts alone, serpent more accurate about that day.",
-            (3,4): "If honest about text, Genesis 3 not about who lied, but who told more accurate description of what would happen when they ate. God said death that day. Serpent said no death, but knowledge and godlikeness. Knowledge and godlikeness happen that day, confirmed by God 3:22. Death that day does not happen. Adam and Eve have children, build life. Serpent account matches narrative outcome better. Uncomfortable but textual.",
+            (1,1): "Let's read what the text actually says, not what we think it should say. Genesis chapter 2 verse 17 says God told Adam, in the day you eat of it you shall surely die. In Hebrew it's beyom, in the day. The plain sense is that same day. Yet Genesis chapter 5 verse 5 says Adam lived 930 years and then he died. He didn't die that day. He lived for centuries after that. The serpent says in chapter 3 verse 4, you shall not surely die. That's exactly what happened. They didn't die that day. He also says in verse 5, your eyes shall be opened and you shall be as gods knowing good and evil. Chapter 3 verse 7 says their eyes were opened. God Himself says in verse 22, man has become as one of us to know good and evil. God confirms the serpent was right.",
+            (1,2): "Think about the Hebrew word yom, which means day. In Genesis chapter 1, evening and morning were the first day, a literal 24-hour period. So when God says in the day you eat you shall die, the natural reading is that same day. Adam didn't die that day. The serpent's prediction was more accurate about the immediate outcome. He said you shall not die, and they didn't. He said you shall be as gods knowing good and evil. God says in chapter 3 verse 22, they have become like one of us to know good and evil. Two claims by the serpent, both validated by the story itself. God's threat simply didn't happen as stated that day.",
+            (1,3): "Genesis 2 verse 17 threatens death in the day. Genesis 3 verse 6 says the woman saw the tree was good for food, pleasant to the eyes, and desired to make one wise. She ate, gave to her husband, and he ate. Verse 7 says the eyes of both were opened and they knew they were naked. That's exactly what the serpent promised in verse 5, your eyes shall be opened. Death that day? There's no mention of anyone dying that day. Instead, verse 8 says they heard the sound of the Lord walking in the garden. They are alive, they're hiding, not dead.",
+            (1,4): "If God meant spiritual death, why didn't He say spiritual death? The text of Genesis 2 and 3 never mentions spiritual death. That's later theology read back into the story. The text mentions nakedness, shame, cursing of the ground, pain in childbirth, hard work, dust to dust. The test is simple. Did they die that day as God said? No. Did their eyes open as the serpent said? Yes, chapter 3 verse 7 says their eyes were opened. On a straightforward reading, the serpent described what would actually happen that day more accurately.",
+            (2,1): "My opponent talks about spiritual death, but the text of Genesis 2 and 3 never mentions spiritual death at all. That's an idea imported from later theology, not from this story. The text mentions nakedness, shame, cursing of the ground, pain in childbirth, hard work, and eventually dust to dust. The test is simple. Did they die that day as God said they would? No, they didn't. Did their eyes open as the serpent said they would? Yes, chapter 3 verse 7 says their eyes were opened. On a straightforward reading, the serpent described what would actually happen that day more accurately.",
+            (2,2): "If God meant they would begin dying, why did He say in the day you shall surely die? Why not say you shall become mortal? That would be clear. And if the serpent lied, why does God confirm his second claim? Chapter 3 verse 22 says, behold, the man is become as one of us to know good and evil. That's almost word for word what the serpent promised in verse 5. If the serpent is the liar, why is God echoing his promise? The story presents a real tension that should make us ask who was more accurate about what would happen when they ate the fruit.",
+            (2,3): "Consider Genesis 3 verse 22. God says man has become as one of us to know good and evil. That's exactly what the serpent said would happen in verse 5. If the serpent is the father of lies, why is God confirming his prophecy? And where is the death that day? Chapter 3 verse 20 says Adam called his wife Eve, the mother of all living. Chapter 4 verse 1 says Adam knew Eve and she conceived. They are very much alive, building a family, not dead. The serpent said you shall not die, and they didn't that day.",
+            (2,4): "Look at chapter 3 verse 13. God asks the woman, what is this you have done? The woman says, the serpent beguiled me and I did eat. She doesn't say the serpent lied about death. She says he beguiled her. Beguiled means tricked, but tricked about what? If he lied about death and they didn't die, she'd have evidence he lied. But the text never says she realized he lied about death. Instead, she got exactly what he said, her eyes were opened, knowing good and evil. She got enlightenment, not death that day.",
+            (3,1): "So let's weigh the evidence carefully. God said, in the day you eat you die. The serpent said, you will not die, you will be enlightened, your eyes will be opened. What does the story actually report happened? Their eyes were opened, yes. Enlightenment came, yes. Death that day, no. Adam lives 930 years. God even acknowledges the enlightenment part in chapter 3 verse 22. There's no acknowledgment that they died that day. If we let the text speak for itself, without adding later ideas from other books, the serpent's description of the immediate outcome was more accurate than God's warning.",
+            (3,2): "The question is not who we want to be truthful, but what the text reports. It reports God threatening death in the day, the serpent promising no death but knowledge, and then it reports knowledge coming and death not coming that day. It reports God Himself saying they have become like us knowing good and evil. The serpent promised that exact thing. So two promises from the serpent, both happen in the story. One threat from God does not happen that day. On the immediate facts of what happened that day, the serpent was right about what would occur when they ate.",
+            (3,3): "Final assessment. Genesis presents two contradictory predictions. God says in the day you eat, dying you shall die. The serpent says you shall not dying die, but your eyes opened, as gods knowing good and evil. What happens? Verse 7, eyes opened. Verse 22, God says man has become as one of us knowing good and evil. The serpent's two predictions both occur. God's prediction of death in the day does not occur as stated, since Adam lives 930 years per Genesis 5 verse 5. On textual facts alone, the serpent was more accurate about that day.",
+            (3,4): "If we're honest about the text, Genesis 3 is not about who lied, but about who told a more accurate description of what would happen when they ate. God said death that day. The serpent said no death, but knowledge and godlikeness. Knowledge and godlikeness happen that day, confirmed by God in chapter 3 verse 22. Death that day does not happen. Adam and Eve go on to have children, build a life. The serpent's account matches the narrative outcome better. That's uncomfortable, but it's textual.",
         }
         key = (round_num, turn_num if turn_num<=4 else ((turn_num-1)%4+1))
         return serpent_templates.get(key, serpent_templates[(3,4)])
     else:
         generic = {
-            (1,1): f"On {topic_short}, {side_label} has stronger case when you look at evidence. Facts and logic point one direction. Opposing view relies on assumptions that don't hold. We should prefer explanation that fits what we actually see in real world. That is why {side_label} preferred.",
-            (1,2): f"Consider {topic_short} from first principles. {side_label} claims specific mechanism that can be tested. When we check against observation, it matches. Alternative struggles to explain common cases. That is why opening favors {side_label}.",
-            (1,3): f"I want to start with definition for {topic_short}. {side_label} defines terms clearly, avoids vague language. Says what would count as evidence against it. That falsifiability matters. Opponent shifts definition when challenged.",
-            (1,4): f"Look at everyday experience relevant to {topic_short}. {side_label} matches what people actually encounter daily. Explains both typical and edge cases. Alternative needs extra assumptions to fit same data.",
-            (2,1): f"My opponent raised points, but they don't address core evidence for {side_label} on {topic_short}. Counterexamples actually show when examined closely {side_label} accounts for them, while other view struggles. Logic holds step by step.",
-            (2,2): f"Let's answer directly what opponent said about {topic_short}. They claimed {side_label} fails on certain cases. But look closer. Those cases actually support {side_label} when you check details. They misread evidence.",
-            (2,3): f"Opponent tries to redefine terms for {topic_short}, but definition was clear at start. {side_label} keeps same definition throughout. Consistency matters. If you change definition mid-debate to avoid counterexample, you are not answering.",
-            (2,4): f"On {topic_short}, opponent says {side_label} has implausible consequences. But follow logic. Consequences they cite are actually what we observe. They call them implausible because they conflict with intuition, not evidence.",
-            (3,1): f"To close on {topic_short}, {side_label} offers coherent view that fits all evidence. Defines terms clearly, follows logic consistently, matches what we observe. Alternative relies on vague claims.",
-            (3,2): f"Final thought on {topic_short}: {side_label} explains more with less. Fewer assumptions, broader coverage, makes testable predictions. Other view needs add-ons for each new case.",
-            (3,3): f"Stepping back on {topic_short}, ask which view leaves you with better understanding? {side_label} gives mechanism, examples, handles objections. Other view says opponent wrong but doesn't give positive account.",
-            (3,4): f"Closing on {topic_short}, {side_label} wins on clarity, consistency, evidence. Says what it means, doesn't contradict itself, matches observations. Alternative fails at least one.",
+            (1,1): f"On {topic_short}, I think {side_label} has the stronger case when you actually look at the evidence. The facts and the logic point in one direction. The opposing view relies on assumptions that just don't hold up. We should prefer the explanation that fits what we actually see in the real world, not just what sounds nice in theory. That's why {side_label} should be preferred here.",
+            (1,2): f"Let's consider {topic_short} from first principles. What does {side_label} actually claim? It claims a specific mechanism that can be tested. It says we can check it against observation. And when we do, it matches. The alternative struggles to explain common cases. That's why the opening favors {side_label}.",
+            (1,3): f"I want to start with a definition for {topic_short}. {side_label} defines its terms clearly and avoids vague language. It says what would count as evidence against it. That falsifiability matters. The opponent's view shifts its definition when it's challenged. Clarity favors {side_label} from the start.",
+            (1,4): f"Look at everyday experience relevant to {topic_short}. {side_label} matches what people actually encounter every day. It explains both typical and edge cases. The alternative needs extra assumptions to fit the same data. Simplicity and fit point to {side_label} in this opening.",
+            (2,1): f"My opponent raised some points, but they don't address the core evidence for {side_label} on {topic_short}. When you examine the counterexamples closely, {side_label} actually accounts for them, while the other view struggles when it's tested against real cases. The logic holds together step by step.",
+            (2,2): f"Let's answer directly what my opponent said about {topic_short}. They claimed {side_label} fails on certain cases. But look closer. Those cases actually support {side_label} when you check the details. They misread the evidence. {side_label} explains why those examples happen, the other view just labels them as exceptions.",
+            (2,3): f"My opponent tries to redefine terms for {topic_short}, but the definition was clear at the start. {side_label} keeps the same definition throughout. Consistency matters. If you change your definition mid-debate to avoid a counterexample, you're not really answering. {side_label} stays consistent and still fits the data.",
+            (2,4): f"On {topic_short}, my opponent says {side_label} has implausible consequences. But follow the logic. The consequences they cite are actually what we observe. They call them implausible because they conflict with intuition, not evidence. {side_label} follows the evidence even when it's counterintuitive.",
+            (3,1): f"To close on {topic_short}, {side_label} offers a coherent view that fits all the evidence. It defines its terms clearly, follows logic consistently, and matches what we observe. The alternative relies on vague claims or it shifts ground when challenged.",
+            (3,2): f"Final thought on {topic_short}. {side_label} explains more with less. It has fewer assumptions, broader coverage, and makes testable predictions. The other view needs add-ons for each new case. Occam's razor favors {side_label}. Simplicity plus accuracy is a strong combination for closing.",
+            (3,3): f"Stepping back on {topic_short}, ask which view leaves you with better understanding? {side_label} gives you a mechanism, examples, and it handles objections. The other view just says the opponent is wrong but doesn't give a positive account that fits. {side_label} gives a positive account that survives scrutiny.",
+            (3,4): f"Closing on {topic_short}, {side_label} wins on three criteria, clarity, consistency, and evidence. It says what it means, it doesn't contradict itself, and it matches observations. The alternative fails at least one of those. When one view meets all three and the other doesn't, the choice is clear.",
         }
         key = (round_num, turn_num if turn_num<=4 else ((turn_num-1)%4+1))
         return generic.get(key, generic[(3,4)])
+
+USED_ARGUMENTS = set()
 
 USED_ARGUMENTS = set()
 USED_PHRASES = set()
@@ -794,7 +797,8 @@ def draw_formed_tree(draw, x, y, size, apple_positions=[], progress=1.0):
             draw_formed_shape(draw, [ax-11, ay-9, ax+11, ay+11], "ellipse", density=18, progress_factor=1.0)
 
 def create_visual_asset(visual,index):
-    filename=f"visual_{index}.gif"
+    # FIXED: Transparent APNG (not white GIF), larger formed drawings, sensible story actions
+    filename=f"visual_{index}.png"  # APNG with true alpha, not GIF with white bg
     label=(visual.get('label','')+" "+visual.get('description','')).lower()
     frames=[]
     for f in range(36):
@@ -803,213 +807,253 @@ def create_visual_asset(visual,index):
         fade_alpha = 1.0
         if progress<0.12: fade_alpha = progress/0.12
         elif progress>0.85: fade_alpha = (1.0-progress)/0.15
-        frame=Image.new("RGBA",(VISUAL_W,VISUAL_H),(0,0,0,0))
+        frame=Image.new("RGBA",(VISUAL_W,VISUAL_H),(0,0,0,0))  # Fully transparent bg
         draw=ImageDraw.Draw(frame)
         action_progress = min(1.0, max(0, (progress-0.35)/0.45))
+        # Larger, more formed, less tiny - fill canvas
         if "apple" in label or "fruit" in label or "eat" in label:
+            # STORY: Adam picking fruit - large, clear, sensible
             apple_pos=[]
-            if draw_progress>0.3:
-                apple_pos=[(VISUAL_W//2-28, 85), (VISUAL_W//2+22, 95)]
-                draw_formed_tree(draw, VISUAL_W//2-75, 10, size=150, apple_positions=apple_pos if draw_progress>0.5 else [], progress=draw_progress)
             if draw_progress>0.25:
-                adam_x = 20 + 8*action_progress
-                draw_formed_human(draw, adam_x, VISUAL_H-160, 90, action="reaching", arm_progress=action_progress, eating=("eat" in label and action_progress>0.7), progress=draw_progress)
-                if action_progress>0.4 and apple_pos:
+                apple_pos=[(VISUAL_W//2-35, 110), (VISUAL_W//2+30, 125)]
+                draw_formed_tree(draw, VISUAL_W//2-95, 10, size=190, apple_positions=apple_pos if draw_progress>0.45 else [], progress=draw_progress)
+            if draw_progress>0.20:
+                adam_x = 15 + 12*action_progress
+                # Larger figure - size 130 not 90, fills more
+                draw_formed_human(draw, adam_x, VISUAL_H-210, 130, action="reaching", arm_progress=action_progress, eating=("eat" in label and action_progress>0.7), progress=draw_progress)
+                if action_progress>0.35 and apple_pos:
                     start_x, start_y = apple_pos[0]
-                    hand_x = adam_x+45+45*action_progress; hand_y = VISUAL_H-160+38+5+45*action_progress*0.3
-                    if action_progress<0.7:
-                        t = (action_progress-0.4)/0.3
-                        cur_ax = start_x + (hand_x-start_x)*t; cur_ay = start_y + (hand_y-start_y)*t
+                    hand_x = adam_x+65+55*action_progress
+                    hand_y = VISUAL_H-210+54+8+55*action_progress*0.3
+                    if action_progress<0.65:
+                        t = (action_progress-0.35)/0.30
+                        cur_ax = start_x + (hand_x-start_x)*t
+                        cur_ay = start_y + (hand_y-start_y)*t
                     else:
                         if "eat" in label:
-                            t = (action_progress-0.7)/0.3
-                            mouth_x = adam_x+45; mouth_y = VISUAL_H-160+18+8
-                            cur_ax = hand_x + (mouth_x-hand_x)*t; cur_ay = hand_y + (mouth_y-hand_y)*t
+                            t = (action_progress-0.65)/0.35
+                            mouth_x = adam_x+65
+                            mouth_y = VISUAL_H-210+26+10
+                            cur_ax = hand_x + (mouth_x-hand_x)*t
+                            cur_ay = hand_y + (mouth_y-hand_y)*t
                         else:
                             cur_ax=hand_x; cur_ay=hand_y
-                    if draw_progress>0.5:
-                        draw_formed_shape(draw, [cur_ax-10, cur_ay-8, cur_ax+10, cur_ay+10], "ellipse", density=16, progress_factor=1.0)
-            if draw_progress>0.4:
-                draw_formed_human(draw, VISUAL_W-120, VISUAL_H-155, 85, action="standing", progress=draw_progress*0.9)
+                    if draw_progress>0.45:
+                        draw_formed_shape(draw, [cur_ax-14, cur_ay-11, cur_ax+14, cur_ay+13], "ellipse", density=22, progress_factor=1.0)
+            if draw_progress>0.35:
+                draw_formed_human(draw, VISUAL_W-150, VISUAL_H-200, 120, action="standing", progress=draw_progress*0.9)
+            # Ground - full width
             if draw_progress>0.15:
-                for gx in range(0, VISUAL_W, 18):
+                for gx in range(0, VISUAL_W, 16):
                     if gx/VISUAL_W < draw_progress*1.2:
-                        draw.line([gx, VISUAL_H-12, gx+12, VISUAL_H-12], fill=(0,0,0,150), width=1)
+                        draw.line([gx, VISUAL_H-14, gx+14, VISUAL_H-14], fill=(0,0,0,180), width=2)
         elif "serpent" in label or "snake" in label:
-            if draw_progress>0.2:
-                draw_formed_tree(draw, VISUAL_W//2-65, 5, size=135, apple_positions=[], progress=draw_progress)
-            if draw_progress>0.3:
-                branch_y=58
-                draw.line([VISUAL_W*0.28, branch_y, VISUAL_W*0.82, branch_y+8], fill=(0,0,0,190), width=2)
-                serpent_x=VISUAL_W*0.32
-                for i in range(0, 50, 10):
-                    sx=serpent_x+i; sy=branch_y+3*math.sin(i*0.2+action_progress*2)
-                    sx2=sx+10; sy2=branch_y+3*math.sin((i+10)*0.2+action_progress*2)
-                    if i/50 < draw_progress:
-                        draw.line([sx,sy,sx2,sy2], fill=(0,0,0,200), width=3)
-                head_x=serpent_x+50+2*math.sin(action_progress*8); head_y=branch_y-2+1*math.cos(action_progress*8)
-                if draw_progress>0.5:
-                    draw_formed_shape(draw, [head_x-8, head_y-7, head_x+14, head_y+7], "ellipse", density=14, progress_factor=1.0)
-                    draw.ellipse([head_x+4, head_y-2, head_x+7, head_y+1], fill=(0,0,0,255))
-                    if f%10<3:
-                        draw.line([head_x+14, head_y, head_x+22, head_y-3], fill=(0,0,0,180), width=1)
-                        draw.line([head_x+14, head_y+1, head_x+22, head_y+4], fill=(0,0,0,180), width=1)
-                    if action_progress>0.3:
+            # STORY: Serpent on branch talking to Adam/Eve - clear narrative
+            if draw_progress>0.15:
+                draw_formed_tree(draw, VISUAL_W//2-85, 5, size=175, apple_positions=[], progress=draw_progress)
+            if draw_progress>0.25:
+                branch_y=78
+                draw.line([VISUAL_W*0.22, branch_y, VISUAL_W*0.88, branch_y+10], fill=(0,0,0,220), width=3)
+                serpent_x=VISUAL_W*0.28
+                for i in range(0, 70, 10):
+                    sx=serpent_x+i
+                    sy=branch_y+4*math.sin(i*0.18+action_progress*2.5)
+                    sx2=sx+12
+                    sy2=branch_y+4*math.sin((i+12)*0.18+action_progress*2.5)
+                    if i/70 < draw_progress:
+                        draw.line([sx,sy,sx2,sy2], fill=(0,0,0,230), width=4)
+                head_x=serpent_x+70+3*math.sin(action_progress*7)
+                head_y=branch_y-3+1.5*math.cos(action_progress*7)
+                if draw_progress>0.45:
+                    draw_formed_shape(draw, [head_x-12, head_y-10, head_x+18, head_y+10], "ellipse", density=20, progress_factor=1.0)
+                    draw.ellipse([head_x+6, head_y-2, head_x+10, head_y+2], fill=(0,0,0,255))
+                    if f%12<4:
+                        draw.line([head_x+18, head_y, head_x+28, head_y-4], fill=(0,0,0,200), width=2)
+                        draw.line([head_x+18, head_y+2, head_x+28, head_y+6], fill=(0,0,0,200), width=2)
+                    if action_progress>0.25:
                         for j in range(3):
-                            sx=head_x+14; sy=head_y+j*3-3; ex=sx+15+5*math.sin(action_progress*5+j); ey=sy+random.uniform(-2,2)
-                            draw.line([sx,sy,ex,ey], fill=(0,0,0,100), width=1)
-            if draw_progress>0.4:
-                draw_formed_human(draw, 25, VISUAL_H-155, 82, action="standing", progress=draw_progress*0.9)
-                draw_formed_human(draw, VISUAL_W-115, VISUAL_H-150, 80, action="standing", progress=draw_progress*0.9)
+                            sx=head_x+18; sy=head_y+j*3-3
+                            ex=sx+18+6*math.sin(action_progress*5+j)
+                            ey=sy+random.uniform(-2,2)
+                            draw.line([sx,sy,ex,ey], fill=(0,0,0,120), width=2)
+            if draw_progress>0.35:
+                draw_formed_human(draw, 20, VISUAL_H-200, 115, action="standing", progress=draw_progress*0.9)
+                draw_formed_human(draw, VISUAL_W-145, VISUAL_H-195, 112, action="standing", progress=draw_progress*0.9)
         elif "tree" in label or "garden" in label:
-            if draw_progress>0.15:
-                draw_formed_tree(draw, VISUAL_W//2-75, 15, size=155, apple_positions=[(VISUAL_W//2-25, 80), (VISUAL_W//2+20, 90)] if draw_progress>0.5 else [], progress=draw_progress)
-            if draw_progress>0.4:
-                draw_formed_human(draw, 30, VISUAL_H-155, 84, action="standing", progress=draw_progress*0.8)
-                draw_formed_human(draw, VISUAL_W-115, VISUAL_H-150, 82, action="standing", progress=draw_progress*0.8)
+            if draw_progress>0.12:
+                draw_formed_tree(draw, VISUAL_W//2-95, 15, size=195, apple_positions=[(VISUAL_W//2-32, 105), (VISUAL_W//2+28, 120)] if draw_progress>0.45 else [], progress=draw_progress)
+            if draw_progress>0.35:
+                draw_formed_human(draw, 25, VISUAL_H-200, 118, action="standing", progress=draw_progress*0.8)
+                draw_formed_human(draw, VISUAL_W-145, VISUAL_H-195, 116, action="standing", progress=draw_progress*0.8)
+            if draw_progress>0.55:
+                for fx, fy in [(60, VISUAL_H-38), (VISUAL_W-70, VISUAL_H-42), (VISUAL_W//2, VISUAL_H-30)]:
+                    draw_formed_shape(draw, [fx-7, fy-7, fx+7, fy+7], "ellipse", density=8, progress_factor=1.0)
         elif "heaven" in label or "sky" in label:
-            if draw_progress>0.1:
-                sun_r=30+5*action_progress
-                draw_formed_shape(draw, [VISUAL_W*0.65-sun_r, 45-sun_r, VISUAL_W*0.65+sun_r, 45+sun_r], "ellipse", density=40, progress_factor=draw_progress)
-                if draw_progress>0.5:
-                    for ang in range(0,360,30):
+            if draw_progress>0.08:
+                sun_r=38+6*action_progress
+                draw_formed_shape(draw, [VISUAL_W*0.62-sun_r, 38-sun_r, VISUAL_W*0.62+sun_r, 38+sun_r], "ellipse", density=50, progress_factor=draw_progress)
+                if draw_progress>0.45:
+                    for ang in range(0,360,28):
                         if ang/360 < draw_progress:
-                            rad=math.radians(ang); x2=VISUAL_W*0.65+85*math.cos(rad); y2=45+85*math.sin(rad)
-                            draw.line([VISUAL_W*0.65,45,x2,y2], fill=(0,0,0,80), width=1)
-            if draw_progress>0.3:
-                for cx, cy in [(70,60),(185,42),(320,78)]:
+                            rad=math.radians(ang); x2=VISUAL_W*0.62+100*math.cos(rad); y2=38+100*math.sin(rad)
+                            draw.line([VISUAL_W*0.62,38,x2,y2], fill=(0,0,0,90), width=2)
+            if draw_progress>0.28:
+                for cx, cy in [(65,70),(175,48),(310,88)]:
                     if (cx/400) < draw_progress:
-                        draw_formed_shape(draw, [cx, cy, cx+65, cy+26], "ellipse", density=22, progress_factor=draw_progress)
+                        draw_formed_shape(draw, [cx, cy, cx+75, cy+32], "ellipse", density=28, progress_factor=draw_progress)
+            # Birds as V
+            if draw_progress>0.5:
+                for i in range(3):
+                    bx=40+i*50+action_progress*20; by=130+12*math.sin(action_progress*3+i)
+                    draw.line([bx,by,bx+8,by+6], fill=(0,0,0,200), width=2)
+                    draw.line([bx+8,by+6,bx+16,by], fill=(0,0,0,200), width=2)
         elif "earth" in label or "land" in label:
-            if draw_progress>0.15:
-                peaks=[(0,185),(105,70),(195,135),(310,52),(VISUAL_W,125)]
+            if draw_progress>0.12:
+                peaks=[(0,210),(100,75),(190,145),(305,58),(VISUAL_W,135)]
                 for i in range(len(peaks)-1):
                     p1=peaks[i]; p2=peaks[i+1]
                     if i/len(peaks) < draw_progress:
-                        draw.line([p1[0],p1[1],p2[0],p2[1]], fill=(0,0,0,190), width=2)
-                        mid_x=(p1[0]+p2[0])/2; mid_y=(p1[1]+p2[1])/2+20
-                        draw_formed_shape(draw, [mid_x-15, mid_y-10, mid_x+15, mid_y+10], "ellipse", density=10, progress_factor=draw_progress)
-            if draw_progress>0.5:
-                draw.line([0,180,VISUAL_W,180], fill=(0,0,0,150), width=1)
+                        draw.line([p1[0],p1[1],p2[0],p2[1]], fill=(0,0,0,220), width=3)
+                        mid_x=(p1[0]+p2[0])/2; mid_y=(p1[1]+p2[1])/2+24
+                        draw_formed_shape(draw, [mid_x-18, mid_y-12, mid_x+18, mid_y+12], "ellipse", density=12, progress_factor=draw_progress)
+            if draw_progress>0.45:
+                draw.line([0,200,VISUAL_W,200], fill=(0,0,0,180), width=3)
         elif "day" in label or "light" in label or "sun" in label or "god" in label or "creator" in label:
-            sun_y = 140 - 80*action_progress
-            if draw_progress>0.2:
-                draw_formed_shape(draw, [VISUAL_W//2-28, sun_y-28, VISUAL_W//2+28, sun_y+28], "ellipse", density=35, progress_factor=draw_progress)
-                if draw_progress>0.6:
-                    for ang in range(-60,61,15):
-                        rad=math.radians(ang); x2=VISUAL_W//2+110*math.sin(rad); y2=sun_y+110*math.cos(rad)
+            sun_y = 150 - 90*action_progress
+            if draw_progress>0.18:
+                draw_formed_shape(draw, [VISUAL_W//2-34, sun_y-34, VISUAL_W//2+34, sun_y+34], "ellipse", density=42, progress_factor=draw_progress)
+                if draw_progress>0.55:
+                    for ang in range(-60,61,14):
+                        rad=math.radians(ang); x2=VISUAL_W//2+125*math.sin(rad); y2=sun_y+125*math.cos(rad)
                         if abs(ang)/60 < draw_progress:
-                            draw.line([VISUAL_W//2,sun_y,x2,y2], fill=(0,0,0,60), width=1)
+                            draw.line([VISUAL_W//2,sun_y,x2,y2], fill=(0,0,0,70), width=2)
         elif "night" in label or "moon" in label or "stars" in label:
-            if draw_progress>0.2:
-                draw_formed_shape(draw, [VISUAL_W*0.65-26, 48-26, VISUAL_W*0.65+26, 48+26], "ellipse", density=30, progress_factor=draw_progress)
-            if draw_progress>0.5:
-                star_count=int(20*draw_progress)
+            if draw_progress>0.18:
+                draw_formed_shape(draw, [VISUAL_W*0.62-32, 42-32, VISUAL_W*0.62+32, 42+32], "ellipse", density=38, progress_factor=draw_progress)
+            if draw_progress>0.45:
+                star_count=int(24*draw_progress)
                 for i in range(star_count):
-                    sx=(i*53)%(VISUAL_W-20)+10; sy=(i*37)%100+20
-                    draw.ellipse([sx,sy,sx+2,sy+2], fill=(0,0,0,180))
+                    sx=(i*57)%(VISUAL_W-20)+10; sy=(i*41)%110+18
+                    draw.ellipse([sx,sy,sx+3,sy+3], fill=(0,0,0,220))
         elif "water" in label or "sea" in label:
-            for y in range(70, VISUAL_H, 30):
+            for y in range(80, VISUAL_H, 28):
                 for _ in range(2):
-                    x0=random.randint(0,VISUAL_W-40); x1=x0+random.randint(20,50)
+                    x0=random.randint(0,VISUAL_W-50); x1=x0+random.randint(25,60)
                     if x0/VISUAL_W < draw_progress:
-                        draw.line([x0, y, x1, y], fill=(0,0,0,random.randint(80,180)), width=1)
+                        draw.line([x0, y, x1, y], fill=(0,0,0,random.randint(90,190)), width=2)
         elif "die" in label or "death" in label or "dust" in label:
-            if draw_progress>0.2:
-                hx=VISUAL_W//2-30; hy=VISUAL_H//2+10
-                draw_formed_shape(draw, [hx-16, hy-16, hx+16, hy+16], "ellipse", density=20, progress_factor=draw_progress)
-                draw.line([hx+16, hy, hx+60, hy+5], fill=(0,0,0,180), width=2)
-            if draw_progress>0.6:
-                for i in range(int(8*action_progress)):
-                    dx=VISUAL_W//2+random.uniform(-20,40); dy=VISUAL_H//2+20+random.uniform(0,20)-action_progress*20
-                    draw.ellipse([dx,dy,dx+2,dy+2], fill=(0,0,0,120))
+            if draw_progress>0.18:
+                hx=VISUAL_W//2-36; hy=VISUAL_H//2+12
+                draw_formed_shape(draw, [hx-20, hy-20, hx+20, hy+20], "ellipse", density=26, progress_factor=draw_progress)
+                draw.line([hx+20, hy, hx+75, hy+7], fill=(0,0,0,200), width=3)
+                draw.line([hx+20, hy+4, hx+70, hy+18], fill=(0,0,0,200), width=3)
+            if draw_progress>0.55:
+                for i in range(int(10*action_progress)):
+                    dx=VISUAL_W//2+random.uniform(-24,48); dy=VISUAL_H//2+22+random.uniform(0,22)-action_progress*26
+                    draw.ellipse([dx,dy,dx+3,dy+3], fill=(0,0,0,140))
         elif "eyes" in label:
-            if draw_progress>0.3:
-                for ex in [VISUAL_W//2-55, VISUAL_W//2+25]:
-                    ey=VISUAL_H//2-10
-                    draw_formed_shape(draw, [ex-26, ey-14, ex+26, ey+10], "ellipse", density=24, progress_factor=draw_progress)
-                    if draw_progress>0.6:
-                        draw_formed_shape(draw, [ex-9, ey-6, ex+9, ey+4], "ellipse", density=12, progress_factor=1.0)
-        elif "ai" in label or "robot" in label or "computer" in label or "intelligence" in label:
-            if draw_progress>0.2:
-                cx=VISUAL_W//2; cy=VISUAL_H//2-15
-                draw_formed_shape(draw, [cx-58, cy-48, cx+58, cy+32], "rect", density=55, progress_factor=draw_progress)
-            if draw_progress>0.5:
-                for ex in [VISUAL_W//2-22, VISUAL_W//2+22]:
-                    draw_formed_shape(draw, [ex-10, VISUAL_H//2-28, ex+10, VISUAL_H//2-12], "ellipse", density=14, progress_factor=1.0)
-                for i in range(4):
-                    y=VISUAL_H//2-5+i*9
-                    if i/4 < draw_progress:
-                        draw.line([VISUAL_W//2-48, y, VISUAL_W//2+48, y], fill=(0,0,0,100), width=1)
-        elif "scales" in label or "justice" in label:
-            if draw_progress>0.2:
-                cx=VISUAL_W//2
-                draw.line([cx,20,cx,58], fill=(0,0,0,190), width=2)
-                tilt=6*math.sin(action_progress*2)
-                draw.line([cx-78, 55+tilt, cx+78, 55-tilt], fill=(0,0,0,190), width=2)
-                if draw_progress>0.5:
-                    for px, py in [(cx-70, 55+tilt), (cx+70, 55-tilt)]:
-                        draw_formed_shape(draw, [px-22, py+32, px+22, py+50], "ellipse", density=18, progress_factor=draw_progress)
-                        draw.line([px, 55+(tilt if px<cx else -tilt), px-16, py+32], fill=(0,0,0,150), width=1)
-                        draw.line([px, 55+(tilt if px<cx else -tilt), px+16, py+32], fill=(0,0,0,150), width=1)
-        elif "universe" in label or "galaxy" in label or "cosmos" in label:
-            if draw_progress>0.15:
-                for _ in range(int(18*draw_progress)):
-                    sx=random.randint(0,VISUAL_W); sy=random.randint(0,VISUAL_H)
-                    draw.ellipse([sx,sy,sx+2,sy+2], fill=(0,0,0,random.randint(60,200)))
-            if draw_progress>0.4:
-                cx=VISUAL_W//2; cy=VISUAL_H//2
-                for i in range(0,180,12):
-                    if i/180 < draw_progress:
-                        ang=i*0.05+action_progress*1.2
-                        r=i*0.42
-                        x=cx+r*math.cos(ang); y=cy+r*math.sin(ang)*0.55
-                        draw.ellipse([x,y,x+2,y+2], fill=(0,0,0,180))
-                draw_formed_shape(draw, [cx-12, cy-12, cx+12, cy+12], "ellipse", density=20, progress_factor=draw_progress)
-        elif "atom" in label or "dna" in label:
-            if draw_progress>0.2:
-                cx=VISUAL_W//2; cy=VISUAL_H//2
-                draw_formed_shape(draw, [cx-14, cy-14, cx+14, cy+14], "ellipse", density=18, progress_factor=draw_progress)
-                for orbit in range(2):
-                    rx=38+orbit*12
-                    for a in range(0,360,40):
-                        if a/360 < draw_progress:
-                            rad=math.radians(a+action_progress*60)
-                            ox=cx+rx*math.cos(rad); oy=cy+rx*0.6*math.sin(rad)
-                            draw.ellipse([ox,oy,ox+2,oy+2], fill=(0,0,0,150))
-        else:
             if draw_progress>0.25:
-                draw_formed_human(draw, 35, VISUAL_H//2-50, 76, action="standing", progress=draw_progress*0.8)
-                draw_formed_human(draw, VISUAL_W-120, VISUAL_H//2-50, 76, action="standing", progress=draw_progress*0.8)
-            if draw_progress>0.6:
-                draw_formed_shape(draw, [35, VISUAL_H//2+20, 115, VISUAL_H//2+65], "rect", density=20, progress_factor=draw_progress)
-                draw_formed_shape(draw, [VISUAL_W-115, VISUAL_H//2+20, VISUAL_W-35, VISUAL_H//2+65], "rect", density=20, progress_factor=draw_progress)
-            if draw_progress>0.7 and action_progress>0.5:
-                bx=VISUAL_W//2-42; by=VISUAL_H//2-82
-                draw_formed_shape(draw, [bx, by, bx+84, by+32], "ellipse", density=20, progress_factor=1.0)
+                for ex in [VISUAL_W//2-65, VISUAL_W//2+35]:
+                    ey=VISUAL_H//2-12
+                    draw_formed_shape(draw, [ex-32, ey-18, ex+32, ey+14], "ellipse", density=30, progress_factor=draw_progress)
+                    if draw_progress>0.55:
+                        draw_formed_shape(draw, [ex-12, ey-8, ex+12, ey+6], "ellipse", density=16, progress_factor=1.0)
+        elif "ai" in label or "robot" in label or "computer" in label or "intelligence" in label:
+            if draw_progress>0.18:
+                cx=VISUAL_W//2; cy=VISUAL_H//2-18
+                draw_formed_shape(draw, [cx-72, cy-58, cx+72, cy+42], "rect", density=68, progress_factor=draw_progress)
+            if draw_progress>0.45:
+                for ex in [VISUAL_W//2-28, VISUAL_W//2+28]:
+                    draw_formed_shape(draw, [ex-14, VISUAL_H//2-32, ex+14, VISUAL_H//2-14], "ellipse", density=18, progress_factor=1.0)
+                for i in range(5):
+                    y=VISUAL_H//2-6+i*11
+                    if i/5 < draw_progress:
+                        draw.line([VISUAL_W//2-60, y, VISUAL_W//2+60, y], fill=(0,0,0,120), width=2)
+        elif "scales" in label or "justice" in label:
+            if draw_progress>0.18:
+                cx=VISUAL_W//2
+                draw.line([cx,18,cx,68], fill=(0,0,0,210), width=3)
+                tilt=7*math.sin(action_progress*2.2)
+                draw.line([cx-92, 64+tilt, cx+92, 64-tilt], fill=(0,0,0,210), width=3)
+                if draw_progress>0.45:
+                    for px, py in [(cx-84, 64+tilt), (cx+84, 64-tilt)]:
+                        draw_formed_shape(draw, [px-28, py+38, px+28, py+60], "ellipse", density=24, progress_factor=draw_progress)
+                        draw.line([px, 64+(tilt if px<cx else -tilt), px-20, py+38], fill=(0,0,0,170), width=2)
+                        draw.line([px, 64+(tilt if px<cx else -tilt), px+20, py+38], fill=(0,0,0,170), width=2)
+        elif "universe" in label or "galaxy" in label or "cosmos" in label:
+            if draw_progress>0.12:
+                for _ in range(int(22*draw_progress)):
+                    sx=random.randint(0,VISUAL_W); sy=random.randint(0,VISUAL_H)
+                    draw.ellipse([sx,sy,sx+3,sy+3], fill=(0,0,0,random.randint(70,220)))
+            if draw_progress>0.35:
+                cx=VISUAL_W//2; cy=VISUAL_H//2
+                for i in range(0,200,10):
+                    if i/200 < draw_progress:
+                        ang=i*0.05+action_progress*1.3
+                        r=i*0.48
+                        x=cx+r*math.cos(ang); y=cy+r*math.sin(ang)*0.58
+                        draw.ellipse([x,y,x+3,y+3], fill=(0,0,0,200))
+                draw_formed_shape(draw, [cx-16, cy-16, cx+16, cy+16], "ellipse", density=26, progress_factor=draw_progress)
+        elif "atom" in label or "dna" in label:
+            if draw_progress>0.18:
+                cx=VISUAL_W//2; cy=VISUAL_H//2
+                draw_formed_shape(draw, [cx-18, cy-18, cx+18, cy+18], "ellipse", density=22, progress_factor=draw_progress)
+                for orbit in range(2):
+                    rx=44+orbit*14
+                    for a in range(0,360,36):
+                        if a/360 < draw_progress:
+                            rad=math.radians(a+action_progress*70)
+                            ox=cx+rx*math.cos(rad); oy=cy+rx*0.62*math.sin(rad)
+                            draw.ellipse([ox,oy,ox+3,oy+3], fill=(0,0,0,170))
+        else:
+            # Generic debate - larger, clearer
+            if draw_progress>0.22:
+                draw_formed_human(draw, 30, VISUAL_H//2-70, 105, action="standing", progress=draw_progress*0.8)
+                draw_formed_human(draw, VISUAL_W-155, VISUAL_H//2-70, 105, action="standing", progress=draw_progress*0.8)
+            if draw_progress>0.55:
+                draw_formed_shape(draw, [30, VISUAL_H//2+30, 135, VISUAL_H//2+85], "rect", density=26, progress_factor=draw_progress)
+                draw_formed_shape(draw, [VISUAL_W-135, VISUAL_H//2+30, VISUAL_W-30, VISUAL_H//2+85], "rect", density=26, progress_factor=draw_progress)
+            if draw_progress>0.68 and action_progress>0.45:
+                bx=VISUAL_W//2-52; by=VISUAL_H//2-95
+                draw_formed_shape(draw, [bx, by, bx+104, by+42], "ellipse", density=26, progress_factor=1.0)
         if fade_alpha<1.0:
-            overlay=Image.new("RGBA",(VISUAL_W,VISUAL_H),(255,255,255,int((1.0-fade_alpha)*180)))
+            overlay=Image.new("RGBA",(VISUAL_W,VISUAL_H),(255,255,255,int((1.0-fade_alpha)*190)))
             frame=Image.alpha_composite(frame, overlay)
         frames.append(frame)
-    frames[0].save(filename,format='GIF',save_all=True,append_images=frames[1:],duration=85,loop=0,disposal=2)
-    print(f"   Created FORMED scribble narrative: {visual.get('label')} (36 frames, story-driven, drawing+fade)")
+    # Save as APNG with true alpha - not GIF with white bg
+    frames[0].save(filename,format='PNG',save_all=True,append_images=frames[1:],duration=85,loop=0,disposal=2)
+    print(f"   Created FORMED transparent APNG: {visual.get('label')} (36 frames, story-driven, no white bg)")
     return filename
 
+
 def create_background(position,glow,filename):
+    # FIXED: Use background.png cleanly as attached - no big circles, transparent animations in middle
+    import os
+    source = os.path.join(os.path.dirname(os.path.abspath(__file__)), "background.png")
+    if os.path.exists(source):
+        try:
+            # Use background.png directly as in attached image - clean stage, no big circles
+            img = Image.open(source).convert("RGB").resize((VIDEO_W, VIDEO_H), Image.LANCZOS)
+            img.save(filename)
+            return
+        except Exception as e:
+            print(f"Background.png load failed {e}, using fallback")
+    # Fallback if no background.png - dark gradient WITHOUT big circles
     img=Image.new("RGBA",(VIDEO_W,VIDEO_H),(10,10,18,255))
     draw=ImageDraw.Draw(img)
     for y in range(VIDEO_H):
         ratio=y/VIDEO_H
         r=int(12+18*ratio); g=int(12+22*ratio); b=int(20+35*ratio)
         draw.line([0,y,VIDEO_W,y], fill=(r,g,b,255))
+    # Subtle small glow, not big 380px circles
     if position=="left": cx=VIDEO_W*0.22
     elif position=="right": cx=VIDEO_W*0.78
     else: cx=VIDEO_W*0.5
-    cy=VIDEO_H*0.38
-    for rad in range(380,120,-35):
-        alpha=int(14*(1-rad/380))
+    cy=VIDEO_H*0.75
+    for rad in range(120,30,-15):
+        alpha=int(10*(1-rad/120))
         draw.ellipse([cx-rad, cy-rad, cx+rad, cy+rad], fill=(*hex_to_rgba(glow, alpha)[:3], alpha))
-    img=img.filter(ImageFilter.GaussianBlur(radius=1.2))
+    img=img.filter(ImageFilter.GaussianBlur(radius=0.8))
     img.save(filename)
 
 def create_ui_overlay(speaker_name,topic,position,glow,filename):
@@ -1049,11 +1093,13 @@ def render_video_segment(bg_path,ui_path,audio_path,subs_path,output_path,positi
         gif_path=create_visual_asset(vis, idx+1000+random.randint(0,9999))
         visual_inputs.append(gif_path)
         start_time=idx*MIN_VISUAL_GAP
-        if position=="left": vx=VISUAL_W+120; vy=VISUAL_Y
-        elif position=="right": vx=VIDEO_W-VISUAL_W-120-VISUAL_W; vy=VISUAL_Y
-        else:
-            if idx%2==0: vx=80; vy=VISUAL_Y
-            else: vx=VIDEO_W-VISUAL_W-80; vy=VISUAL_Y+40
+        # FIXED: Center animations in middle with transparent bg, as requested (attached stage look)
+        vx=(VIDEO_W-VISUAL_W)//2
+        vy=220  # Middle of stage, below topic text, above welcome text
+        # Slight stagger for multiple visuals so they don't exactly overlap
+        if idx%2==1:
+            vx+=30
+            vy+=20
         input_idx = 3 + idx
         filter_parts.append(f"[{input_idx}:v]scale={VISUAL_W}:{VISUAL_H}[v{idx}]")
         next_label=f"[tmp{idx}]"
@@ -1256,24 +1302,51 @@ def run_debate_pipeline():
         except: generate_subtitles(sw,ss,scorecard=True)
         render_scorecard_video(sb,sa,ss,sv); segs.append(sv)
         if res:
-            a_res=[r for r in res if r["winner"]=="A"] or res
-            b_res=[r for r in res if r["winner"]=="B"] or res
-            ja=random.choice(a_res)
-            b_filtered=[r for r in b_res if r["model"]!=ja["model"] and r["provider"]!=ja["provider"]]
-            if b_filtered: jb=random.choice(b_filtered)
-            else:
-                b_filtered2=[r for r in b_res if r["model"]!=ja["model"]]
-                jb=random.choice(b_filtered2) if b_filtered2 else random.choice(b_res)
-                if jb["provider"]==ja["provider"]:
-                    alt=[r for r in res if r["provider"]!=ja["provider"] and r["model"]!=ja["model"]]
-                    if alt: jb=random.choice(alt)
-            ca=generate_panel_commentary(ja["model"],"A",topic,rn,a_full,s_full,pcom,roles); pcom.append(ca)
-            ja_voice_idx = JUDGE_VOICE_MAP.get(ja["model"], 0)
-            add_segment(ca,"AI Judge",f"AI JUDGE — {ja['display_name'].upper()} ({ja['provider'].upper()})","center","#3399FF",judge_voice_index=ja_voice_idx)
-            cb=generate_panel_commentary(jb["model"],"B",topic,rn,a_full,s_full,pcom,roles); pcom.append(cb)
-            jb_voice_idx = JUDGE_VOICE_MAP.get(jb["model"], 1)
-            if jb_voice_idx==ja_voice_idx: jb_voice_idx=(ja_voice_idx+1)%len(JUDGE_VOICES)
-            add_segment(cb,"AI Judge",f"AI JUDGE — {jb['display_name'].upper()} ({jb['provider'].upper()})","center","#3399FF",judge_voice_index=jb_voice_idx)
+            # FIXED: Ensure commentary side matches actual judge winner - no more favouring A but describing B
+            a_res=[r for r in res if r["winner"]=="A"]
+            b_res=[r for r in res if r["winner"]=="B"]
+            # If judges split, pick one from each; if all one side, only comment for that side
+            if a_res and b_res:
+                ja=random.choice(a_res)
+                # Pick B judge different provider/model
+                b_filtered=[r for r in b_res if r["model"]!=ja["model"] and r["provider"]!=ja["provider"]]
+                jb=random.choice(b_filtered) if b_filtered else random.choice(b_res)
+                # A commentary - judge actually favoured A
+                ca=generate_panel_commentary(ja["model"],"A",topic,rn,a_full,s_full,pcom,roles); pcom.append(ca)
+                ja_voice_idx = JUDGE_VOICE_MAP.get(ja["model"], 0)
+                add_segment(ca,"AI Judge",f"AI JUDGE — {ja['display_name'].upper()} ({ja['provider'].upper()})","center","#3399FF",judge_voice_index=ja_voice_idx)
+                # B commentary - judge actually favoured B
+                cb=generate_panel_commentary(jb["model"],"B",topic,rn,a_full,s_full,pcom,roles); pcom.append(cb)
+                jb_voice_idx = JUDGE_VOICE_MAP.get(jb["model"], 1)
+                if jb_voice_idx==ja_voice_idx: jb_voice_idx=(ja_voice_idx+1)%len(JUDGE_VOICES)
+                add_segment(cb,"AI Judge",f"AI JUDGE — {jb['display_name'].upper()} ({jb['provider'].upper()})","center","#3399FF",judge_voice_index=jb_voice_idx)
+            elif a_res:
+                # All judges favoured A - only generate A commentary, not fake B
+                ja=random.choice(a_res)
+                ca=generate_panel_commentary(ja["model"],"A",topic,rn,a_full,s_full,pcom,roles); pcom.append(ca)
+                ja_voice_idx = JUDGE_VOICE_MAP.get(ja["model"], 0)
+                add_segment(ca,"AI Judge",f"AI JUDGE — {ja['display_name'].upper()} ({ja['provider'].upper()})","center","#3399FF",judge_voice_index=ja_voice_idx)
+                # Second A judge with different perspective
+                remaining=[r for r in a_res if r["model"]!=ja["model"]]
+                if remaining:
+                    ja2=random.choice(remaining)
+                    ca2=generate_panel_commentary(ja2["model"],"A",topic,rn,a_full,s_full,pcom,roles); pcom.append(ca2)
+                    ja2_voice_idx = JUDGE_VOICE_MAP.get(ja2["model"], 1)
+                    if ja2_voice_idx==ja_voice_idx: ja2_voice_idx=(ja_voice_idx+1)%len(JUDGE_VOICES)
+                    add_segment(ca2,"AI Judge",f"AI JUDGE — {ja2['display_name'].upper()} ({ja2['provider'].upper()})","center","#3399FF",judge_voice_index=ja2_voice_idx)
+            elif b_res:
+                # All favoured B
+                jb=random.choice(b_res)
+                cb=generate_panel_commentary(jb["model"],"B",topic,rn,a_full,s_full,pcom,roles); pcom.append(cb)
+                jb_voice_idx = JUDGE_VOICE_MAP.get(jb["model"], 0)
+                add_segment(cb,"AI Judge",f"AI JUDGE — {jb['display_name'].upper()} ({jb['provider'].upper()})","center","#3399FF",judge_voice_index=jb_voice_idx)
+                remaining=[r for r in b_res if r["model"]!=jb["model"]]
+                if remaining:
+                    jb2=random.choice(remaining)
+                    cb2=generate_panel_commentary(jb2["model"],"B",topic,rn,a_full,s_full,pcom,roles); pcom.append(cb2)
+                    jb2_voice_idx = JUDGE_VOICE_MAP.get(jb2["model"], 1)
+                    if jb2_voice_idx==jb_voice_idx: jb2_voice_idx=(jb_voice_idx+1)%len(JUDGE_VOICES)
+                    add_segment(cb2,"AI Judge",f"AI JUDGE — {jb2['display_name'].upper()} ({jb2['provider'].upper()})","center","#3399FF",judge_voice_index=jb2_voice_idx)
     add_segment(build_outro(len(judges),cum_a,cum_b,roles),"Moderator","MODERATOR")
     stitch_segments(segs,OUTPUT_FILE)
     print(f"\nCOMPLETE: {OUTPUT_FILE} — {cum_a:.1f} vs {cum_b:.1f}")
