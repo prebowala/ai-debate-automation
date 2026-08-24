@@ -7,7 +7,7 @@ import random
 import asyncio
 import requests
 import subprocess
-import concurrent.fuatures
+import concurrent.futures
 import time
 from io import BytesIO
 import edge_tts
