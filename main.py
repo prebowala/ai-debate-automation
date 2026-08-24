@@ -283,18 +283,18 @@ def generate_fallback_debate(side_label, topic, round_num, turn_num):
         return god_templates.get(key, god_templates[(3,4)])
     elif "SERPENT TOLD TRUTH" in side_label.upper():
         serpent_templates = {
-            (1,1): "Read what text actually says, not what we think it should say. Genesis 2:17 God told Adam in day you eat you shall surely die. Hebrew beyom, in the day. Plain sense same day. Yet Genesis 5:5 Adam lived 930 years then died. Did not die that day. Lived centuries. Serpent says 3:4 you shall not surely die. Exactly what happened. They did not die that day. He says verse 5 eyes opened as gods knowing good and evil. 3:7 eyes opened. God Himself says verse 22 man become as one of us to know good and evil. God confirms serpent right.",
-            (1,2): "Think Hebrew yom, day. Genesis 1 evening and morning first day, literal 24 hours. So when God says in day you eat you die, natural reading same day. Adam did not die that day. Serpent prediction more accurate about immediate outcome. Said you shall not die, and they did not. Said you shall be as gods knowing good and evil. God says 3:22 they have become like one of us. Two claims, both validated. God's threat didn't happen as stated that day.",
-            (1,3): "Genesis 2:17 threatens death in the day. Genesis 3:6 woman saw tree good for food, pleasant to eyes, desired to make wise. She ate, gave husband, he ate. Verse 7 eyes both opened, knew naked. Exactly serpent promised verse 5 eyes opened. Death that day? No mention anyone dying that day. Verse 8 they heard sound Lord walking. Alive, hiding, not dead.",
-            (1,4): "If God meant spiritual death, why didn't He say spiritual death? Text Genesis 2-3 never mentions spiritual death. Later theology read back. Text mentions nakedness, shame, cursing ground, pain, hard work, dust to dust. Test simple. Did they die that day as God said? No. Did eyes open as serpent said? Yes 3:7 eyes opened. Straightforward reading serpent described what would actually happen more accurately.",
-            (2,1): "Opponent talks spiritual death, but text Genesis 2-3 never mentions spiritual death. Idea imported from later theology. Text mentions nakedness, shame, cursing ground, pain, hard work, eventually dust. Test simple. Did they die that day as God said? No. Did eyes open as serpent said? Yes 3:7 eyes opened. Straightforward reading serpent described what would actually happen that day more accurately.",
-            (2,2): "If God meant they would begin dying, why say in day you shall surely die? Why not say you shall become mortal? That would be clear. And if serpent lied, why does God confirm second claim? 3:22 behold man become as one of us to know good and evil. Almost word for word serpent promised verse 5. If serpent liar, why God echoing promise? Story presents real tension who more accurate.",
-            (2,3): "Consider 3:22. God says man become as one of us to know good and evil. Exactly serpent said would happen verse 5. If serpent father of lies, why God confirming prophecy? And where death that day? 3:20 Adam called wife Eve, mother of all living. 4:1 Adam knew Eve and she conceived. Very much alive, building family, not dead. Serpent said you shall not die, and they didn't that day.",
-            (2,4): "Look 3:13. God asks woman what is this you have done? Woman says serpent beguiled me and I did eat. Doesn't say serpent lied about death. Says he beguiled. Beguiled means tricked, but tricked about what? If he lied about death and they didn't die, she'd have evidence he lied. But text never says she realized he lied about death. Instead she got exactly what he said: eyes opened, knowing good and evil.",
-            (3,1): "Weigh evidence. God said in day you eat you die. Serpent said you will not die, you will be enlightened, eyes opened. What does story actually report? Eyes opened, yes. Enlightenment, yes. Death that day, no. Adam lives 930 years. God even acknowledges enlightenment in 3:22. No acknowledgment they died that day. If we let text speak without adding later ideas, serpent description immediate outcome more accurate than God's warning.",
-            (3,2): "Question not who we want truthful, but what text reports. Reports God threatening death in day, serpent promising no death but knowledge, then reports knowledge coming and death not coming that day. Reports God Himself saying they have become like us knowing good and evil. Serpent promised exact thing. Two promises both happen. One threat does not happen that day. On immediate facts, serpent right about what would occur when they ate.",
-            (3,3): "Final assessment: Genesis presents two contradictory predictions. God: in day you eat, dying you shall die. Serpent: you shall not dying die, but eyes opened, as gods knowing good and evil. What happens? Verse 7 eyes opened. Verse 22 God says man become as one of us knowing good and evil. Serpent's two predictions both occur. God's prediction death in day does not occur as stated, Adam lives 930 years per 5:5. On textual facts alone, serpent more accurate about that day.",
-            (3,4): "If honest about text, Genesis 3 not about who lied, but who told more accurate description of what would happen when they ate. God said death that day. Serpent said no death, but knowledge and godlikeness. Knowledge and godlikeness happen that day, confirmed by God 3:22. Death that day does not happen. Adam and Eve have children, build life. Serpent account matches narrative outcome better. Uncomfortable but textual.",
+            (1,1): "I want us to read what the text actually says, not what we think it should say. Genesis 2 verse 17 has God saying, in the day you eat you shall surely die, and the plain sense of in the day is that same day. Yet Genesis 5 verse 5 says Adam lived nine hundred and thirty years and then died. He did not die that day. He lived for centuries afterward. The serpent says in chapter 3 verse 4, you shall not surely die, and that is exactly what happened. They did not die that day. He also says your eyes shall be opened and you shall be as gods knowing good and evil, and chapter 3 verse 7 says their eyes were opened, and God Himself says in verse 22, man has become as one of us to know good and evil. God confirms the serpent was right.",
+            (1,2): "Think about the Hebrew word yom, day. In Genesis 1, evening and morning were the first day, a literal day. So when God says in the day you eat you shall surely die, the natural reading is that same day. Adam did not die that day. The serpent's prediction about the immediate outcome was more accurate. He said you shall not die, and they did not. He said you shall be as gods knowing good and evil, and God says in chapter 3 verse 22, they have become like one of us. Two claims by the serpent, both validated by the story itself, while God's threat did not happen as stated that day.",
+            (1,3): "Genesis 2 verse 17 threatens death in the day, but Genesis 3 verse 6 says the woman saw the tree was good for food and pleasant to the eyes and desired to make one wise. She ate and gave to her husband and he ate. Verse 7 says the eyes of both were opened and they knew they were naked. That is exactly what the serpent promised in verse 5, your eyes shall be opened. Death that day? The text never says anyone died that day. Verse 8 says they heard the sound of the Lord walking in the garden. They were alive, hiding, not dead.",
+            (1,4): "If God meant spiritual death, why did He not say spiritual death? The text of Genesis 2 and 3 never mentions spiritual death. That is later theology read back into the story. The text mentions nakedness, shame, cursing of the ground, pain, hard work, and dust to dust. The test is simple. Did they die that day as God said? No. Did their eyes open as the serpent said? Yes, chapter 3 verse 7 says their eyes were opened. On a straightforward reading, the serpent described what would happen that day more accurately.",
+            (2,1): "My opponent talks about spiritual death, but Genesis 2 and 3 never uses that phrase at all. That is an idea imported from later theology, not from this narrative. The text mentions nakedness, shame, cursing, pain in childbirth, hard work, and eventually returning to dust. The simple question is, did they die that day as God said they would? No, they did not. Did their eyes open as the serpent said they would? Yes, chapter 3 verse 7 says their eyes were opened. On a plain reading, the serpent was more accurate about that day.",
+            (2,2): "If God meant they would begin dying, why did He say in the day you shall surely die? Why not say you shall become mortal? That would be clear. And if the serpent lied, why does God confirm his second claim? Chapter 3 verse 22 says, behold, the man has become as one of us to know good and evil. That is almost word for word what the serpent promised in verse 5. If the serpent is the father of lies, why is God echoing his promise? The story presents a real tension about who was more accurate.",
+            (2,3): "Consider Genesis 3 verse 22. God says man has become as one of us to know good and evil. That is exactly what the serpent said would happen in verse 5. If the serpent is the father of lies, why is God confirming his prediction? And where is the death that day? Chapter 3 verse 20 says Adam called his wife Eve, the mother of all living. Chapter 4 verse 1 says Adam knew Eve and she conceived. They are very much alive, building a family, not dead. The serpent said you shall not die, and they did not that day.",
+            (2,4): "Look at chapter 3 verse 13. God asks the woman, what is this that you have done? The woman says, the serpent beguiled me and I did eat. She does not say the serpent lied about death. She says he beguiled her. Beguiled means tricked, but tricked about what? If he lied about death and they did not die, she would have evidence he lied. But the text never says she realized he lied about death. Instead, she got exactly what he said, her eyes were opened, knowing good and evil. She got enlightenment, not death that day.",
+            (3,1): "Let us weigh the evidence carefully. God said, in the day you eat you die. The serpent said, you will not die, you will be enlightened, your eyes will be opened. What does the story actually report happened? Their eyes were opened, yes. Enlightenment came, yes. Death that day, no. Adam lives nine hundred and thirty years. God even acknowledges the enlightenment part in chapter 3 verse 22. There is no acknowledgment that they died that day. If we let the text speak for itself, the serpent's description of the immediate outcome was more accurate.",
+            (3,2): "The question is not who we want to be truthful, but what the text reports. It reports God threatening death in the day, the serpent promising no death but knowledge, and then it reports knowledge coming and death not coming that day. It reports God Himself saying they have become like us knowing good and evil. The serpent promised that exact thing. So two promises from the serpent, both happen in the story. One threat from God does not happen that day. On the immediate facts, the serpent was right.",
+            (3,3): "Final assessment. Genesis presents two contradictory predictions. God says in the day you eat, dying you shall die. The serpent says you shall not dying die, but your eyes opened, as gods knowing good and evil. What happens? Verse 7, eyes opened. Verse 22, God says man has become as one of us knowing good and evil. The serpent's two predictions both occur. God's prediction of death in the day does not occur as stated, since Adam lives nine hundred and thirty years per Genesis 5 verse 5. On textual facts alone, the serpent was more accurate about that day.",
+            (3,4): "If we are honest about the text, Genesis 3 is not about who lied, but about who gave a more accurate description of what would happen when they ate. God said death that day. The serpent said no death, but knowledge and godlikeness. Knowledge and godlikeness happen that day, confirmed by God in chapter 3 verse 22. Death that day does not happen. Adam and Eve go on to have children and build a life. The serpent's account matches the narrative outcome better.",
         }
         key = (round_num, turn_num if turn_num<=4 else ((turn_num-1)%4+1))
         return serpent_templates.get(key, serpent_templates[(3,4)])
@@ -857,6 +857,36 @@ def get_story_emojis(text):
         USED_EMOJIS.add(e)
     return emojis[:2]
 
+
+def create_emoji_plan(text, words):
+    """Create emoji plan - one every couple sentences, story-driven, no repeats, clear"""
+    if not words:
+        return []
+    import re
+    sents=re.split(r'[.!?]+', text)
+    sents=[s.strip() for s in sents if len(s.strip())>15]
+    plan=[]
+    used_in_seg=set()
+    for idx, sent in enumerate(sents[:6]):
+        if idx%2!=0 and idx!=0:
+            continue
+        emojis=get_story_emojis(sent)
+        if not emojis: continue
+        # Find timing for this sentence
+        sent_words=sent.lower().split()
+        for w_idx in range(len(words)):
+            if words[w_idx]["text"].lower() in sent_words:
+                start=float(words[w_idx]["start"])
+                end_idx=min(len(words)-1, w_idx+12)
+                end=float(words[end_idx]["end"])
+                if emojis[0] not in used_in_seg:
+                    plan.append({"emoji":emojis[0], "start":max(0.0,start), "end":max(start+2.5,end), "label":emojis[0]})
+                    used_in_seg.add(emojis[0])
+                    break
+        if len(plan)>=MAX_EMOJIS_PER_SEGMENT: break
+    return plan
+
+
 def create_emoji_asset(emoji, index):
     """Create transparent PNG with large emoji - clear, story-driven, not random"""
     filename = f"emoji_{index}.png"
@@ -911,20 +941,30 @@ def create_visual_asset(visual,index):
     return create_emoji_asset("💭", index)
 
 def create_background(position,glow,filename):
-    img=Image.new("RGBA",(VIDEO_W,VIDEO_H),(10,10,18,255))
+    import os
+    source=os.path.join(os.path.dirname(os.path.abspath(__file__)),"background.png")
+    if os.path.exists(source):
+        try:
+            img=Image.open(source).convert("RGB").resize((VIDEO_W,VIDEO_H),Image.LANCZOS)
+            img.save(filename)
+            return
+        except: pass
+    # Subtle dark gradient, no big circles - fixes blue circle bug
+    img=Image.new("RGBA",(VIDEO_W,VIDEO_H),(12,14,24,255))
     draw=ImageDraw.Draw(img)
     for y in range(VIDEO_H):
         ratio=y/VIDEO_H
-        r=int(12+18*ratio); g=int(12+22*ratio); b=int(20+35*ratio)
+        r=int(12+10*ratio); g=int(14+16*ratio); b=int(24+28*ratio)
         draw.line([0,y,VIDEO_W,y], fill=(r,g,b,255))
+    # Small subtle glow, not 380px big circles
     if position=="left": cx=VIDEO_W*0.22
     elif position=="right": cx=VIDEO_W*0.78
     else: cx=VIDEO_W*0.5
-    cy=VIDEO_H*0.38
-    for rad in range(380,120,-35):
-        alpha=int(14*(1-rad/380))
+    cy=VIDEO_H*0.75
+    for rad in range(120,30,-15):
+        alpha=int(10*(1-rad/120))
         draw.ellipse([cx-rad, cy-rad, cx+rad, cy+rad], fill=(*hex_to_rgba(glow, alpha)[:3], alpha))
-    img=img.filter(ImageFilter.GaussianBlur(radius=1.2))
+    img=img.filter(ImageFilter.GaussianBlur(radius=0.8))
     img.save(filename)
 
 def create_ui_overlay(speaker_name,topic,position,glow,filename):
@@ -950,29 +990,51 @@ def create_ui_overlay(speaker_name,topic,position,glow,filename):
     return x,y
 
 def render_video_segment(bg_path,ui_path,audio_path,subs_path,output_path,position,glow,cx,cy,visual_plan):
-    # FIXED v2: 1) Input indices correct (bg=0, ui=1, audio=2, visuals=3+), 2) No force_style commas causing "No such filter: ''"
+    # FIXED: Background restored, soundbars restored less wide safe, emojis centered story
     duration=get_audio_duration(audio_path)
     if not duration: duration=10.0
     cmd=["ffmpeg","-y","-loop","1","-i",bg_path,"-loop","1","-i",ui_path,"-i",audio_path]
     filter_parts=[]
     filter_parts.append(f"[0:v]scale={VIDEO_W}:{VIDEO_H}:flags=lanczos[bg]")
     filter_parts.append(f"[1:v]scale={VIDEO_W}:{VIDEO_H}:flags=lanczos[ui]")
+    # Soundbars less wide, safe on screen, color-matched, closer to name - like attached rounded bars
+    glow_hex=glow.lstrip('#')
+    filter_parts.append(f"[2:a]aformat=channel_layouts=mono,compand=gain=-6,showwaves=s=280x48:mode=p2p:colors=0x{glow_hex}:rate=30:draw=full:scale=sqrt[wave_raw]")
+    filter_parts.append(f"[wave_raw]format=rgba,colorchannelmixer=aa=0.92[wave]")
     filter_parts.append(f"[bg][ui]overlay=0:0:shortest=1[bg_ui]")
-    last_label="[bg_ui]"
+    wave_w=280
+    wave_x=cx + (650 - wave_w)//2
+    wave_y=cy - 58
+    if position=="right":
+        wave_x=min(wave_x, VIDEO_W - wave_w - 20)
+    filter_parts.append(f"[bg_ui][wave]overlay={wave_x}:{wave_y}:shortest=1[bg_ui_wave]")
+    last_label="[bg_ui_wave]"
     visual_inputs=[]
     for idx, vis in enumerate(visual_plan):
-        gif_path=create_visual_asset(vis, idx+1000+random.randint(0,9999))
-        visual_inputs.append(gif_path)
-        start_time=idx*MIN_VISUAL_GAP
-        if position=="left": vx=VISUAL_W+120; vy=VISUAL_Y
-        elif position=="right": vx=VIDEO_W-VISUAL_W-120-VISUAL_W; vy=VISUAL_Y
-        else:
-            if idx%2==0: vx=80; vy=VISUAL_Y
-            else: vx=VIDEO_W-VISUAL_W-80; vy=VISUAL_Y+40
+        # visual_plan now contains emojis, not random images
+        try:
+            if isinstance(vis, dict):
+                emoji_char=vis.get("emoji", vis.get("label","💭"))
+                start_time=vis.get("start", idx*3.0)
+                end_time=vis.get("end", start_time+2.5)
+            else:
+                emoji_char=str(vis)
+                start_time=idx*3.0
+                end_time=start_time+2.5
+            gif_path=create_emoji_asset(emoji_char, idx+1000+random.randint(0,9999))
+        except:
+            gif_path=create_emoji_asset("💭", idx+1000+random.randint(0,9999))
+            start_time=idx*3.0
+            end_time=start_time+2.5
+        visual_inputs.append((gif_path, start_time, end_time))
+    for idx, (gif_path, start_time, end_time) in enumerate(visual_inputs):
         input_idx = 3 + idx
-        filter_parts.append(f"[{input_idx}:v]scale={VISUAL_W}:{VISUAL_H}[v{idx}]")
+        filter_parts.append(f"[{input_idx}:v]scale={EMOJI_W}:{EMOJI_H}[v{idx}]")
+        # Center emojis in middle, clear story, not random positions
+        vx=(VIDEO_W-EMOJI_W)//2
+        vy=180
         next_label=f"[tmp{idx}]"
-        filter_parts.append(f"{last_label}[v{idx}]overlay={vx}:{vy}:enable='gte(t,{start_time})'{next_label}")
+        filter_parts.append(f"{last_label}[v{idx}]overlay={vx}:{vy}:enable='between(t,{start_time:.2f},{end_time:.2f})'{next_label}")
         last_label=next_label
     # Use simple subtitles filter without force_style commas - ASS file already has style
     # Escape subs path for ffmpeg (replace : with \:)
@@ -993,29 +1055,55 @@ def render_video_segment(bg_path,ui_path,audio_path,subs_path,output_path,positi
         except: pass
 
 def generate_scoreboard(round_num,results,avg_a,avg_b,cum_a,cum_b,output_path,roles):
-    W=1000; H=620
-    img=Image.new("RGBA",(W,H),(18,18,28,255))
+    W=VIDEO_W; H=VIDEO_H
+    import os
+    source=os.path.join(os.path.dirname(os.path.abspath(__file__)),"background.png")
+    if os.path.exists(source):
+        try:
+            base=Image.open(source).convert("RGB").resize((W,H),Image.LANCZOS)
+        except:
+            base=Image.new("RGB",(W,H),(12,16,32))
+    else:
+        base=Image.new("RGB",(W,H),(12,16,32))
+    overlay=Image.new("RGBA",(W,H),(0,0,0,180))
+    img=Image.alpha_composite(base.convert("RGBA"),overlay).convert("RGB")
     draw=ImageDraw.Draw(img)
-    font_title=load_font(32,bold=True); font_head=load_font(20,bold=True); font_row=load_font(18)
-    draw.rectangle([0,0,W,72], fill=(0,0,0,200))
-    draw.text((W//2,18), f"ROUND {round_num} SCORES - {roles['side_a_label']} vs {roles['side_b_label']}", font=font_title, fill=(255,255,255,255), anchor="mt")
-    draw.text((30,88), f"Judge (Company)", font=font_head, fill=(255,255,255,200))
-    draw.text((300,88), f"{roles['side_a_label'][:20]}", font=font_head, fill=(0,255,204,255))
-    draw.text((500,88), f"{roles['side_b_label'][:20]}", font=font_head, fill=(255,0,255,255))
-    draw.text((700,88), "Winner", font=font_head, fill=(255,255,255,200))
-    y=120
-    for res in results:
-        bg=(30,30,45,255) if y%40==0 else (22,22,35,255)
-        draw.rectangle([0,y,W,y+32], fill=bg)
-        draw.text((30,y+4), f"{res['display_name']} ({res['provider']})", font=font_row, fill=(255,255,255,230))
-        draw.text((300,y+4), f"{res['A_total']:.1f}", font=font_row, fill=(0,255,204,255))
-        draw.text((500,y+4), f"{res['B_total']:.1f}", font=font_row, fill=(255,0,255,255))
+    font_title=load_font(48,bold=True); font_sub=load_font(28,bold=True); font_head=load_font(22,bold=True); font_row=load_font(24)
+    title=f"ROUND {round_num} SCORES"
+    draw.text((W//2,50),title,font=font_title,fill=(255,215,0,255),anchor="mt")
+    roles_text=f"{roles['side_a_label']}  vs  {roles['side_b_label']}"
+    draw.text((W//2,115),roles_text,font=font_sub,fill=(255,255,255,230),anchor="mt")
+    header_y=190
+    col_judge_x=120; col_a_x=750; col_b_x=1050; col_winner_x=1350
+    short_a=roles['side_a_label'].split()[0][:12] if roles['side_a_label'] else "A"
+    short_b=roles['side_b_label'].split()[0][:12] if roles['side_b_label'] else "B"
+    draw.rectangle([60,header_y-10,W-60,header_y+45],fill=(25,35,70,255),outline=(255,215,0,180),width=2)
+    draw.text((col_judge_x,header_y),"Judge",font=font_head,fill=(255,255,255,230))
+    draw.text((col_a_x,header_y),short_a,font=font_head,fill=(0,255,204,255))
+    draw.text((col_b_x,header_y),short_b,font=font_head,fill=(255,120,255,255))
+    draw.text((col_winner_x,header_y),"Winner",font=font_head,fill=(255,215,0,255))
+    y=header_y+65
+    for idx,res in enumerate(results):
+        if idx%2==0:
+            draw.rectangle([60,y-8,W-60,y+42],fill=(20,28,50,255))
+        else:
+            draw.rectangle([60,y-8,W-60,y+42],fill=(15,22,40,255))
+        judge_text=f"{res['display_name']} ({res['provider']})"
+        if len(judge_text)>32: judge_text=judge_text[:30]+".."
+        draw.text((col_judge_x,y),judge_text,font=font_row,fill=(255,255,255,240))
+        draw.text((col_a_x,y),f"{res['A_total']:.1f}",font=font_row,fill=(0,255,204,255))
+        draw.text((col_b_x,y),f"{res['B_total']:.1f}",font=font_row,fill=(255,120,255,255))
         win_label=roles['side_a_label'] if res['winner']=="A" else roles['side_b_label']
-        draw.text((700,y+4), win_label[:12], font=font_row, fill=(255,215,0,255))
-        y+=34
-    draw.rectangle([0,y,W,y+2], fill=(255,255,255,100))
-    y+=10
-    draw.text((30,y), f"Avg Round {round_num}: {avg_a:.1f} vs {avg_b:.1f} | Cumulative: {cum_a:.1f} vs {cum_b:.1f}", font=font_head, fill=(255,255,255,255))
+        if len(win_label)>20: win_label=win_label[:18]+".."
+        win_color=(0,255,204,255) if res['winner']=="A" else (255,120,255,255)
+        draw.text((col_winner_x,y),win_label,font=font_row,fill=win_color)
+        y+=58
+    draw.line([(60,y+5),(W-60,y+5)],fill=(255,255,255,60),width=2)
+    y+=25
+    avg_text=f"Round Avg: {avg_a:.1f} vs {avg_b:.1f}"
+    cum_text=f"Cumulative: {cum_a:.1f} vs {cum_b:.1f}"
+    draw.text((W//2,y),avg_text,font=font_sub,fill=(255,255,255,255),anchor="mt")
+    draw.text((W//2,y+45),cum_text,font=font_sub,fill=(255,215,0,255),anchor="mt")
     img.save(output_path)
 
 def render_scorecard_video(image_path,audio_path,subs_path,output_path):
@@ -1115,14 +1203,14 @@ def create_segment(text,role,speaker_name,topic,segment_id,model_for_visuals,pos
         generate_subtitles(words,sf, scorecard=False, audio_file=af, full_text=text)
     except TypeError:
         generate_subtitles(words,sf)
-    vplan=[]
+    eplan=[]
     try:
-        vplan=create_visual_plan(clean_for_speech(text),words,model_for_visuals)
-        if vplan: print(f"   {len(vplan)} visual(s): {', '.join(v['label'] for v in vplan)}")
-    except Exception as e: print(f"Visual planning skipped: {e}")
+        eplan=create_emoji_plan(clean_for_speech(text),words)
+        if eplan: print(f"   {len(eplan)} emoji(s): {', '.join(v['emoji'] for v in eplan)}")
+    except Exception as e: print(f"Emoji planning skipped: {e}")
     create_background(position,glow,bf)
     cx,cy=create_ui_overlay(speaker_name,topic,position,glow,uf)
-    render_video_segment(bg_path=bf,ui_path=uf,audio_path=af,subs_path=sf,output_path=vf,position=position,glow=glow,cx=cx,cy=cy,visual_plan=vplan)
+    render_video_segment(bg_path=bf,ui_path=uf,audio_path=af,subs_path=sf,output_path=vf,position=position,glow=glow,cx=cx,cy=cy,visual_plan=eplan)
     return vf
 
 def run_debate_pipeline():
