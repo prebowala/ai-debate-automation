@@ -730,300 +730,297 @@ def create_visual_plan(text, words, model_for_visuals):
 
 # === SCRIBBLE ART - FORMED NARRATIVE, STORY-DRIVEN, DRAWING+FADE ===
 
-def draw_formed_shape(draw, bbox, shape_type="ellipse", density=60, progress_factor=1.0):
-    x0,y0,x1,y1=bbox
-    visible_density = int(density * min(1.0, progress_factor*1.3))
-    cx=(x0+x1)/2; cy=(y0+y1)/2; w=x1-x0; h=y1-y0
-    if shape_type=="ellipse":
-        for i in range(16):
-            ang=i/16*2*math.pi
-            px=cx + (w/2)*math.cos(ang); py=cy + (h/2)*math.sin(ang)
-            px2=cx + (w/2)*math.cos(ang+2*math.pi/16); py2=cy + (h/2)*math.sin(ang+2*math.pi/16)
-            if i/16 < progress_factor*1.2:
-                draw.line([px,py,px2,py2], fill=(0,0,0,210), width=2)
-    elif shape_type=="rect":
-        if progress_factor>0.2:
-            draw.rectangle([x0,y0,x1,y1], outline=(0,0,0,210), width=2)
-    for _ in range(visible_density):
-        rx=random.uniform(x0+3, x1-3); ry=random.uniform(y0+3, y1-3)
-        if shape_type=="ellipse":
-            if ((rx-cx)/(w/2))**2 + ((ry-cy)/(h/2))**2 > 1: continue
-        ang=random.uniform(-0.3,0.3) + (0 if random.random()>0.5 else math.pi/2)
-        length=random.uniform(6, max(10, w*0.18))
-        x2=rx+length*math.cos(ang); y2=ry+length*math.sin(ang)*0.6
-        x2=max(x0, min(x1, x2)); y2=max(y0, min(y1, y2))
-        draw.line([rx,ry,x2,y2], fill=(0,0,0,random.randint(100,220)), width=1)
 
-def draw_formed_human(draw, x, y, size, action="standing", arm_progress=0, eating=False, progress=1.0):
-    if progress<0.15: return
-    head_x=x+size*0.5; head_y=y+size*0.20; head_r=size*0.18
-    if progress>0.15:
-        draw_formed_shape(draw, [head_x-head_r, head_y-head_r, head_x+head_r, head_y+head_r], "ellipse", density=int(size*0.6), progress_factor=(progress-0.15)*2)
-        if progress>0.4:
-            eye_y=head_y+size*0.02
-            draw.ellipse([head_x-size*0.08, eye_y-size*0.03, head_x-size*0.03, eye_y+0.02], fill=(0,0,0,255))
-            draw.ellipse([head_x+size*0.03, eye_y-size*0.03, head_x+size*0.08, eye_y+0.02], fill=(0,0,0,255))
-    body_top=y+size*0.42; body_bottom=body_top+size*0.55; body_left=x+size*0.20; body_right=x+size*0.80
-    if progress>0.25:
-        draw_formed_shape(draw, [body_left, body_top, body_right, body_bottom], "rect", density=int(size*0.8), progress_factor=(progress-0.25)*1.5)
-    if progress>0.35:
-        if action=="reaching" or eating:
-            ax1=body_right-size*0.1; ay1=body_top+size*0.12
-            target_x=ax1+size*0.50; target_y=ay1-size*0.15
-            cur_x=ax1 + (target_x-ax1)*arm_progress; cur_y=ay1 + (target_y-ay1)*arm_progress
-            for _ in range(10):
-                draw.line([ax1+random.uniform(-1,1), ay1+random.uniform(-1,1), cur_x+random.uniform(-1,1), cur_y+random.uniform(-1,1)], fill=(0,0,0,200), width=2)
-            if progress>0.6:
-                draw_formed_shape(draw, [cur_x-6, cur_y-6, cur_x+6, cur_y+6], "ellipse", density=8, progress_factor=1.0)
+def draw_thick_line(draw, x1, y1, x2, y2, width=6, color=(0,0,0,255)):
+    draw.line([x1, y1, x2, y2], fill=color, width=width, joint="round")
+
+def draw_thick_circle(draw, cx, cy, r, width=6, color=(0,0,0,255)):
+    draw.ellipse([cx-r, cy-r, cx+r, cy+r], outline=color, width=width)
+
+def draw_filled_circle(draw, cx, cy, r, fill=(0,0,0,255), outline=None, width=5):
+    if outline:
+        draw.ellipse([cx-r, cy-r, cx+r, cy+r], fill=fill, outline=outline, width=width)
+    else:
+        draw.ellipse([cx-r, cy-r, cx+r, cy+r], fill=fill)
+
+def draw_clean_human(draw, x, y, size, action="standing", arm_progress=0, progress=1.0):
+    # Clean line art like attached bird - thick outlines, simple, cute
+    if progress < 0.15:
+        return
+    head_r = size * 0.22
+    head_x = x + size * 0.5
+    head_y = y + size * 0.22
+    if progress > 0.15:
+        # Head thick circle
+        draw_thick_circle(draw, head_x, head_y, head_r, width=6)
+        if progress > 0.45:
+            # Eyes - simple dots like bird
+            eye_y = head_y + size * 0.04
+            eye_offset = size * 0.08
+            draw_filled_circle(draw, head_x - eye_offset, eye_y, size*0.04, fill=(0,0,0,255))
+            draw_filled_circle(draw, head_x + eye_offset, eye_y, size*0.04, fill=(0,0,0,255))
+            # Small blush like bird image
+            if size > 80:
+                draw.ellipse([head_x+eye_offset+4, eye_y+6, head_x+eye_offset+14, eye_y+14], fill=(255,180,180,200))
+    body_top = y + size * 0.48
+    body_bottom = body_top + size * 0.55
+    body_cx = x + size * 0.5
+    if progress > 0.25:
+        # Body as thick oval
+        draw.ellipse([body_cx - size*0.24, body_top, body_cx + size*0.24, body_bottom], outline=(0,0,0,255), width=6)
+    if progress > 0.35:
+        if action == "reaching":
+            # Arm reaching - thick line
+            shoulder_x = body_cx + size*0.22
+            shoulder_y = body_top + size*0.12
+            target_x = shoulder_x + size*0.65
+            target_y = shoulder_y - size*0.15
+            cur_x = shoulder_x + (target_x - shoulder_x) * arm_progress
+            cur_y = shoulder_y + (target_y - shoulder_y) * arm_progress
+            draw_thick_line(draw, shoulder_x, shoulder_y, cur_x, cur_y, width=6)
+            # Hand small circle
+            if progress > 0.6:
+                draw_filled_circle(draw, cur_x, cur_y, 10, fill=(0,0,0,0), outline=(0,0,0,255), width=5)
+        elif action == "pain":
+            # Hands on head
+            for side in [-1, 1]:
+                hx = head_x + side*size*0.25
+                hy = head_y + size*0.15
+                draw_thick_line(draw, body_cx+side*size*0.2, body_top+size*0.1, hx, hy, width=5)
+        elif action == "toil":
+            # Bending with tool
+            draw_thick_line(draw, body_cx, body_top+size*0.1, body_cx+size*0.3, body_top+size*0.5, width=5)
+        elif action == "exile":
+            # Walking away
+            draw_thick_line(draw, body_cx, body_top+size*0.1, body_cx+size*0.25, body_top+size*0.45, width=5)
         else:
-            for side in [-1,1]:
-                ax=head_x+side*size*0.30; ay=body_top+size*0.10
-                ax2=ax+side*size*0.15; ay2=ay+size*0.25
-                if progress>0.4: draw.line([ax,ay,ax2,ay2], fill=(0,0,0,180), width=2)
-    if progress>0.30:
-        leg_top=body_bottom-size*0.03
-        for leg_x in [x+size*0.32, x+size*0.60]:
-            draw.line([leg_x, leg_top, leg_x+random.uniform(-2,2), leg_top+size*0.28], fill=(0,0,0,180), width=2)
+            # Normal arms
+            for side in [-1, 1]:
+                ax = body_cx + side*size*0.28
+                ay = body_top + size*0.15
+                ax2 = ax + side*size*0.2
+                ay2 = ay + size*0.3
+                if progress > 0.4:
+                    draw_thick_line(draw, ax, ay, ax2, ay2, width=5)
+    if progress > 0.3:
+        # Legs thick lines
+        leg_top = body_bottom - size*0.05
+        for leg_x in [x+size*0.32, x+size*0.62]:
+            draw_thick_line(draw, leg_x, leg_top, leg_x+random.uniform(-3,3), leg_top+size*0.32, width=5)
 
-def draw_formed_tree(draw, x, y, size, apple_positions=[], progress=1.0):
-    trunk_w=size*0.14; tx=x+size*0.5-trunk_w/2
-    if progress>0.1:
-        draw_formed_shape(draw, [tx, y+size*0.38, tx+trunk_w, y+size], "rect", density=int(size*0.35), progress_factor=(progress-0.1)*1.5)
-    canopy_r=size*0.36; cx=x+size*0.5; cy=y+size*0.26
-    if progress>0.25:
-        draw_formed_shape(draw, [cx-canopy_r, cy-canopy_r, cx+canopy_r, cy+canopy_r], "ellipse", density=int(size*1.2), progress_factor=(progress-0.25)*1.3)
-    if progress>0.5:
-        for (ax, ay) in apple_positions:
-            draw_formed_shape(draw, [ax-11, ay-9, ax+11, ay+11], "ellipse", density=18, progress_factor=1.0)
+def draw_clean_tree(draw, x, y, size, apple_positions=[], progress=1.0):
+    if progress < 0.1:
+        return
+    trunk_w = size * 0.18
+    tx = x + size*0.5 - trunk_w/2
+    # Trunk as two thick vertical lines + bottom
+    if progress > 0.1:
+        draw_thick_line(draw, tx, y+size*0.4, tx, y+size, width=7)
+        draw_thick_line(draw, tx+trunk_w, y+size*0.4, tx+trunk_w, y+size, width=7)
+        draw_thick_line(draw, tx, y+size, tx+trunk_w, y+size, width=7)
+    # Canopy as fluffy cloud - simple thick outline with 3 lobes like clean style
+    canopy_cx = x + size*0.5
+    canopy_cy = y + size*0.28
+    canopy_r = size * 0.38
+    if progress > 0.25:
+        # Draw canopy as 3 overlapping circles outline merged - simple thick outline
+        for cx, cy, r in [(canopy_cx-canopy_r*0.4, canopy_cy, canopy_r*0.6), (canopy_cx+canopy_r*0.4, canopy_cy, canopy_r*0.6), (canopy_cx, canopy_cy-canopy_r*0.3, canopy_r*0.7)]:
+            draw_thick_circle(draw, cx, cy, r, width=6)
+        # Apples as simple circles with stem + leaf like bird's leaf
+        if progress > 0.5:
+            for (ax, ay) in apple_positions:
+                # Apple circle thick
+                draw_thick_circle(draw, ax, ay, 14, width=5)
+                # Stem
+                draw_thick_line(draw, ax, ay-14, ax+2, ay-22, width=4)
+                # Small leaf green like bird
+                leaf_x, leaf_y = ax+8, ay-20
+                draw.ellipse([leaf_x-3, leaf_y-6, leaf_x+9, leaf_y+4], fill=(60,180,60,255), outline=(0,0,0,255), width=3)
 
 def create_visual_asset(visual,index):
-    # FIXED: Transparent APNG (not white GIF), larger formed drawings, sensible story actions
-    filename=f"visual_{index}.png"  # APNG with true alpha, not GIF with white bg
+    # CLEAN LINE ART like attached bird - thick outlines, minimal, cute, story-driven movement, TRANSPARENT bg
+    filename=f"visual_{index}.png"  # APNG transparent, no white bg
     label=(visual.get('label','')+" "+visual.get('description','')).lower()
+    # Map speech keywords to story actions
+    speech_text = visual.get('phrase','').lower()
     frames=[]
     for f in range(36):
         progress=f/36.0
-        draw_progress = min(1.0, progress*1.4)
-        fade_alpha = 1.0
-        if progress<0.12: fade_alpha = progress/0.12
-        elif progress>0.85: fade_alpha = (1.0-progress)/0.15
-        frame=Image.new("RGBA",(VISUAL_W,VISUAL_H),(0,0,0,0))  # Fully transparent bg
+        draw_progress = min(1.0, progress*1.35)
+        frame=Image.new("RGBA",(VISUAL_W,VISUAL_H),(0,0,0,0))  # Fully transparent - NO white bg
         draw=ImageDraw.Draw(frame)
-        action_progress = min(1.0, max(0, (progress-0.35)/0.45))
-        # Larger, more formed, less tiny - fill canvas
-        if "apple" in label or "fruit" in label or "eat" in label:
-            # STORY: Adam picking fruit - large, clear, sensible
-            apple_pos=[]
-            if draw_progress>0.25:
-                apple_pos=[(VISUAL_W//2-35, 110), (VISUAL_W//2+30, 125)]
-                draw_formed_tree(draw, VISUAL_W//2-95, 10, size=190, apple_positions=apple_pos if draw_progress>0.45 else [], progress=draw_progress)
-            if draw_progress>0.20:
-                adam_x = 15 + 12*action_progress
-                # Larger figure - size 130 not 90, fills more
-                draw_formed_human(draw, adam_x, VISUAL_H-210, 130, action="reaching", arm_progress=action_progress, eating=("eat" in label and action_progress>0.7), progress=draw_progress)
-                if action_progress>0.35 and apple_pos:
-                    start_x, start_y = apple_pos[0]
-                    hand_x = adam_x+65+55*action_progress
-                    hand_y = VISUAL_H-210+54+8+55*action_progress*0.3
-                    if action_progress<0.65:
-                        t = (action_progress-0.35)/0.30
-                        cur_ax = start_x + (hand_x-start_x)*t
-                        cur_ay = start_y + (hand_y-start_y)*t
+        action_progress = min(1.0, max(0, (progress-0.30)/0.50))
+        # STORY-DRIVEN by speech content + label
+        if "apple" in label or "fruit" in label or "eat" in label or "tree" in label or "garden" in label:
+            # Story: Creation of tree, Adam approaches, picks, eats
+            apple_pos=[(VISUAL_W//2-38, 120), (VISUAL_W//2+32, 135)] if draw_progress>0.4 else []
+            draw_clean_tree(draw, VISUAL_W//2-110, 15, size=220, apple_positions=apple_pos, progress=draw_progress)
+            if draw_progress>0.22:
+                # Adam - enters from left, walks to tree
+                adam_x = 15 + 18*action_progress
+                draw_clean_human(draw, adam_x, VISUAL_H-240, 145, action="reaching", arm_progress=action_progress, progress=draw_progress)
+                if action_progress>0.32 and apple_pos:
+                    sx, sy = apple_pos[0]
+                    hand_x = adam_x+72+62*action_progress
+                    hand_y = VISUAL_H-240+62+8+62*action_progress*0.28
+                    if action_progress<0.62:
+                        t=(action_progress-0.32)/0.30
+                        cur_x=sx+(hand_x-sx)*t
+                        cur_y=sy+(hand_y-sy)*t
                     else:
                         if "eat" in label:
-                            t = (action_progress-0.65)/0.35
-                            mouth_x = adam_x+65
-                            mouth_y = VISUAL_H-210+26+10
-                            cur_ax = hand_x + (mouth_x-hand_x)*t
-                            cur_ay = hand_y + (mouth_y-hand_y)*t
+                            t=(action_progress-0.62)/0.38
+                            mx=adam_x+72
+                            my=VISUAL_H-240+32+12
+                            cur_x=hand_x+(mx-hand_x)*t
+                            cur_y=hand_y+(my-hand_y)*t
                         else:
-                            cur_ax=hand_x; cur_ay=hand_y
-                    if draw_progress>0.45:
-                        draw_formed_shape(draw, [cur_ax-14, cur_ay-11, cur_ax+14, cur_ay+13], "ellipse", density=22, progress_factor=1.0)
-            if draw_progress>0.35:
-                draw_formed_human(draw, VISUAL_W-150, VISUAL_H-200, 120, action="standing", progress=draw_progress*0.9)
-            # Ground - full width
-            if draw_progress>0.15:
-                for gx in range(0, VISUAL_W, 16):
-                    if gx/VISUAL_W < draw_progress*1.2:
-                        draw.line([gx, VISUAL_H-14, gx+14, VISUAL_H-14], fill=(0,0,0,180), width=2)
+                            cur_x, cur_y=hand_x, hand_y
+                    if draw_progress>0.48:
+                        # Apple moving with hand
+                        draw_thick_circle(draw, cur_x, cur_y, 14, width=5)
+            if draw_progress>0.38:
+                draw_clean_human(draw, VISUAL_W-165, VISUAL_H-230, 135, action="standing", progress=draw_progress*0.9)
+            if draw_progress>0.18:
+                # Ground thick line
+                draw_thick_line(draw, 0, VISUAL_H-20, VISUAL_W, VISUAL_H-20, width=6)
         elif "serpent" in label or "snake" in label:
-            # STORY: Serpent on branch talking to Adam/Eve - clear narrative
-            if draw_progress>0.15:
-                draw_formed_tree(draw, VISUAL_W//2-85, 5, size=175, apple_positions=[], progress=draw_progress)
-            if draw_progress>0.25:
-                branch_y=78
-                draw.line([VISUAL_W*0.22, branch_y, VISUAL_W*0.88, branch_y+10], fill=(0,0,0,220), width=3)
-                serpent_x=VISUAL_W*0.28
-                for i in range(0, 70, 10):
-                    sx=serpent_x+i
-                    sy=branch_y+4*math.sin(i*0.18+action_progress*2.5)
-                    sx2=sx+12
-                    sy2=branch_y+4*math.sin((i+12)*0.18+action_progress*2.5)
-                    if i/70 < draw_progress:
-                        draw.line([sx,sy,sx2,sy2], fill=(0,0,0,230), width=4)
-                head_x=serpent_x+70+3*math.sin(action_progress*7)
-                head_y=branch_y-3+1.5*math.cos(action_progress*7)
-                if draw_progress>0.45:
-                    draw_formed_shape(draw, [head_x-12, head_y-10, head_x+18, head_y+10], "ellipse", density=20, progress_factor=1.0)
-                    draw.ellipse([head_x+6, head_y-2, head_x+10, head_y+2], fill=(0,0,0,255))
-                    if f%12<4:
-                        draw.line([head_x+18, head_y, head_x+28, head_y-4], fill=(0,0,0,200), width=2)
-                        draw.line([head_x+18, head_y+2, head_x+28, head_y+6], fill=(0,0,0,200), width=2)
-                    if action_progress>0.25:
-                        for j in range(3):
-                            sx=head_x+18; sy=head_y+j*3-3
-                            ex=sx+18+6*math.sin(action_progress*5+j)
-                            ey=sy+random.uniform(-2,2)
-                            draw.line([sx,sy,ex,ey], fill=(0,0,0,120), width=2)
-            if draw_progress>0.35:
-                draw_formed_human(draw, 20, VISUAL_H-200, 115, action="standing", progress=draw_progress*0.9)
-                draw_formed_human(draw, VISUAL_W-145, VISUAL_H-195, 112, action="standing", progress=draw_progress*0.9)
-        elif "tree" in label or "garden" in label:
-            if draw_progress>0.12:
-                draw_formed_tree(draw, VISUAL_W//2-95, 15, size=195, apple_positions=[(VISUAL_W//2-32, 105), (VISUAL_W//2+28, 120)] if draw_progress>0.45 else [], progress=draw_progress)
-            if draw_progress>0.35:
-                draw_formed_human(draw, 25, VISUAL_H-200, 118, action="standing", progress=draw_progress*0.8)
-                draw_formed_human(draw, VISUAL_W-145, VISUAL_H-195, 116, action="standing", progress=draw_progress*0.8)
-            if draw_progress>0.55:
-                for fx, fy in [(60, VISUAL_H-38), (VISUAL_W-70, VISUAL_H-42), (VISUAL_W//2, VISUAL_H-30)]:
-                    draw_formed_shape(draw, [fx-7, fy-7, fx+7, fy+7], "ellipse", density=8, progress_factor=1.0)
-        elif "heaven" in label or "sky" in label:
-            if draw_progress>0.08:
-                sun_r=38+6*action_progress
-                draw_formed_shape(draw, [VISUAL_W*0.62-sun_r, 38-sun_r, VISUAL_W*0.62+sun_r, 38+sun_r], "ellipse", density=50, progress_factor=draw_progress)
-                if draw_progress>0.45:
-                    for ang in range(0,360,28):
-                        if ang/360 < draw_progress:
-                            rad=math.radians(ang); x2=VISUAL_W*0.62+100*math.cos(rad); y2=38+100*math.sin(rad)
-                            draw.line([VISUAL_W*0.62,38,x2,y2], fill=(0,0,0,90), width=2)
+            # Story: Serpent talking, tempting - branch, serpent wavy, humans listening
+            if draw_progress>0.18:
+                draw_clean_tree(draw, VISUAL_W//2-105, 5, size=200, apple_positions=[], progress=draw_progress)
             if draw_progress>0.28:
-                for cx, cy in [(65,70),(175,48),(310,88)]:
-                    if (cx/400) < draw_progress:
-                        draw_formed_shape(draw, [cx, cy, cx+75, cy+32], "ellipse", density=28, progress_factor=draw_progress)
-            # Birds as V
-            if draw_progress>0.5:
-                for i in range(3):
-                    bx=40+i*50+action_progress*20; by=130+12*math.sin(action_progress*3+i)
-                    draw.line([bx,by,bx+8,by+6], fill=(0,0,0,200), width=2)
-                    draw.line([bx+8,by+6,bx+16,by], fill=(0,0,0,200), width=2)
-        elif "earth" in label or "land" in label:
-            if draw_progress>0.12:
-                peaks=[(0,210),(100,75),(190,145),(305,58),(VISUAL_W,135)]
-                for i in range(len(peaks)-1):
-                    p1=peaks[i]; p2=peaks[i+1]
-                    if i/len(peaks) < draw_progress:
-                        draw.line([p1[0],p1[1],p2[0],p2[1]], fill=(0,0,0,220), width=3)
-                        mid_x=(p1[0]+p2[0])/2; mid_y=(p1[1]+p2[1])/2+24
-                        draw_formed_shape(draw, [mid_x-18, mid_y-12, mid_x+18, mid_y+12], "ellipse", density=12, progress_factor=draw_progress)
-            if draw_progress>0.45:
-                draw.line([0,200,VISUAL_W,200], fill=(0,0,0,180), width=3)
-        elif "day" in label or "light" in label or "sun" in label or "god" in label or "creator" in label:
-            sun_y = 150 - 90*action_progress
-            if draw_progress>0.18:
-                draw_formed_shape(draw, [VISUAL_W//2-34, sun_y-34, VISUAL_W//2+34, sun_y+34], "ellipse", density=42, progress_factor=draw_progress)
-                if draw_progress>0.55:
-                    for ang in range(-60,61,14):
-                        rad=math.radians(ang); x2=VISUAL_W//2+125*math.sin(rad); y2=sun_y+125*math.cos(rad)
-                        if abs(ang)/60 < draw_progress:
-                            draw.line([VISUAL_W//2,sun_y,x2,y2], fill=(0,0,0,70), width=2)
-        elif "night" in label or "moon" in label or "stars" in label:
-            if draw_progress>0.18:
-                draw_formed_shape(draw, [VISUAL_W*0.62-32, 42-32, VISUAL_W*0.62+32, 42+32], "ellipse", density=38, progress_factor=draw_progress)
-            if draw_progress>0.45:
-                star_count=int(24*draw_progress)
-                for i in range(star_count):
-                    sx=(i*57)%(VISUAL_W-20)+10; sy=(i*41)%110+18
-                    draw.ellipse([sx,sy,sx+3,sy+3], fill=(0,0,0,220))
-        elif "water" in label or "sea" in label:
-            for y in range(80, VISUAL_H, 28):
-                for _ in range(2):
-                    x0=random.randint(0,VISUAL_W-50); x1=x0+random.randint(25,60)
-                    if x0/VISUAL_W < draw_progress:
-                        draw.line([x0, y, x1, y], fill=(0,0,0,random.randint(90,190)), width=2)
-        elif "die" in label or "death" in label or "dust" in label:
-            if draw_progress>0.18:
-                hx=VISUAL_W//2-36; hy=VISUAL_H//2+12
-                draw_formed_shape(draw, [hx-20, hy-20, hx+20, hy+20], "ellipse", density=26, progress_factor=draw_progress)
-                draw.line([hx+20, hy, hx+75, hy+7], fill=(0,0,0,200), width=3)
-                draw.line([hx+20, hy+4, hx+70, hy+18], fill=(0,0,0,200), width=3)
-            if draw_progress>0.55:
-                for i in range(int(10*action_progress)):
-                    dx=VISUAL_W//2+random.uniform(-24,48); dy=VISUAL_H//2+22+random.uniform(0,22)-action_progress*26
-                    draw.ellipse([dx,dy,dx+3,dy+3], fill=(0,0,0,140))
-        elif "eyes" in label:
-            if draw_progress>0.25:
-                for ex in [VISUAL_W//2-65, VISUAL_W//2+35]:
-                    ey=VISUAL_H//2-12
-                    draw_formed_shape(draw, [ex-32, ey-18, ex+32, ey+14], "ellipse", density=30, progress_factor=draw_progress)
-                    if draw_progress>0.55:
-                        draw_formed_shape(draw, [ex-12, ey-8, ex+12, ey+6], "ellipse", density=16, progress_factor=1.0)
-        elif "ai" in label or "robot" in label or "computer" in label or "intelligence" in label:
-            if draw_progress>0.18:
-                cx=VISUAL_W//2; cy=VISUAL_H//2-18
-                draw_formed_shape(draw, [cx-72, cy-58, cx+72, cy+42], "rect", density=68, progress_factor=draw_progress)
-            if draw_progress>0.45:
-                for ex in [VISUAL_W//2-28, VISUAL_W//2+28]:
-                    draw_formed_shape(draw, [ex-14, VISUAL_H//2-32, ex+14, VISUAL_H//2-14], "ellipse", density=18, progress_factor=1.0)
-                for i in range(5):
-                    y=VISUAL_H//2-6+i*11
-                    if i/5 < draw_progress:
-                        draw.line([VISUAL_W//2-60, y, VISUAL_W//2+60, y], fill=(0,0,0,120), width=2)
-        elif "scales" in label or "justice" in label:
-            if draw_progress>0.18:
-                cx=VISUAL_W//2
-                draw.line([cx,18,cx,68], fill=(0,0,0,210), width=3)
-                tilt=7*math.sin(action_progress*2.2)
-                draw.line([cx-92, 64+tilt, cx+92, 64-tilt], fill=(0,0,0,210), width=3)
-                if draw_progress>0.45:
-                    for px, py in [(cx-84, 64+tilt), (cx+84, 64-tilt)]:
-                        draw_formed_shape(draw, [px-28, py+38, px+28, py+60], "ellipse", density=24, progress_factor=draw_progress)
-                        draw.line([px, 64+(tilt if px<cx else -tilt), px-20, py+38], fill=(0,0,0,170), width=2)
-                        draw.line([px, 64+(tilt if px<cx else -tilt), px+20, py+38], fill=(0,0,0,170), width=2)
-        elif "universe" in label or "galaxy" in label or "cosmos" in label:
-            if draw_progress>0.12:
-                for _ in range(int(22*draw_progress)):
-                    sx=random.randint(0,VISUAL_W); sy=random.randint(0,VISUAL_H)
-                    draw.ellipse([sx,sy,sx+3,sy+3], fill=(0,0,0,random.randint(70,220)))
+                branch_y=90
+                # Branch thick double line
+                draw_thick_line(draw, VISUAL_W*0.18, branch_y, VISUAL_W*0.92, branch_y+12, width=7)
+                draw_thick_line(draw, VISUAL_W*0.18, branch_y+12, VISUAL_W*0.92, branch_y+24, width=6)
+                serpent_x=VISUAL_W*0.26
+                # Serpent body as wavy thick line - movement tells story
+                points=[]
+                for i in range(0, 80, 8):
+                    sx=serpent_x+i
+                    sy=branch_y+8+5*math.sin(i*0.18+action_progress*3)
+                    points.append((sx,sy))
+                for i in range(len(points)-1):
+                    x1,y1=points[i]; x2,y2=points[i+1]
+                    if i/10 < draw_progress:
+                        draw_thick_line(draw, x1,y1,x2,y2, width=7)
+                head_x=serpent_x+80+4*math.sin(action_progress*6)
+                head_y=branch_y+2+2*math.cos(action_progress*6)
+                if draw_progress>0.48:
+                    # Head as thick circle with eye dot
+                    draw_thick_circle(draw, head_x, head_y, 16, width=6)
+                    draw_filled_circle(draw, head_x+6, head_y-2, 5, fill=(0,0,0,255))
+                    # Tongue flick every few frames
+                    if f%10<4:
+                        draw_thick_line(draw, head_x+16, head_y, head_x+28, head_y-5, width=3)
+                        draw_thick_line(draw, head_x+16, head_y+2, head_x+28, head_y+7, width=3)
+                    # Speech lines - show talking
+                    if action_progress>0.3:
+                        for j in range(2):
+                            ex=head_x+24+8*math.sin(action_progress*4+j)
+                            ey=head_y+j*4-4
+                            draw.line([head_x+18, head_y+j*3-3, ex, ey], fill=(0,0,0,140), width=2)
+            if draw_progress>0.38:
+                draw_clean_human(draw, 18, VISUAL_H-230, 130, action="standing", progress=draw_progress*0.9)
+                draw_clean_human(draw, VISUAL_W-160, VISUAL_H-225, 128, action="standing", progress=draw_progress*0.9)
+        elif "pain" in speech_text or "pain" in label:
+            # Story: Figure in pain - hands on head, ache marks
+            if draw_progress>0.2:
+                draw_clean_human(draw, VISUAL_W//2-75, VISUAL_H//2-80, 160, action="pain", progress=draw_progress)
+                if draw_progress>0.5:
+                    # Ache marks as small lines around head
+                    cx, cy = VISUAL_W//2, VISUAL_H//2-20
+                    for ang in [0, 45, 90, 135]:
+                        rad=math.radians(ang)
+                        x1=cx+50*math.cos(rad); y1=cy+50*math.sin(rad)
+                        x2=cx+65*math.cos(rad); y2=cy+65*math.sin(rad)
+                        draw_thick_line(draw, x1,y1,x2,y2, width=4)
+        elif "toil" in speech_text or "toil" in label or "sweat" in speech_text:
+            if draw_progress>0.2:
+                draw_clean_human(draw, VISUAL_W//2-75, VISUAL_H//2-60, 150, action="toil", progress=draw_progress)
+                if draw_progress>0.5:
+                    # Shovel / ground work
+                    draw_thick_line(draw, VISUAL_W//2+40, VISUAL_H//2+30, VISUAL_W//2+90, VISUAL_H//2+80, width=6)
+        elif "exile" in speech_text or "exile" in label or "driven" in speech_text:
+            if draw_progress>0.2:
+                # Garden gate
+                draw_thick_line(draw, VISUAL_W//2-80, 60, VISUAL_W//2-80, 220, width=6)
+                draw_thick_line(draw, VISUAL_W//2+80, 60, VISUAL_W//2+80, 220, width=6)
+                draw_thick_line(draw, VISUAL_W//2-80, 60, VISUAL_W//2+80, 60, width=6)
+                # Cherubim sword as thick line with flame
+                sx, sy = VISUAL_W//2+80+10, 80+action_progress*20
+                draw_thick_line(draw, sx, sy, sx+15, sy+60, width=6)
             if draw_progress>0.35:
-                cx=VISUAL_W//2; cy=VISUAL_H//2
-                for i in range(0,200,10):
-                    if i/200 < draw_progress:
-                        ang=i*0.05+action_progress*1.3
-                        r=i*0.48
-                        x=cx+r*math.cos(ang); y=cy+r*math.sin(ang)*0.58
-                        draw.ellipse([x,y,x+3,y+3], fill=(0,0,0,200))
-                draw_formed_shape(draw, [cx-16, cy-16, cx+16, cy+16], "ellipse", density=26, progress_factor=draw_progress)
-        elif "atom" in label or "dna" in label:
-            if draw_progress>0.18:
-                cx=VISUAL_W//2; cy=VISUAL_H//2
-                draw_formed_shape(draw, [cx-18, cy-18, cx+18, cy+18], "ellipse", density=22, progress_factor=draw_progress)
-                for orbit in range(2):
-                    rx=44+orbit*14
-                    for a in range(0,360,36):
-                        if a/360 < draw_progress:
-                            rad=math.radians(a+action_progress*70)
-                            ox=cx+rx*math.cos(rad); oy=cy+rx*0.62*math.sin(rad)
-                            draw.ellipse([ox,oy,ox+3,oy+3], fill=(0,0,0,170))
-        else:
-            # Generic debate - larger, clearer
+                # Figure walking away
+                fx = 40 + 80*action_progress
+                draw_clean_human(draw, fx, VISUAL_H-230, 135, action="exile", progress=draw_progress)
+        elif "heaven" in label or "sky" in label or "sun" in label or "light" in label or "god" in label:
+            if draw_progress>0.12:
+                sun_r=42+6*math.sin(action_progress*2)
+                draw_thick_circle(draw, VISUAL_W//2, 90, sun_r, width=7)
+                if draw_progress>0.45:
+                    # Rays as thick lines - story of light
+                    for ang in range(-70,71,18):
+                        rad=math.radians(ang)
+                        x2=VISUAL_W//2+130*math.sin(rad)
+                        y2=90+130*math.cos(rad)
+                        if abs(ang)/70 < draw_progress:
+                            draw_thick_line(draw, VISUAL_W//2, 90, x2, y2, width=4)
+            if draw_progress>0.35:
+                # Clouds as simple fluffy outlines
+                for cx, cy in [(70,80),(200,60),(340,95)]:
+                    if cx/400 < draw_progress:
+                        draw_thick_circle(draw, cx, cy, 32, width=5)
+                        draw_thick_circle(draw, cx+28, cy+8, 28, width=5)
+                        draw_thick_circle(draw, cx+14, cy-12, 30, width=5)
+        elif "earth" in label or "land" in label or "dust" in label:
+            if draw_progress>0.15:
+                # Hills as simple curved thick lines
+                draw_thick_line(draw, 0, 220, 180, 110, width=6)
+                draw_thick_line(draw, 180, 110, 350, 180, width=6)
+                draw_thick_line(draw, 350, 180, VISUAL_W, 120, width=6)
+            if draw_progress>0.5:
+                draw_thick_line(draw, 0, 230, VISUAL_W, 230, width=6)
+        elif "die" in label or "death" in label:
             if draw_progress>0.22:
-                draw_formed_human(draw, 30, VISUAL_H//2-70, 105, action="standing", progress=draw_progress*0.8)
-                draw_formed_human(draw, VISUAL_W-155, VISUAL_H//2-70, 105, action="standing", progress=draw_progress*0.8)
+                # Figure lying down
+                draw_clean_human(draw, VISUAL_W//2-80, VISUAL_H//2-20, 120, action="standing", progress=draw_progress)
+                # Tilt to lying
+                # Dust particles rising
+                if draw_progress>0.6:
+                    for i in range(int(6*action_progress)):
+                        dx=VISUAL_W//2+random.uniform(-30,50)
+                        dy=VISUAL_H//2+20+random.uniform(0,20)-action_progress*30
+                        draw_filled_circle(draw, dx, dy, 4, fill=(0,0,0,160))
+        elif "eyes opened" in label or "eyes" in label:
+            if draw_progress>0.28:
+                for ex in [VISUAL_W//2-70, VISUAL_W//2+40]:
+                    ey=VISUAL_H//2-20
+                    draw_thick_circle(draw, ex, ey, 38, width=6)
+                    if draw_progress>0.58:
+                        # Iris opening
+                        iris_r = 6 + 8*action_progress
+                        draw_filled_circle(draw, ex, ey, iris_r, fill=(0,0,0,255))
+                        # Highlight like bird eye
+                        draw_filled_circle(draw, ex+6, ey-4, 5, fill=(255,255,255,255))
+        else:
+            # Generic - debate podiums with figures, story of argument
+            if draw_progress>0.25:
+                draw_clean_human(draw, 35, VISUAL_H//2-80, 115, action="standing", progress=draw_progress*0.8)
+                draw_clean_human(draw, VISUAL_W-165, VISUAL_H//2-80, 115, action="standing", progress=draw_progress*0.8)
             if draw_progress>0.55:
-                draw_formed_shape(draw, [30, VISUAL_H//2+30, 135, VISUAL_H//2+85], "rect", density=26, progress_factor=draw_progress)
-                draw_formed_shape(draw, [VISUAL_W-135, VISUAL_H//2+30, VISUAL_W-30, VISUAL_H//2+85], "rect", density=26, progress_factor=draw_progress)
-            if draw_progress>0.68 and action_progress>0.45:
-                bx=VISUAL_W//2-52; by=VISUAL_H//2-95
-                draw_formed_shape(draw, [bx, by, bx+104, by+42], "ellipse", density=26, progress_factor=1.0)
-        if fade_alpha<1.0:
-            overlay=Image.new("RGBA",(VISUAL_W,VISUAL_H),(255,255,255,int((1.0-fade_alpha)*190)))
-            frame=Image.alpha_composite(frame, overlay)
+                # Speech bubble as thick outline
+                bx, by = VISUAL_W//2-65, VISUAL_H//2-110
+                draw_thick_circle(draw, VISUAL_W//2, by+20, 55, width=5)
+                # Small tail
+                draw_thick_line(draw, VISUAL_W//2-20, by+55, VISUAL_W//2-35, by+75, width=5)
+        # NO white fade overlay - keep transparent throughout
         frames.append(frame)
-    # Save as APNG with true alpha - not GIF with white bg
-    frames[0].save(filename,format='PNG',save_all=True,append_images=frames[1:],duration=85,loop=0,disposal=2)
-    print(f"   Created FORMED transparent APNG: {visual.get('label')} (36 frames, story-driven, no white bg)")
+    # Save as APNG with true alpha - NO white background
+    frames[0].save(filename,format='PNG',save_all=True,append_images=frames[1:],duration=85,loop=0)
+    print(f"   Created CLEAN line-art APNG: {visual.get('label')} (36 frames, transparent, story-driven)")
     return filename
+
 
 
 def create_background(position,glow,filename):
@@ -1079,15 +1076,22 @@ def create_ui_overlay(speaker_name,topic,position,glow,filename):
     return x,y
 
 def render_video_segment(bg_path,ui_path,audio_path,subs_path,output_path,position,glow,cx,cy,visual_plan):
-    # FIXED v2: 1) Input indices correct (bg=0, ui=1, audio=2, visuals=3+), 2) No force_style commas causing "No such filter: ''"
+    # FIXED v3: Sound bars restored + centered transparent animations + clean background.png
     duration=get_audio_duration(audio_path)
     if not duration: duration=10.0
     cmd=["ffmpeg","-y","-loop","1","-i",bg_path,"-loop","1","-i",ui_path,"-i",audio_path]
     filter_parts=[]
     filter_parts.append(f"[0:v]scale={VIDEO_W}:{VIDEO_H}:flags=lanczos[bg]")
     filter_parts.append(f"[1:v]scale={VIDEO_W}:{VIDEO_H}:flags=lanczos[ui]")
+    # Restore sound bars - showwaves from audio
+    glow_hex = glow.lstrip('#')
+    filter_parts.append(f"[2:a]showwaves=s=300x58:mode=cline:colors=0x{glow_hex}:rate=30[wave]")
     filter_parts.append(f"[bg][ui]overlay=0:0:shortest=1[bg_ui]")
-    last_label="[bg_ui]"
+    # Overlay sound bars near speaker card
+    wave_x = cx + 330
+    wave_y = cy + 47
+    filter_parts.append(f"[bg_ui][wave]overlay={wave_x}:{wave_y}[bg_ui_wave]")
+    last_label="[bg_ui_wave]"
     visual_inputs=[]
     for idx, vis in enumerate(visual_plan):
         gif_path=create_visual_asset(vis, idx+1000+random.randint(0,9999))
@@ -1124,29 +1128,79 @@ def render_video_segment(bg_path,ui_path,audio_path,subs_path,output_path,positi
         except: pass
 
 def generate_scoreboard(round_num,results,avg_a,avg_b,cum_a,cum_b,output_path,roles):
-    W=1000; H=620
-    img=Image.new("RGBA",(W,H),(18,18,28,255))
-    draw=ImageDraw.Draw(img)
-    font_title=load_font(32,bold=True); font_head=load_font(20,bold=True); font_row=load_font(18)
-    draw.rectangle([0,0,W,72], fill=(0,0,0,200))
-    draw.text((W//2,18), f"ROUND {round_num} SCORES - {roles['side_a_label']} vs {roles['side_b_label']}", font=font_title, fill=(255,255,255,255), anchor="mt")
-    draw.text((30,88), f"Judge (Company)", font=font_head, fill=(255,255,255,200))
-    draw.text((300,88), f"{roles['side_a_label'][:20]}", font=font_head, fill=(0,255,204,255))
-    draw.text((500,88), f"{roles['side_b_label'][:20]}", font=font_head, fill=(255,0,255,255))
-    draw.text((700,88), "Winner", font=font_head, fill=(255,255,255,200))
-    y=120
-    for res in results:
-        bg=(30,30,45,255) if y%40==0 else (22,22,35,255)
-        draw.rectangle([0,y,W,y+32], fill=bg)
-        draw.text((30,y+4), f"{res['display_name']} ({res['provider']})", font=font_row, fill=(255,255,255,230))
-        draw.text((300,y+4), f"{res['A_total']:.1f}", font=font_row, fill=(0,255,204,255))
-        draw.text((500,y+4), f"{res['B_total']:.1f}", font=font_row, fill=(255,0,255,255))
-        win_label=roles['side_a_label'] if res['winner']=="A" else roles['side_b_label']
-        draw.text((700,y+4), win_label[:12], font=font_row, fill=(255,215,0,255))
-        y+=34
-    draw.rectangle([0,y,W,y+2], fill=(255,255,255,100))
-    y+=10
-    draw.text((30,y), f"Avg Round {round_num}: {avg_a:.1f} vs {avg_b:.1f} | Cumulative: {cum_a:.1f} vs {cum_b:.1f}", font=font_head, fill=(255,255,255,255))
+    # FIXED: Clean, readable, not busy - full 1920x1080, no truncation, centered
+    import os
+    W=VIDEO_W; H=VIDEO_H
+    # Use background.png if exists, with dark overlay for readability
+    source = os.path.join(os.path.dirname(os.path.abspath(__file__)), "background.png")
+    if os.path.exists(source):
+        try:
+            base = Image.open(source).convert("RGB").resize((W,H), Image.LANCZOS)
+        except:
+            base = Image.new("RGB", (W,H), (12,16,32))
+    else:
+        base = Image.new("RGB", (W,H), (12,16,32))
+    # Dark overlay for readability
+    overlay = Image.new("RGBA", (W,H), (0,0,0,180))
+    img = Image.alpha_composite(base.convert("RGBA"), overlay).convert("RGB")
+    draw = ImageDraw.Draw(img)
+    font_title = load_font(48, bold=True)
+    font_sub = load_font(28, bold=True)
+    font_head = load_font(26, bold=True)
+    font_row = load_font(28)
+    font_small = load_font(22)
+    
+    # Title - centered, not cut off
+    title = f"ROUND {round_num} SCORES"
+    draw.text((W//2, 50), title, font=font_title, fill=(255,215,0,255), anchor="mt")
+    # Roles subtitle
+    roles_text = f"{roles['side_a_label']}  vs  {roles['side_b_label']}"
+    draw.text((W//2, 115), roles_text, font=font_sub, fill=(255,255,255,230), anchor="mt")
+    
+    # Table header - proper spacing, no overlap
+    header_y = 190
+    # Column positions - wide spacing to avoid truncation
+    col_judge_x = 120
+    col_a_x = 750
+    col_b_x = 1050
+    col_winner_x = 1350
+    
+    # Header background
+    draw.rectangle([60, header_y-10, W-60, header_y+45], fill=(255,255,255,25), outline=(255,215,0,100), width=2)
+    draw.text((col_judge_x, header_y), "Judge", font=font_head, fill=(255,255,255,200))
+    draw.text((col_a_x, header_y), f"{roles['side_a_label'][:18]}", font=font_head, fill=(0,255,204,255))
+    draw.text((col_b_x, header_y), f"{roles['side_b_label'][:18]}", font=font_head, fill=(255,100,255,255))
+    draw.text((col_winner_x, header_y), "Winner", font=font_head, fill=(255,215,0,255))
+    
+    y = header_y + 65
+    for idx, res in enumerate(results):
+        # Alternating row bg
+        if idx % 2 == 0:
+            draw.rectangle([60, y-8, W-60, y+42], fill=(255,255,255,10))
+        # Judge name - full, not truncated too much
+        judge_text = f"{res['display_name']} ({res['provider']})"
+        if len(judge_text) > 32:
+            judge_text = judge_text[:30] + ".."
+        draw.text((col_judge_x, y), judge_text, font=font_row, fill=(255,255,255,240))
+        draw.text((col_a_x, y), f"{res['A_total']:.1f}", font=font_row, fill=(0,255,204,255))
+        draw.text((col_b_x, y), f"{res['B_total']:.1f}", font=font_row, fill=(255,100,255,255))
+        win_label = roles['side_a_label'] if res['winner']=="A" else roles['side_b_label']
+        # Winner - full label, not truncated to 12 chars
+        if len(win_label) > 20:
+            win_label = win_label[:18] + ".."
+        win_color = (0,255,204,255) if res['winner']=="A" else (255,100,255,255)
+        draw.text((col_winner_x, y), win_label, font=font_row, fill=win_color)
+        y += 58
+    
+    # Divider
+    draw.line([(60, y+5), (W-60, y+5)], fill=(255,255,255,60), width=2)
+    y += 25
+    # Averages - large, centered, readable
+    avg_text = f"Round Avg: {avg_a:.1f} vs {avg_b:.1f}"
+    cum_text = f"Cumulative: {cum_a:.1f} vs {cum_b:.1f}"
+    draw.text((W//2, y), avg_text, font=font_sub, fill=(255,255,255,255), anchor="mt")
+    draw.text((W//2, y+45), cum_text, font=font_sub, fill=(255,215,0,255), anchor="mt")
+    
     img.save(output_path)
 
 def render_scorecard_video(image_path,audio_path,subs_path,output_path):
