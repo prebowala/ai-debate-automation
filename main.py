@@ -34,10 +34,9 @@ JUDGE_WORKERS = 7
 MAX_VISUALS_PER_SEGMENT = 0
 MIN_VISUAL_GAP = 2.2
 MAX_EMOJIS_PER_SEGMENT = 4
-EMOJI_W = 380
-EMOJI_H = 380
+EMOJI_W = 420
+EMOJI_H = 420
 USED_EMOJIS = set()
-USED_VISUAL_LABELS = set()
 USED_ARGUMENTS = set()
 USED_PHRASES = set()
 USED_KEYWORDS = set()
@@ -136,6 +135,23 @@ def load_font(sz,bold=False):
     p="/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
     try: return ImageFont.truetype(p,sz)
     except: return ImageFont.load_default()
+
+def load_emoji_font(sz):
+    candidates=[
+        "/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf",
+        "/usr/share/fonts/truetype/noto/NotoEmoji-Regular.ttf",
+        "/usr/share/fonts/truetype/noto/NotoColorEmoji-Regular.ttf",
+        "/usr/share/fonts/truetype/ancient-scripts/Symbola.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    ]
+    for fp in candidates:
+        if os.path.exists(fp):
+            try:
+                return ImageFont.truetype(fp, sz)
+            except:
+                continue
+    return load_font(sz,bold=True)
 
 def hex_to_rgba(h,a):
     h=h.lstrip("#")
@@ -399,197 +415,100 @@ def stitch_segments(segs,out):
     r=subprocess.run(cmd,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
     if r.returncode!=0: print(r.stderr[-7000:]); raise RuntimeError("Concat failed")
 
+# === STANDARD EMOJIS VISUAL STORY FLOW - ETHNICALLY AMBIGUOUS HUMANS ===
+def get_visual_story_flow(topic):
+    tl=(topic or "").lower()
+    if "god" in tl and "serpent" in tl:
+        # Ethnically ambiguous human emojis: use gender-neutral, yellow default, silhouette forms
+        # 🧑 person (most ambiguous), 👤 bust silhouette, 👥 busts, 🧑‍🤝‍🧑 people holding hands
+        # Avoid light skin tone modifiers, use default yellow which is designed to be ambiguous
+        return [
+            # Man story: use most ambiguous forms - person, bust, not specific ethnicity
+            "🧑", "👤", "🧑‍🦱", "👥",
+            # Woman story: person variants, not light-skinned
+            "🧑", "👤",
+            # Garden
+            "🌿", "🌱",
+            # Apple story: apple -> apple tree -> tree (flows as visual story)
+            "🍎", "🍏", "🌳", "🌲",
+            # Serpent
+            "🐍",
+            # Eyes opened -> shame -> fear -> hiding (flows)
+            "👀", "👁️", "🙈", "😨",
+            # Consequence flow: pain -> toil -> dust -> exile -> sword
+            "😣", "😓", "🪨", "🚪", "⚔️", "👼", "💀",
+            # Knowledge/wisdom
+            "💡", "🧠",
+        ]
+    else:
+        # Generic for any topic - standard colorful emojis
+        return ["💡","🔍","📖","⚖️","🧠","🌍","🌌","⭐","🔥","💧","🌳","🤖","💻","⚠️","✅","❓","🤔","💭"]
+
 def get_story_emojis(text):
     tl=text.lower()
-    emojis=[]
-    mapping=[
-        (["heaven","sky","sun","light","day","creator"], [("☀️","#FFD700"), ("🌤️","#87CEEB"), ("✨","#FFD700")]),
-        (["serpent","snake"], [("🐍","#2E8B57")]),
-        (["apple","fruit","eat"], [("🍎","#FF0000"), ("🍏","#32CD32")]),
-        (["tree","garden","eden"], [("🌳","#228B22"), ("🌿","#32CD32")]),
-        (["eyes opened","eyes","naked","shame"], [("👀","#4169E1"), ("🙈","#8B4513")]),
-        (["hide","afraid","fear"], [("😨","#FF6347")]),
-        (["pain","sorrow","childbirth"], [("😣","#FF1493"), ("💔","#FF0000")]),
-        (["toil","sweat","thorns","ground","work"], [("😓","#FF8C00"), ("🪨","#696969")]),
-        (["exile","driven","cherubim","sword","gate"], [("🚪","#8B4513"), ("⚔️","#C0C0C0"), ("👼","#FFD700")]),
-        (["dust","die","death"], [("💀","#FFFFFF"), ("🌑","#2F4F4F")]),
-        (["tree of life","live forever"], [("🌳","#00FF00"), ("♾️","#9400D3")]),
-        (["knowledge","wise","know"], [("🧠","#FF69B4"), ("💡","#FFD700")]),
-        (["lie","deceive","beguile"], [("🤥","#FF6347"), ("🎭","#9370DB")]),
-        (["warn","command"], [("⚠️","#FFD700"), ("📜","#DEB887")]),
-        (["truth","evidence"], [("📖","#8B4513"), ("✅","#00FF00")]),
-        (["ai","robot","computer","intelligence"], [("🤖","#C0C0C0"), ("💻","#4169E1")]),
-        (["scales","justice"], [("⚖️","#FFD700")]),
-        (["universe","galaxy","cosmos","stars","moon"], [("🌌","#4B0082"), ("🌙","#F0E68C"), ("⭐","#FFD700")]),
-        (["earth","land","water","sea"], [("🌍","#228B22"), ("🌊","#1E90FF")]),
-    ]
-    for keywords, emoji_colors in mapping:
-        if any(kw in tl for kw in keywords):
-            for emoji_char, color in emoji_colors:
-                key = f"{emoji_char}_{color}"
-                if key not in USED_EMOJIS:
-                    emojis.append((emoji_char, color))
-                    if len(emojis)>=3: break
-            if len(emojis)>=3: break
-    if not emojis:
-        emojis=[("💭","#FFFFFF")]
-    for emoji_char, color in emojis:
-        USED_EMOJIS.add(f"{emoji_char}_{color}")
-    return emojis[:3]
+    # Ethnically ambiguous human emojis mapping - use yellow default, gender-neutral, silhouette
+    keyword_to_emoji={
+        # Human/man - use most ambiguous: 🧑 person, 👤 bust silhouette, 👥 people, 🧑‍🦱 curly hair person
+        "adam":"🧑","man":"🧑","men":"👥","human":"🧑","person":"👤","people":"👥","mankind":"👥","humanity":"👥",
+        # Woman - use ambiguous person forms
+        "eve":"🧑","woman":"🧑","women":"👥",
+        "garden":"🌿","eden":"🌿","plant":"🌱",
+        "apple":"🍎","fruit":"🍎","eat":"🍎","green apple":"🍏",
+        "tree":"🌳","trees":"🌳","branch":"🌲",
+        "serpent":"🐍","snake":"🐍",
+        "eyes opened":"👀","eyes":"👀","see":"👁️","naked":"🙈","shame":"🙈",
+        "hide":"😨","afraid":"😨","fear":"😨",
+        "pain":"😣","sorrow":"😣",
+        "toil":"😓","sweat":"😓","work":"😓","ground":"🪨","rock":"🪨","dust":"💀",
+        "exile":"🚪","driven":"🚪","gate":"🚪","door":"🚪",
+        "cherubim":"👼","angel":"👼","sword":"⚔️",
+        "death":"💀","die":"💀",
+        "knowledge":"💡","wise":"🧠","wisdom":"🧠","light":"💡","idea":"💡",
+        "ai":"🤖","robot":"🤖","computer":"💻",
+        "justice":"⚖️","judge":"⚖️","scales":"⚖️",
+        "universe":"🌌","galaxy":"🌌","stars":"⭐","moon":"🌙","night":"🌙",
+        "earth":"🌍","world":"🌍","water":"🌊","sea":"🌊",
+        "question":"❓","choice":"🤔","think":"🤔",
+    }
+    relevant=[]
+    for kw, emoji_char in keyword_to_emoji.items():
+        if kw in tl:
+            if emoji_char not in relevant:
+                relevant.append(emoji_char)
+                if len(relevant)>=3: break
+    if not relevant:
+        flow=get_visual_story_flow(text)
+        for emoji_char in flow:
+            if emoji_char not in USED_EMOJIS:
+                relevant.append(emoji_char)
+                if len(relevant)>=2: break
+    for emoji_char in relevant:
+        USED_EMOJIS.add(emoji_char)
+    return relevant[:3]
 
-def create_emoji_asset(emoji_color_tuple, index):
-    # FIXED: Custom colorful icons drawn with PIL shapes, not font emojis that render as white boxes
-    if isinstance(emoji_color_tuple, tuple):
-        emoji, color_hex = emoji_color_tuple
-    else:
-        emoji = emoji_color_tuple
-        color_hex = "#FFFFFF"
+def create_emoji_asset(emoji_char, index):
     filename=f"emoji_{index}.png"
     size=500
     img=Image.new("RGBA",(size,size),(0,0,0,0))
     draw=ImageDraw.Draw(img)
     try:
-        r=int(color_hex[1:3],16); g=int(color_hex[3:5],16); b=int(color_hex[5:7],16)
-        main_color=(r,g,b,255)
-        glow_color=(r,g,b,90)
+        font=load_emoji_font(220)
     except:
-        main_color=(255,255,255,255)
-        glow_color=(255,255,255,90)
-
-    # Draw custom colorful icons instead of relying on emoji font (which fails as white boxes)
-    def draw_sun():
-        # Yellow sun with rays
-        cx,cy=size//2,size//2
-        draw.ellipse([cx-90,cy-90,cx+90,cy+90], fill=(255,215,0,255), outline=(255,165,0,255), width=4)
-        for ang in range(0,360,30):
-            x1=cx+100*math.cos(math.radians(ang))
-            y1=cy+100*math.sin(math.radians(ang))
-            x2=cx+140*math.cos(math.radians(ang))
-            y2=cy+140*math.sin(math.radians(ang))
-            draw.line([x1,y1,x2,y2], fill=(255,215,0,255), width=6)
-
-    def draw_serpent():
-        # Green snake S
-        points=[(100,150),(180,120),(260,160),(340,130),(400,180)]
-        for i in range(len(points)-1):
-            draw.line([points[i],points[i+1]], fill=(46,139,87,255), width=18, joint="curve")
-        draw.ellipse([390,165,420,195], fill=(46,139,87,255))
-        draw.ellipse([395,172,405,182], fill=(255,255,255,255))
-        draw.ellipse([400,175,403,179], fill=(0,0,0,255))
-
-    def draw_apple():
-        # Red apple
-        cx,cy=size//2,size//2+20
-        draw.ellipse([cx-90,cy-80,cx+90,cy+80], fill=(220,20,60,255), outline=(139,0,0,255), width=4)
-        draw.rectangle([cx-8,cy-100,cx+8,cy-70], fill=(101,67,33,255))
-        draw.ellipse([cx+20,cy-90,cx+70,cy-60], fill=(34,139,34,255))
-
-    def draw_tree():
-        # Brown trunk + green canopy
-        draw.rectangle([220,300,280,420], fill=(101,67,33,255))
-        draw.ellipse([140,140,360,320], fill=(34,139,34,255))
-        draw.ellipse([170,100,330,220], fill=(0,100,0,255))
-
-    def draw_eyes():
-        # Two eyes
-        draw.ellipse([110,180,210,260], fill=(255,255,255,255), outline=(0,0,0,255), width=3)
-        draw.ellipse([290,180,390,260], fill=(255,255,255,255), outline=(0,0,0,255), width=3)
-        draw.ellipse([145,200,175,230], fill=(65,105,225,255))
-        draw.ellipse([325,200,355,230], fill=(65,105,225,255))
-        draw.ellipse([152,207,168,223], fill=(0,0,0,255))
-        draw.ellipse([332,207,348,223], fill=(0,0,0,255))
-
-    def draw_warning():
-        # Yellow triangle
-        draw.polygon([(250,80),(100,380),(400,380)], fill=(255,215,0,255), outline=(255,165,0,255), width=5)
-        draw.rectangle([240,170,260,280], fill=(0,0,0,255))
-        draw.ellipse([230,300,270,340], fill=(0,0,0,255))
-
-    def draw_skull():
-        draw.ellipse([150,120,350,300], fill=(255,255,255,255), outline=(200,200,200,255), width=4)
-        draw.rectangle([180,270,320,350], fill=(255,255,255,255))
-        draw.ellipse([190,190,230,230], fill=(0,0,0,255))
-        draw.ellipse([270,190,310,230], fill=(0,0,0,255))
-        draw.ellipse([235,260,265,285], fill=(0,0,0,255))
-
-    def draw_brain():
-        draw.ellipse([150,150,350,350], fill=(255,105,180,255), outline=(199,21,133,255), width=4)
-        for x in [200,250,300]:
-            draw.arc([x-30,180,x+30,320], 0, 180, fill=(199,21,133,255), width=3)
-
-    def draw_lightbulb():
-        draw.ellipse([170,100,330,260], fill=(255,215,0,255), outline=(255,165,0,255), width=4)
-        draw.rectangle([210,260,290,320], fill=(150,150,150,255))
-
-    def draw_door():
-        draw.rectangle([150,100,350,400], fill=(139,69,19,255), outline=(101,67,33,255), width=4)
-        draw.ellipse([300,240,320,260], fill=(255,215,0,255))
-
-    def draw_sword():
-        draw.rectangle([240,80,260,300], fill=(192,192,192,255), outline=(100,100,100,255), width=3)
-        draw.polygon([(230,80),(250,40),(270,80)], fill=(192,192,192,255))
-        draw.rectangle([200,300,300,320], fill=(139,69,19,255))
-
-    def draw_earth():
-        draw.ellipse([120,120,380,380], fill=(30,144,255,255), outline=(0,0,139,255), width=4)
-        draw.ellipse([150,180,230,240], fill=(34,139,34,255))
-        draw.ellipse([260,220,340,300], fill=(34,139,34,255))
-
-    def draw_scales():
-        draw.line([250,80,250,320], fill=(255,215,0,255), width=6)
-        draw.line([150,140,350,140], fill=(255,215,0,255), width=6)
-        draw.line([150,140,130,200], fill=(255,215,0,255), width=4)
-        draw.line([350,140,370,200], fill=(255,215,0,255), width=4)
-        draw.ellipse([110,190,150,210], fill=(255,215,0,255))
-        draw.ellipse([350,190,390,210], fill=(255,215,0,255))
-
-    def draw_robot():
-        draw.rectangle([150,150,350,350], fill=(192,192,192,255), outline=(100,100,100,255), width=4)
-        draw.ellipse([190,200,230,240], fill=(0,191,255,255))
-        draw.ellipse([270,200,310,240], fill=(0,191,255,255))
-        draw.rectangle([220,280,280,300], fill=(0,0,0,255))
-
-    def draw_generic():
-        # Colorful circle with letter
-        draw.ellipse([100,100,400,400], fill=main_color, outline=(255,255,255,200), width=4)
-        try:
-            font=load_font(120,bold=True)
-            draw.text((250,250), emoji[0].upper(), font=font, fill=(255,255,255,255), anchor="mm")
-        except:
-            pass
-
-    icon_map = {
-        "☀️": draw_sun, "🌤️": draw_sun, "✨": draw_sun, "🌅": draw_sun, "🌙": draw_sun, "⭐": draw_sun, "🌌": draw_sun, "🪐": draw_earth,
-        "🐍": draw_serpent,
-        "🍎": draw_apple, "🍏": draw_apple,
-        "🌳": draw_tree, "🌿": draw_tree, "🌴": draw_tree, "🌲": draw_tree,
-        "👀": draw_eyes, "🙈": draw_eyes, "👁️": draw_eyes,
-        "⚠️": draw_warning, "📜": draw_warning, "🚨": draw_warning,
-        "💀": draw_skull, "🌑": draw_skull, "⚰️": draw_skull,
-        "🧠": draw_brain, "🦉": draw_brain, "📚": draw_brain,
-        "💡": draw_lightbulb,
-        "🚪": draw_door, "👼": draw_door, "🚧": draw_door,
-        "⚔️": draw_sword,
-        "🌍": draw_earth, "🌊": draw_earth, "💧": draw_earth,
-        "⚖️": draw_scales, "👩‍⚖️": draw_scales,
-        "🤖": draw_robot, "💻": draw_robot,
-    }
-
-    drawer = icon_map.get(emoji, draw_generic)
+        font=load_font(200,bold=True)
     try:
-        drawer()
+        bbox=draw.textbbox((0,0),emoji_char,font=font)
+        w=bbox[2]-bbox[0]
+        h=bbox[3]-bbox[1]
+        x=(size-w)//2
+        y=(size-h)//2-10
+        draw.text((x+4, y+4), emoji_char, font=font, fill=(0,0,0,90))
+        draw.text((x, y), emoji_char, font=font, fill=(255,255,255,255), embedded_color=True)
     except Exception as e:
-        print(f"Icon draw failed {emoji}: {e}, using generic")
-        draw_generic()
-
-    # Add colorful glow
-    img2 = Image.new("RGBA",(size,size),(0,0,0,0))
-    img2.paste(img)
-    # Slight blur for glow effect
-    glow = img.filter(ImageFilter.GaussianBlur(radius=8))
-    # Composite
-    final = Image.alpha_composite(glow, img2)
-    final.save(filename)
+        try:
+            draw.text((x, y), emoji_char, font=font, fill=(255,255,255,255))
+        except:
+            draw.text((size//2,size//2),emoji_char,font=font,fill=(255,255,255,255),anchor="mm")
+    img.save(filename)
     return filename
 
 def create_background(position,glow,filename):
@@ -632,18 +551,25 @@ def create_ui_overlay(speaker_name,topic,position,glow,filename):
     if anchor=="lm": rect_x0=x-pad; rect_x1=x+bbox[2]-bbox[0]+pad*2
     elif anchor=="rm": rect_x0=x-(bbox[2]-bbox[0])-pad*2; rect_x1=x+pad
     else: rect_x0=x-(bbox[2]-bbox[0])//2-pad; rect_x1=x+(bbox[2]-bbox[0])//2+pad
-    draw.rounded_rectangle([rect_x0,rect_y0,rect_x1,rect_y1], fill=(0,0,0,170), outline=hex_to_rgba(glow,220), width=2)
-    draw.ellipse([rect_x0+12,rect_y0+18,rect_x0+28,rect_y0+34], fill=hex_to_rgba(glow,255))
+    draw.rounded_rectangle([rect_x0,rect_y0,rect_x1,rect_y1], fill=(0,0,0,185), outline=hex_to_rgba(glow,230), width=2)
+    dot_radius=10
+    if anchor=="lm":
+        dot_x=rect_x0-18
+        dot_y=(rect_y0+rect_y1)//2
+    elif anchor=="rm":
+        dot_x=rect_x1+18
+        dot_y=(rect_y0+rect_y1)//2
+    else:
+        dot_x=rect_x0-18
+        dot_y=(rect_y0+rect_y1)//2
+    draw.ellipse([dot_x-dot_radius-6, dot_y-dot_radius-6, dot_x+dot_radius+6, dot_y+dot_radius+6], fill=hex_to_rgba(glow,70))
+    draw.ellipse([dot_x-dot_radius-2, dot_y-dot_radius-2, dot_x+dot_radius+2, dot_y+dot_radius+2], fill=(255,255,255,180))
+    draw.ellipse([dot_x-dot_radius, dot_y-dot_radius, dot_x+dot_radius, dot_y+dot_radius], fill=hex_to_rgba(glow,255))
     draw.text((x,y), speaker_name, font=font_bold, fill=(255,255,255,255), anchor=anchor)
     topic_short=topic[:90]
     draw.text((VIDEO_W//2, 70), topic_short, font=font_small, fill=(255,255,255,180), anchor="mm")
     img.save(filename)
     return x,y
-
-def ffmpeg_filter_path(filename):
-    path=os.path.abspath(filename)
-    path=path.replace("\\","/").replace("'","\\'").replace(":","\\:")
-    return path
 
 def get_audio_duration(path):
     try:
@@ -659,7 +585,7 @@ def ass_escape(t):
     return t.replace("\\","\\\\").replace("{","\\{").replace("}","\\}")
 
 def generate_subtitles(words,filename,scorecard=False,audio_file=None,full_text=None):
-    header="[Script Info]\nScriptType: v4.00+\nPlayResX: 1920\nPlayResY: 1080\nWrapStyle: 0\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: DebateSub,DejaVu Sans,54,&H00FFFFFF,&H00FFFFFF,&H00000000,&H64000000,1,0,0,0,100,100,0,0,1,3,1,2,20,20,60,1\nStyle: ScoreSub,DejaVu Sans,42,&H00FFFFFF,&H00FFFFFF,&H00000000,&H64000000,1,0,0,0,100,100,0,0,1,2,1,2,20,20,40,1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
+    header="[Script Info]\nScriptType: v4.00+\nPlayResX: 1920\nPlayResY: 1080\nWrapStyle: 0\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: DebateSub,DejaVu Sans,42,&H00FFFFFF,&H00FFFFFF,&H00000000,&HAA000000,1,0,0,0,100,100,0,0,1,3,1,2,120,120,80,1\nStyle: ScoreSub,DejaVu Sans,36,&H00FFFFFF,&H00FFFFFF,&H00000000,&HAA000000,1,0,0,0,100,100,0,0,1,2,1,2,80,80,40,1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
     events=[]
     if scorecard and audio_file and full_text:
         dur=get_audio_duration(audio_file) or 6.0
@@ -685,11 +611,11 @@ def generate_subtitles(words,filename,scorecard=False,audio_file=None,full_text=
     for w in words:
         if not chunk:
             chunk=[w]; last_end=w["end"]
-        elif w["start"]-last_end>0.6 or len(chunk)>=10:
+        elif w["start"]-last_end>0.6 or len(chunk)>=7:
             s=chunk[0]["start"]; e=last_end
             txt_words=[ass_escape(c["text"]) for c in chunk]
             lines=[]
-            for i in range(0,len(txt_words),12): lines.append(" ".join(txt_words[i:i+12]))
+            for i in range(0,len(txt_words),10): lines.append(" ".join(txt_words[i:i+10]))
             if len(lines)>4: lines=lines[:4]
             txt="\\N".join(lines)
             ass_text="{\\an2\\pos(960,800)\\q2\\fad(120,120)}"+txt
@@ -701,7 +627,7 @@ def generate_subtitles(words,filename,scorecard=False,audio_file=None,full_text=
         s=chunk[0]["start"]; e=last_end
         txt_words=[ass_escape(c["text"]) for c in chunk]
         lines=[]
-        for i in range(0,len(txt_words),12): lines.append(" ".join(txt_words[i:i+12]))
+        for i in range(0,len(txt_words),10): lines.append(" ".join(txt_words[i:i+10]))
         if len(lines)>4: lines=lines[:4]
         txt="\\N".join(lines)
         ass_text="{\\an2\\pos(960,800)\\q2\\fad(120,120)}"+txt
@@ -795,45 +721,48 @@ def render_video_segment(bg_path,ui_path,audio_path,subs_path,output_path,positi
         zoom_filter="[bg]scale=iw*1.25:ih*1.25,crop=1920:1080:(iw-1920)/2:(ih-1080)/2[bg_zoom]"
     filter_parts.append(zoom_filter)
     glow_hex=glow.lstrip('#')
-    filter_parts.append(f"[2:a]aformat=channel_layouts=mono,compand=gain=-6,showwaves=s=200x36:mode=p2p:colors=0x{glow_hex}:rate=30:draw=full:scale=sqrt[wave_raw]")
-    filter_parts.append(f"[wave_raw]format=rgba,colorchannelmixer=aa=0.88[wave]")
+    filter_parts.append(f"[2:a]aformat=channel_layouts=mono,compand=gain=-6,showwaves=s=140x28:mode=p2p:colors=0x{glow_hex}:rate=30:draw=full:scale=sqrt[wave_raw]")
+    filter_parts.append(f"[wave_raw]format=rgba,colorchannelmixer=aa=0.90[wave]")
     filter_parts.append(f"[bg_zoom][ui]overlay=0:0:shortest=1[bg_ui]")
-    wave_w=200
+    wave_w=140
     wave_x=cx + (650 - wave_w)//2
-    wave_y=cy - 105
+    wave_y=cy - 115
     if position=="right":
-        wave_x=min(wave_x, VIDEO_W - wave_w - 30)
+        wave_x=min(wave_x, VIDEO_W - wave_w - 40)
     filter_parts.append(f"[bg_ui][wave]overlay={wave_x}:{wave_y}:shortest=1[bg_ui_wave]")
     last_label="[bg_ui_wave]"
     visual_inputs=[]
     for idx, vis in enumerate(visual_plan):
         try:
             if isinstance(vis, dict):
-                emoji_tuple=vis.get("emoji_tuple", (vis.get("emoji","💭"), "#FFFFFF"))
+                emoji_char=vis.get("emoji","💭")
                 start_time=vis.get("start", idx*2.2)
-                end_time=vis.get("end", start_time+2.8)
+                end_time=vis.get("end", start_time+3.2)
             else:
-                emoji_tuple=(str(vis), "#FFFFFF")
+                emoji_char=str(vis)
                 start_time=idx*2.2
-                end_time=start_time+2.8
-            gif_path=create_emoji_asset(emoji_tuple, idx+1000+random.randint(0,9999))
+                end_time=start_time+3.2
+            gif_path=create_emoji_asset(emoji_char, idx+1000+random.randint(0,9999))
         except:
-            gif_path=create_emoji_asset(("💭","#FFFFFF"), idx+1000+random.randint(0,9999))
+            gif_path=create_emoji_asset("💭", idx+1000+random.randint(0,9999))
             start_time=idx*2.2
-            end_time=start_time+2.8
+            end_time=start_time+3.2
         visual_inputs.append((gif_path, start_time, end_time))
     for idx, (gif_path, start_time, end_time) in enumerate(visual_inputs):
         input_idx = 3 + idx
         filter_parts.append(f"[{input_idx}:v]scale={EMOJI_W}:{EMOJI_H}[v{idx}]")
-        if idx%3==0:
+        if idx%4==0:
             vx=(VIDEO_W-EMOJI_W)//2
-            vy=160
-        elif idx%3==1:
-            vx=120
-            vy=200
+            vy=140
+        elif idx%4==1:
+            vx=100
+            vy=180
+        elif idx%4==2:
+            vx=VIDEO_W-EMOJI_W-100
+            vy=180
         else:
-            vx=VIDEO_W-EMOJI_W-120
-            vy=200
+            vx=(VIDEO_W-EMOJI_W)//2
+            vy=520
         next_label=f"[tmp{idx}]"
         filter_parts.append(f"{last_label}[v{idx}]overlay={vx}:{vy}:enable='between(t,{start_time:.2f},{end_time:.2f})'{next_label}")
         last_label=next_label
@@ -1067,6 +996,12 @@ def create_emoji_plan(text, words):
         return []
     sents=re.split(r'[.!?]+', text)
     sents=[s.strip() for s in sents if len(s.strip())>15]
+    story_flow=get_visual_story_flow(text)
+    global STORY_FLOW_INDEX
+    try:
+        STORY_FLOW_INDEX
+    except NameError:
+        STORY_FLOW_INDEX=0
     plan=[]
     used_in_seg=set()
     for idx, sent in enumerate(sents[:8]):
@@ -1078,11 +1013,19 @@ def create_emoji_plan(text, words):
                 start=float(words[w_idx]["start"])
                 end_idx=min(len(words)-1, w_idx+14)
                 end=float(words[end_idx]["end"])
-                for emoji_tuple in emojis[:2]:
-                    key = f"{emoji_tuple[0]}_{emoji_tuple[1]}"
-                    if key not in used_in_seg:
-                        plan.append({"emoji":emoji_tuple[0], "emoji_tuple":emoji_tuple, "start":max(0.0,start), "end":max(start+3.0,end), "label":emoji_tuple[0]})
-                        used_in_seg.add(key)
+                for emoji_char in emojis[:1]:
+                    if emoji_char not in used_in_seg:
+                        if STORY_FLOW_INDEX < len(story_flow):
+                            story_emoji=story_flow[STORY_FLOW_INDEX % len(story_flow)]
+                            STORY_FLOW_INDEX+=1
+                            if any(kw in sent.lower() for kw in ["adam","man","apple","tree","serpent","eyes","shame","exile"]):
+                                chosen=emoji_char
+                            else:
+                                chosen=story_emoji
+                        else:
+                            chosen=emoji_char
+                        plan.append({"emoji":chosen, "start":max(0.0,start), "end":max(start+3.5,end), "label":chosen})
+                        used_in_seg.add(chosen)
                         break
                 break
         if len(plan)>=MAX_EMOJIS_PER_SEGMENT: break
