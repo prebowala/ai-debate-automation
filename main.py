@@ -34,8 +34,8 @@ JUDGE_WORKERS = 7
 MAX_VISUALS_PER_SEGMENT = 0
 MIN_VISUAL_GAP = 2.2
 MAX_EMOJIS_PER_SEGMENT = 1
-EMOJI_W = 110
-EMOJI_H = 110
+EMOJI_W = 180
+EMOJI_H = 180
 USED_EMOJIS = set()
 USED_ARGUMENTS = set()
 USED_PHRASES = set()
@@ -796,10 +796,9 @@ def render_video_segment(bg_path,ui_path,audio_path,subs_path,output_path,positi
     for idx, (gif_path, start_time, end_time) in enumerate(visual_inputs):
         input_idx = 3 + idx
         filter_parts.append(f"[{input_idx}:v]scale={EMOJI_W}:{EMOJI_H}[v{idx}]")
-        # One emoji at a time over subtitles, synced like chat replacement
-        # Centered horizontally, just above subtitles (subtitles at y=800, emoji at y=700)
+        # One at a time, centre of screen, slightly larger, not overlapping subtitles
         vx=(VIDEO_W-EMOJI_W)//2
-        vy=700  # directly over subtitles, not covering stage/audience
+        vy=(VIDEO_H-EMOJI_H)//2 - 50  # centre screen, 50px above true centre to sit in open area
         next_label=f"[tmp{idx}]"
         # Small bounce effect for chat-like pop
         filter_parts.append(f"{last_label}[v{idx}]overlay={vx}:{vy}:enable='between(t,{start_time:.2f},{end_time:.2f})'{next_label}")
