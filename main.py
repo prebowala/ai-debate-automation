@@ -33,9 +33,9 @@ JUDGE_WORKERS = 7
 
 MAX_VISUALS_PER_SEGMENT = 0
 MIN_VISUAL_GAP = 2.2
-MAX_EMOJIS_PER_SEGMENT = 4
-EMOJI_W = 420
-EMOJI_H = 420
+MAX_EMOJIS_PER_SEGMENT = 1
+EMOJI_W = 110
+EMOJI_H = 110
 USED_EMOJIS = set()
 USED_ARGUMENTS = set()
 USED_PHRASES = set()
@@ -796,19 +796,12 @@ def render_video_segment(bg_path,ui_path,audio_path,subs_path,output_path,positi
     for idx, (gif_path, start_time, end_time) in enumerate(visual_inputs):
         input_idx = 3 + idx
         filter_parts.append(f"[{input_idx}:v]scale={EMOJI_W}:{EMOJI_H}[v{idx}]")
-        if idx%4==0:
-            vx=(VIDEO_W-EMOJI_W)//2
-            vy=140
-        elif idx%4==1:
-            vx=100
-            vy=180
-        elif idx%4==2:
-            vx=VIDEO_W-EMOJI_W-100
-            vy=180
-        else:
-            vx=(VIDEO_W-EMOJI_W)//2
-            vy=520
+        # One emoji at a time over subtitles, synced like chat replacement
+        # Centered horizontally, just above subtitles (subtitles at y=800, emoji at y=700)
+        vx=(VIDEO_W-EMOJI_W)//2
+        vy=700  # directly over subtitles, not covering stage/audience
         next_label=f"[tmp{idx}]"
+        # Small bounce effect for chat-like pop
         filter_parts.append(f"{last_label}[v{idx}]overlay={vx}:{vy}:enable='between(t,{start_time:.2f},{end_time:.2f})'{next_label}")
         last_label=next_label
     safe_subs=subs_path.replace(":", "\\:")
@@ -1037,43 +1030,50 @@ def calculate_round_average(results):
     return round(sum(r["A_total"] for r in results)/len(results),2), round(sum(r["B_total"] for r in results)/len(results),2)
 
 def create_emoji_plan(text, words):
+    # Chat-like: when a specific word is spoken, show emoji over subtitles synced to that word
+    # Like typing "serpent" and it becomes 🐍 right as you say it
     if not words:
         return []
-    sents=re.split(r'[.!?]+', text)
-    sents=[s.strip() for s in sents if len(s.strip())>15]
-    story_flow=get_visual_story_flow(text)
-    global STORY_FLOW_INDEX
-    try:
-        STORY_FLOW_INDEX
-    except NameError:
-        STORY_FLOW_INDEX=0
+    # Word -> emoji mapping for direct replacement sync
+    word_emoji_map={
+        "adam":"🧑","man":"🧑","human":"🧑","person":"👤","people":"👥","eve":"🧑","woman":"🧑",
+        "garden":"🌿","eden":"🌿",
+        "apple":"🍎","fruit":"🍎","trees":"🌳","tree":"🌳",
+        "serpent":"🐍","snake":"🐍",
+        "eyes":"👀","eye":"👀","naked":"🙈","shame":"🙈",
+        "afraid":"😨","fear":"😨","hide":"😨","hid":"😨",
+        "death":"💀","die":"💀","dust":"💀",
+        "sword":"⚔️","cherubim":"👼","angel":"👼",
+        "knowledge":"🧠","wise":"🧠","wisdom":"💡",
+        "god":"✨","lord":"✨",
+    }
     plan=[]
-    used_in_seg=set()
-    for idx, sent in enumerate(sents[:8]):
-        emojis=get_story_emojis(sent)
-        if not emojis: continue
-        sent_words=sent.lower().split()
-        for w_idx in range(len(words)):
-            if words[w_idx]["text"].lower() in sent_words:
-                start=float(words[w_idx]["start"])
-                end_idx=min(len(words)-1, w_idx+14)
-                end=float(words[end_idx]["end"])
-                for emoji_char in emojis[:1]:
-                    if emoji_char not in used_in_seg:
-                        if STORY_FLOW_INDEX < len(story_flow):
-                            story_emoji=story_flow[STORY_FLOW_INDEX % len(story_flow)]
-                            STORY_FLOW_INDEX+=1
-                            if any(kw in sent.lower() for kw in ["adam","man","apple","tree","serpent","eyes","shame","exile"]):
-                                chosen=emoji_char
-                            else:
-                                chosen=story_emoji
-                        else:
-                            chosen=emoji_char
-                        plan.append({"emoji":chosen, "start":max(0.0,start), "end":max(start+3.5,end), "label":chosen})
-                        used_in_seg.add(chosen)
-                        break
+    # Track used times to avoid overlap
+    used_times=[]
+    for w_idx, w in enumerate(words):
+        clean_w = re.sub(r"[^a-z]", "", w["text"].lower())
+        if clean_w in word_emoji_map:
+            start=float(w["start"])
+            end=float(w["end"]) + 1.2  # show for 1.2s as word is spoken, like chat replacement
+            # Avoid overlapping - only one at a time over subtitles
+            overlaps=False
+            for s,e in used_times:
+                if not (end < s or start > e):
+                    overlaps=True
+                    break
+            if overlaps:
+                continue
+            # Only show if not too frequent - at least 1.5s gap
+            if used_times and start - used_times[-1][1] < 1.2:
+                continue
+            emoji_char=word_emoji_map[clean_w]
+            # Skip if already shown very recently
+            if emoji_char in [p["emoji"] for p in plan[-2:]]:
+                continue
+            plan.append({"emoji":emoji_char, "start":max(0.0,start), "end":end, "label":clean_w, "word":w["text"]})
+            used_times.append((start,end))
+            if len(plan)>=6:  # max 6 per segment, but spaced out one at a time
                 break
-        if len(plan)>=MAX_EMOJIS_PER_SEGMENT: break
     return plan
 
 def create_segment(text,role,speaker_name,topic,segment_id,model_for_visuals,position=None,glow=None,judge_voice_index=None):
