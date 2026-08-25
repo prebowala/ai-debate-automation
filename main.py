@@ -136,23 +136,6 @@ def load_font(sz,bold=False):
     try: return ImageFont.truetype(p,sz)
     except: return ImageFont.load_default()
 
-def load_emoji_font(sz):
-    candidates=[
-        "/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf",
-        "/usr/share/fonts/truetype/noto/NotoEmoji-Regular.ttf",
-        "/usr/share/fonts/truetype/noto/NotoColorEmoji-Regular.ttf",
-        "/usr/share/fonts/truetype/ancient-scripts/Symbola.ttf",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-    ]
-    for fp in candidates:
-        if os.path.exists(fp):
-            try:
-                return ImageFont.truetype(fp, sz)
-            except:
-                continue
-    return load_font(sz,bold=True)
-
 def hex_to_rgba(h,a):
     h=h.lstrip("#")
     return (int(h[0:2],16),int(h[2:4],16),int(h[4:6],16),a)
@@ -415,42 +398,41 @@ def stitch_segments(segs,out):
     r=subprocess.run(cmd,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
     if r.returncode!=0: print(r.stderr[-7000:]); raise RuntimeError("Concat failed")
 
-# === STANDARD EMOJIS VISUAL STORY FLOW - ETHNICALLY AMBIGUOUS HUMANS ===
+# === STANDARD EMOJIS WITH TWEMOJI DOWNLOAD - FIX WHITE BOXES + ETHNICALLY AMBIGUOUS ===
+def emoji_to_codepoint(emoji_char):
+    # Convert emoji to Twemoji codepoint string like 1f9d1-200d-1f9b1
+    # Remove variation selectors and handle ZWJ sequences
+    codes=[]
+    for ch in emoji_char:
+        cp=ord(ch)
+        if cp==0xfe0f: # variation selector, skip in twemoji naming but keep logic
+            continue
+        codes.append(f"{cp:x}")
+    return "-".join(codes)
+
 def get_visual_story_flow(topic):
     tl=(topic or "").lower()
-    if "god" in tl and "serpent" in tl:
-        # Ethnically ambiguous human emojis: use gender-neutral, yellow default, silhouette forms
-        # 🧑 person (most ambiguous), 👤 bust silhouette, 👥 busts, 🧑‍🤝‍🧑 people holding hands
-        # Avoid light skin tone modifiers, use default yellow which is designed to be ambiguous
+    if "god" in tl or "serpent" in tl or "adam" in tl or "eve" in tl or "genesis" in tl:
+        # Ethnically ambiguous: 🧑 person (yellow default, most ambiguous), 👤 bust silhouette (no skin), 👥 people
+        # 🧑‍🦱 person curly hair - still yellow ambiguous
+        # Flows: person -> people, apple -> apple tree -> tree
         return [
-            # Man story: use most ambiguous forms - person, bust, not specific ethnicity
             "🧑", "👤", "🧑‍🦱", "👥",
-            # Woman story: person variants, not light-skinned
             "🧑", "👤",
-            # Garden
             "🌿", "🌱",
-            # Apple story: apple -> apple tree -> tree (flows as visual story)
             "🍎", "🍏", "🌳", "🌲",
-            # Serpent
             "🐍",
-            # Eyes opened -> shame -> fear -> hiding (flows)
             "👀", "👁️", "🙈", "😨",
-            # Consequence flow: pain -> toil -> dust -> exile -> sword
             "😣", "😓", "🪨", "🚪", "⚔️", "👼", "💀",
-            # Knowledge/wisdom
             "💡", "🧠",
         ]
     else:
-        # Generic for any topic - standard colorful emojis
         return ["💡","🔍","📖","⚖️","🧠","🌍","🌌","⭐","🔥","💧","🌳","🤖","💻","⚠️","✅","❓","🤔","💭"]
 
 def get_story_emojis(text):
     tl=text.lower()
-    # Ethnically ambiguous human emojis mapping - use yellow default, gender-neutral, silhouette
     keyword_to_emoji={
-        # Human/man - use most ambiguous: 🧑 person, 👤 bust silhouette, 👥 people, 🧑‍🦱 curly hair person
         "adam":"🧑","man":"🧑","men":"👥","human":"🧑","person":"👤","people":"👥","mankind":"👥","humanity":"👥",
-        # Woman - use ambiguous person forms
         "eve":"🧑","woman":"🧑","women":"👥",
         "garden":"🌿","eden":"🌿","plant":"🌱",
         "apple":"🍎","fruit":"🍎","eat":"🍎","green apple":"🍏",
@@ -486,30 +468,93 @@ def get_story_emojis(text):
         USED_EMOJIS.add(emoji_char)
     return relevant[:3]
 
+# Cache dir for twemoji
+EMOJI_CACHE_DIR="emoji_cache"
+os.makedirs(EMOJI_CACHE_DIR, exist_ok=True)
+
 def create_emoji_asset(emoji_char, index):
     filename=f"emoji_{index}.png"
     size=500
+    # Try Twemoji download first - standard colorful emojis, fixes white boxes
+    try:
+        code=emoji_to_codepoint(emoji_char)
+        # Twemoji CDN URLs - try multiple
+        urls=[
+            f"https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/{code}.png",
+            f"https://cdn.jsdelivr.net/gh/twitter/twemoji@latest/assets/72x72/{code}.png",
+            f"https://raw.githubusercontent.com/twitter/twemoji/master/assets/72x72/{code}.png",
+        ]
+        # Also try without ZWJ handling for complex emojis - fallback to first codepoint
+        if "-" in code:
+            first=code.split("-")[0]
+            urls.append(f"https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/{first}.png")
+        cached_path=os.path.join(EMOJI_CACHE_DIR, f"{code}.png")
+        emoji_img=None
+        if os.path.exists(cached_path):
+            try:
+                emoji_img=Image.open(cached_path).convert("RGBA")
+            except:
+                pass
+        if emoji_img is None:
+            for url in urls:
+                try:
+                    resp=requests.get(url, timeout=8)
+                    if resp.status_code==200 and len(resp.content)>500:
+                        emoji_img=Image.open(BytesIO(resp.content)).convert("RGBA")
+                        emoji_img.save(cached_path)
+                        break
+                except:
+                    continue
+        if emoji_img is not None:
+            # Composite onto 500x500 transparent canvas
+            img=Image.new("RGBA",(size,size),(0,0,0,0))
+            # Resize emoji to fit nicely with padding
+            emoji_resized=emoji_img.resize((380,380), Image.LANCZOS)
+            x=(size-380)//2
+            y=(size-380)//2
+            # Add subtle shadow for readability
+            shadow=Image.new("RGBA",(size,size),(0,0,0,0))
+            shadow_draw=ImageDraw.Draw(shadow)
+            shadow_draw.ellipse([x+6,y+6,x+380+6,y+380+6], fill=(0,0,0,60))
+            shadow=shadow.filter(ImageFilter.GaussianBlur(radius=6))
+            img=Image.alpha_composite(img, shadow)
+            img.paste(emoji_resized, (x,y), emoji_resized)
+            img.save(filename)
+            return filename
+    except Exception as e:
+        print(f"Twemoji download failed for {emoji_char} {code}: {e}, falling back to font")
+    # Fallback to font rendering with DejaVu if download fails
     img=Image.new("RGBA",(size,size),(0,0,0,0))
     draw=ImageDraw.Draw(img)
     try:
-        font=load_emoji_font(220)
+        # Try to find any emoji font
+        for fp in ["/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf","/usr/share/fonts/truetype/noto/NotoEmoji-Regular.ttf","/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"]:
+            if os.path.exists(fp):
+                try:
+                    font=ImageFont.truetype(fp, 220)
+                    bbox=draw.textbbox((0,0),emoji_char,font=font)
+                    w=bbox[2]-bbox[0]
+                    h=bbox[3]-bbox[1]
+                    x=(size-w)//2
+                    y=(size-h)//2-10
+                    draw.text((x+4, y+4), emoji_char, font=font, fill=(0,0,0,90))
+                    try:
+                        draw.text((x, y), emoji_char, font=font, fill=(255,255,255,255), embedded_color=True)
+                    except:
+                        draw.text((x, y), emoji_char, font=font, fill=(255,255,255,255))
+                    img.save(filename)
+                    return filename
+                except:
+                    continue
+        # Last resort - text label
+        font=load_font(80,bold=True)
+        draw.ellipse([50,50,450,450], fill=(100,100,100,200), outline=(255,255,255,200), width=4)
+        draw.text((250,250), emoji_char[:2], font=font, fill=(255,255,255,255), anchor="mm")
+        img.save(filename)
+        return filename
     except:
-        font=load_font(200,bold=True)
-    try:
-        bbox=draw.textbbox((0,0),emoji_char,font=font)
-        w=bbox[2]-bbox[0]
-        h=bbox[3]-bbox[1]
-        x=(size-w)//2
-        y=(size-h)//2-10
-        draw.text((x+4, y+4), emoji_char, font=font, fill=(0,0,0,90))
-        draw.text((x, y), emoji_char, font=font, fill=(255,255,255,255), embedded_color=True)
-    except Exception as e:
-        try:
-            draw.text((x, y), emoji_char, font=font, fill=(255,255,255,255))
-        except:
-            draw.text((size//2,size//2),emoji_char,font=font,fill=(255,255,255,255),anchor="mm")
-    img.save(filename)
-    return filename
+        img.save(filename)
+        return filename
 
 def create_background(position,glow,filename):
     import os
