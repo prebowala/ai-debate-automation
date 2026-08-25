@@ -22,42 +22,43 @@ VIDEO_H = 1080
 FPS = 30
 
 ROUNDS = 3
+WORDS_PER_SIDE_PER_ROUND = 500
 TURNS_PER_SIDE_PER_ROUND = 4
-WORDS_PER_TURN = 150
-MIN_TURN_WORDS = 120
-MAX_TURN_WORDS = 180
+WORDS_PER_TURN = 125
+MIN_TURN_WORDS = 105
+MAX_TURN_WORDS = 145
 
 MAX_JUDGES = 7
 JUDGE_WORKERS = 7
 
-MAX_VISUALS_PER_SEGMENT = 0  # Animations removed per user request
-MIN_VISUAL_GAP = 3.0
-VISUAL_W = 520
-VISUAL_H = 520
-VISUAL_Y = 160
-MAX_EMOJIS_PER_SEGMENT = 3
-EMOJI_W = 300
-EMOJI_H = 300
+MAX_VISUALS_PER_SEGMENT = 0
+MIN_VISUAL_GAP = 2.5
+MAX_EMOJIS_PER_SEGMENT = 4
+EMOJI_W = 380
+EMOJI_H = 380
 USED_EMOJIS = set()
 USED_VISUAL_LABELS = set()
 USED_JUDGE_INTROS = set()
+USED_ARGUMENTS = set()
+USED_PHRASES = set()
+USED_KEYWORDS = set()
+USED_JUDGE_EXPLANATIONS = set()
 
-# UNIQUE VOICES - distinct, natural, less robotic, varied accents/pitches
+# DISTINCT NATURAL VOICES - varied accents, less robotic
 VOICES = {
-    "A": "en-US-BrianMultilingualNeural",  # Deep authoritative - GOD
-    "B": "en-GB-SoniaNeural",  # British sly - SERPENT - distinct
-    "Moderator": "en-AU-NatashaNeural",  # Warm Australian - MODERATOR
+    "A": "en-US-BrianMultilingualNeural",
+    "B": "en-GB-SoniaNeural",
+    "Moderator": "en-AU-NatashaNeural",
 }
 JUDGE_VOICES = [
-    "en-US-JennyNeural",        # Warm US female
-    "en-GB-RyanNeural",         # Deep British male
-    "en-US-GuyNeural",          # Casual US male
-    "en-GB-LibbyNeural",        # Bright British female
-    "en-US-DavisNeural",        # Deep serious US male
-    "en-AU-WilliamNeural",      # Australian male
-    "en-CA-ClaraNeural",        # Canadian female
+    "en-US-JennyNeural",
+    "en-GB-RyanNeural",
+    "en-US-GuyNeural",
+    "en-GB-LibbyNeural",
+    "en-US-DavisNeural",
+    "en-AU-WilliamNeural",
+    "en-CA-ClaraNeural",
 ]
-assert len(set(list(VOICES.values()) + JUDGE_VOICES)) == 10
 JUDGE_VOICE_MAP = {}
 
 FALLBACK_MODELS = [
@@ -229,7 +230,6 @@ def choose_judges(avail,primary):
     return result
 
 def get_debate_roles(topic, model):
-    # GENERALIZED FOR ANY TOPIC from topic.txt
     tl=(topic or "").lower()
     if "god" in tl and "serpent" in tl:
         return {
@@ -266,18 +266,18 @@ def generate_fallback_debate(side_label, topic, round_num, turn_num):
     topic_short = topic[:130] if len(topic)>130 else topic
     if "GOD TOLD TRUTH" in side_label.upper():
         god_templates = {
-            (1,1): "Genesis 2:17 is clear. God says in the day you eat you shall surely die. Hebrew moth tamuth, dying you shall die. Serpent says in 3:4 lo moth temuthun, you shall not surely die. Direct contradiction. What happens that day? Chapter 3:7 eyes opened, they knew naked. Shame first time. Verse 8 hid from God's presence. Hiding is separation, Bible calls death.",
-            (1,2): "Notice God's generosity in 2:16. You may freely eat of every tree, every tree, one limit. Incredibly generous. Serpent twists in 3:1 did God really say you shall not eat of every tree? Makes God sound stingy, holding out. Classic deception, misrepresenting to plant doubt.",
-            (1,3): "Chapter 2:17 God commanded you shall surely die. Serpent 3:4 says you shall not surely die. One says die, other says won't. Can't both be true. Chapter 3:7-10 shows eyes opened, fear, shame, hiding. God warned death, relational death starts immediately.",
-            (1,4): "Look at Hebrew ki, for in the day. Genesis 2:4 says in the day Lord God made earth and heavens. Not 24-hour deadline, means when. When you eat, death becomes certain. 3:19 to dust you shall return. Serpent promised no death, false.",
-            (2,1): "Opponent says serpent told truth because they didn't drop dead that day. Misses what death means. Genesis 3:10 Adam afraid, hid. Fear not full life. Verse 19 dust you return. Mortality enters. Verses 23-24 driven out, cherubim block tree of life. That day they lost access to eternal life. Process started that day as warned.",
-            (2,2): "Argument they did not die that day ignores beyom usage. Genesis 2:4 beyom Lord God made earth and heavens. Means when. About certainty, not countdown. When you eat, death certain. Serpent half-truth: eyes opened, yes, but left out terrible consequence. Half-truth omitting crucial consequence is still lie.",
-            (2,3): "If serpent told whole truth, where warning about pain, toil, exile? Genesis 3:16-19 curses: pain, thorns, sweat, dust. Serpent said nothing. Said you shall be as gods. Chapter 3:22 they did become like God knowing good and evil, but at what cost? God told cost upfront. Serpent hid cost.",
-            (2,4): "Think tree of life 3:22-24. God says lest he take also tree of life and live forever, therefore drove man out, placed cherubim to guard. So that day they lost immortality. Death beginning. Serpent said you shall not surely die, but they lost everlasting life that day.",
-            (3,1): "Pull together. God warned in day you eat you shall surely die. Serpent said you shall not surely die, you shall be as gods. What happened? Eyes opened, yes, but also shame, fear, hiding, toil, pain, cut off from tree of life. That is death biblical sense, separation and mortality. Romans 5:12 sin entered and death through sin.",
-            (3,2): "Who told truth? God said death would come. Serpent said no death, just enlightenment. Story shows both enlightenment and death same time. Eyes opened, but also shame, blame, cursing, exile. If serpent told whole truth, where warning about losing Eden? Where warning returning to dust? He omitted cost. God did not.",
-            (3,3): "Consider character of God versus serpent. God creates, provides every tree, warns clearly. Serpent questions, distorts, promises without warning. 3:1 did God really say? Doubt. Verse 4 you shall not surely die. Denial. Verse 5 you shall be as gods. Desire. Pattern classic temptation: doubt, denial, desire. God told truth to protect.",
-            (3,4): "Final: Hebrew moth tamuth in 2:17 infinitive absolute, emphasizing surely die. Serpent lo moth temuthun, not surely die, directly negating emphasis. What happens? They do die, not instant drop. They die relationally that day, spiritually, begin dying physically. Adam lives 930 years but does die. God's surely came true.",
+            (1,1): "I want to start with what God actually said in Genesis 2 verse 17. He said in the day you eat of it you shall surely die, and the Hebrew is moth tamuth, an emphatic form meaning dying you shall die. It is about certainty, not just timing. The serpent directly contradicts that in chapter 3 verse 4 when he says you shall not surely die. So who is telling the truth? Look at what happened that very day. They experienced shame, fear, hiding, and separation from God. That is the beginning of death.",
+            (1,2): "Look at how generous God is in Genesis 2 verse 16. He says you may freely eat of every tree in the garden. Every single tree except one. That is incredibly generous. Then the serpent twists it in chapter 3 verse 1 and asks, did God really say you shall not eat of every tree? He makes God sound stingy when God was actually abundant. That kind of twisting is deceptive. God told the truth about provision.",
+            (1,3): "Genesis 2 verse 17 is a clear warning, and Genesis 3 verses 7 through 10 shows that warning coming true relationally that same day. Their eyes were opened but what came with it? Shame, fear, and hiding from God's presence. Verse 10 says I was afraid because I was naked and I hid myself. Fear and hiding are not fullness of life. That is a form of death starting immediately.",
+            (1,4): "The phrase in the day you eat appears in Genesis 2 verse 4 as well, in the day the Lord God made earth and heavens, meaning when, not a 24 hour timer. It is about when you eat, death becomes certain. And Genesis 3 verse 19 says to dust you shall return, and verses 23 to 24 say they were driven out and cherubim blocked the way to the tree of life. On that day they lost access to everlasting life.",
+            (2,1): "My opponent says they did not drop dead that day, so God lied, but that misses the biblical meaning of death. Genesis 3 verse 10 says Adam was afraid and hid. That is relational break. Verse 19 says to dust you shall return. Mortality entered. Verses 23 and 24 say they were driven out of Eden and cherubim guarded the tree of life. So on the day they ate, they lost immortality. The process of dying started that exact day.",
+            (2,2): "The argument that they did not die that day ignores how in the day is used elsewhere. Chapter 2 verse 4 says in the day the Lord made the heavens and earth. It means when. It is about certainty, not a countdown. When you eat, death becomes certain. And the serpent told a half truth. He said your eyes would be opened, and they were, but he left out the painful consequences. A half truth that hides cost is still misleading.",
+            (2,3): "If the serpent told the whole truth, where is the warning about pain, toil, and exile? Genesis 3 verses 16 to 19 lists real curses, pain in childbirth, thorns and thistles, sweat and hard work, and finally dust. The serpent said nothing about that. He only said you shall be as gods. Chapter 3 verse 22 says they did become like God knowing good and evil, but at what terrible cost? God told the cost upfront.",
+            (2,4): "Think about the tree of life in Genesis 3 verses 22 to 24. God says, lest he put forth his hand and take also of the tree of life and live forever, therefore He drove the man out and placed cherubim to keep the way. On that day they lost the chance to live forever. That is death beginning. The serpent said you shall not surely die, but they lost everlasting life that day.",
+            (3,1): "Let us pull it together. God warned that in the day you eat you shall surely die. The serpent said you shall not surely die, you shall be as gods. What actually happened? There was enlightenment, but also shame, blame, fear, toil, pain, and being cut off from the tree of life. That is death in the biblical sense, separation and mortality beginning. The serpent promised no death at all, but death is now the human condition.",
+            (3,2): "Who told the more complete truth? God said death would come when they ate, and He was generous with every tree but one. The serpent said no death, just godlikeness, and made God sound restrictive. The story shows both knowledge and death entering at once, eyes opened but also shame, cursing, and exile. If the serpent told the whole truth, where is his warning about losing Eden and returning to dust? He omitted the cost. God stated it upfront.",
+            (3,3): "Consider the character of the speakers. God creates, provides abundantly, and warns clearly to protect. The serpent questions in 3 verse 1, did God really say, that plants doubt, then denies in verse 4, you shall not surely die, and then appeals to desire in verse 5, you shall be as gods. That pattern is classic temptation, doubt, denial, desire. God told the truth to protect, serpent told half truth to entice.",
+            (3,4): "One last point about the Hebrew. Moth tamuth in Genesis 2 verse 17 is infinitive absolute, it emphasizes certainty, you shall surely die. The serpent says lo moth temuthun, you shall not surely die, directly negating God's emphasis. What happened? They did die, not as an instant drop, but relationally that day, and they began dying physically, and eventually returned to dust. Adam lived 930 years but he did die. God's surely came true.",
         }
         key = (round_num, turn_num if turn_num<=4 else ((turn_num-1)%4+1))
         return god_templates.get(key, god_templates[(3,4)])
@@ -300,171 +300,330 @@ def generate_fallback_debate(side_label, topic, round_num, turn_num):
         return serpent_templates.get(key, serpent_templates[(3,4)])
     else:
         generic = {
-            (1,1): f"On {topic_short}, {side_label} has stronger case when you look at evidence. Facts and logic point one direction. Opposing view relies on assumptions that don't hold. We should prefer explanation that fits what we actually see in real world. That is why {side_label} preferred.",
-            (1,2): f"Consider {topic_short} from first principles. {side_label} claims specific mechanism that can be tested. When we check against observation, it matches. Alternative struggles to explain common cases. That is why opening favors {side_label}.",
-            (1,3): f"I want to start with definition for {topic_short}. {side_label} defines terms clearly, avoids vague language. Says what would count as evidence against it. That falsifiability matters. Opponent shifts definition when challenged.",
-            (1,4): f"Look at everyday experience relevant to {topic_short}. {side_label} matches what people actually encounter daily. Explains both typical and edge cases. Alternative needs extra assumptions to fit same data.",
-            (2,1): f"My opponent raised points, but they don't address core evidence for {side_label} on {topic_short}. Counterexamples actually show when examined closely {side_label} accounts for them, while other view struggles. Logic holds step by step.",
-            (2,2): f"Let's answer directly what opponent said about {topic_short}. They claimed {side_label} fails on certain cases. But look closer. Those cases actually support {side_label} when you check details. They misread evidence.",
-            (2,3): f"Opponent tries to redefine terms for {topic_short}, but definition was clear at start. {side_label} keeps same definition throughout. Consistency matters. If you change definition mid-debate to avoid counterexample, you are not answering.",
-            (2,4): f"On {topic_short}, opponent says {side_label} has implausible consequences. But follow logic. Consequences they cite are actually what we observe. They call them implausible because they conflict with intuition, not evidence.",
-            (3,1): f"To close on {topic_short}, {side_label} offers coherent view that fits all evidence. Defines terms clearly, follows logic consistently, matches what we observe. Alternative relies on vague claims.",
-            (3,2): f"Final thought on {topic_short}: {side_label} explains more with less. Fewer assumptions, broader coverage, makes testable predictions. Other view needs add-ons for each new case.",
-            (3,3): f"Stepping back on {topic_short}, ask which view leaves you with better understanding? {side_label} gives mechanism, examples, handles objections. Other view says opponent wrong but doesn't give positive account.",
-            (3,4): f"Closing on {topic_short}, {side_label} wins on clarity, consistency, evidence. Says what it means, doesn't contradict itself, matches observations. Alternative fails at least one.",
+            (1,1): f"When we look at {topic_short}, I think {side_label} has the stronger case because it fits what we actually observe. The other side relies on assumptions that sound nice in theory but do not hold up when you test them against real cases. That is why {side_label} should be preferred here.",
+            (1,2): f"Let me put {topic_short} in simple terms. {side_label} is saying there is a clear mechanism that you can check. You can actually test it, and when you do, the evidence lines up. The opposing view struggles to explain the common cases we see every day. That points toward {side_label}.",
+            (1,3): f"Think about {topic_short} from first principles. What are we trying to explain? {side_label} offers an explanation that covers both the big picture and the details. The alternative sounds plausible until you look at the edge cases, then it breaks down.",
+            (1,4): f"On {topic_short}, I think we should ask what would happen if we adopted the other side. Would it make accurate predictions? {side_label} does. It tells you what to expect and you see it happen. That predictive power matters.",
         }
         key = (round_num, turn_num if turn_num<=4 else ((turn_num-1)%4+1))
-        return generic.get(key, generic[(3,4)])
+        return generic.get(key, f"On {topic_short}, {side_label} offers a clearer and more consistent account that fits the evidence we have.")
 
-USED_ARGUMENTS = set()
-USED_PHRASES = set()
-USED_KEYWORDS = set()
-USED_PHRASES = set()
-
-def generate_turn(side, topic, round_num, turn_num, previous_exchange, model, role_label, role_desc, opponent_label, opponent_desc):
-    prev_snip=(previous_exchange or "")[-1000:]
-    used_list = list(USED_ARGUMENTS)[-15:]
-    used_str = "; ".join(used_list) if used_list else "None yet"
-    if round_num==1:
-        round_focus=f"Opening round {turn_num}/4. Establish NEW foundation with evidence NOT used before. Avoid these already used: {used_str}"
-    elif round_num==2:
-        round_focus=f"Rebuttal round {turn_num}/4. Directly rebut opponent's last point with FRESH evidence and NEW angle. Do NOT repeat: {used_str}"
+USED_JUDGE_EXPLANATIONS = set()
+def generate_panel_commentary(model,side,topic,rn,ap,sk,prev,roles):
+    prov=get_judge_short_name(model); comp=get_company_name(model)
+    pref_label = roles['side_a_label'] if side=="A" else roles['side_b_label']
+    other_label = roles['side_b_label'] if side=="A" else roles['side_a_label']
+    recent="\n".join(prev[-4:]); used_expl = "\n".join(list(USED_JUDGE_EXPLANATIONS)[-8:])
+    def trim(t,mw=160): wl=t.split(); return t if len(wl)<=mw else " ".join(wl[-mw:])
+    tl_topic = (topic or "").lower()
+    is_genesis_topic = "god" in tl_topic and "serpent" in tl_topic
+    if side=="A":
+        prompt=f"You are {prov} from {comp}, judging round {rn} on {topic}. You scored {pref_label} HIGHER than {other_label} in this round. Explain why {pref_label} WON round {rn} specifically. Use different reasons than previous rounds. {pref_label}: {trim(ap)} vs {other_label}: {trim(sk)} RULES: MUST argue {pref_label} won round {rn}. Do NOT say {other_label} won. Give 2 specific reasons unique to round {rn}. Avoid repeating: {used_expl}. Natural full sentences, human-like, not robotic, vary from previous rounds."
     else:
-        round_focus=f"Closing round {turn_num}/4. Summarize with NEW synthesis, strongest FRESH points. Avoid repeating: {used_str}"
-    prompt=f"You are {role_label} debating live on YouTube about: {topic}. Your position: {role_desc}. Opponent is {opponent_label} who argues: {opponent_desc}. {round_focus} Previous opponent said: {prev_snip}. Write {WORDS_PER_TURN} words as REAL HUMAN would speak - natural, conversational, passionate. Use contractions (I'm, don't, can't, it's). Vary sentence length. Each sentence full with subject+verb. No dashes, no bullet points. Quote specific evidence. Rebut directly. Start immediately with point, no greeting. CRITICAL: Bring completely fresh arguments not used before. Sound like confident human debater. {MIN_TURN_WORDS}-{MAX_TURN_WORDS} words."
-    for m in [model]+FALLBACK_MODELS[:4]:
-        temp = 0.88 + (turn_num*0.03) + random.uniform(0,0.08)
-        resp=query_openrouter(prompt,m,max_tokens=850,temperature=temp)
-        if resp and count_words(resp)>=90:
-            cleaned=strip_filler(resp)
-            cleaned=re.sub(r"\s*-\s*"," . ",cleaned)
-            cleaned=re.sub(r"\s+"," ",cleaned).strip()
-            for phrase, repl in [("In conclusion","So"),("Furthermore","Also"),("Moreover","And"),("It is important to note","Notice")]:
-                cleaned=re.sub(rf"\b{phrase}\b", repl, cleaned, flags=re.IGNORECASE)
-            if not cleaned.endswith(('.', '!', '?')): cleaned+="."
-            cleaned=cleaned.replace(" - ", ". ").replace(" -",".")
-            cleaned=re.sub(r"https?://\S+"," ",cleaned)
-            lower_cleaned = cleaned.lower()
-            is_repeated = False
-            for used in USED_ARGUMENTS:
-                if used.lower() in lower_cleaned and len(used)>30:
-                    is_repeated=True; break
-            if not is_repeated or turn_num>2:
-                sents = cleaned.split('. ')
-                for s in sents[:3]:
-                    if len(s)>20:
-                        USED_ARGUMENTS.add(s[:80])
-                        USED_PHRASES.add(s[:50].lower())
-                if count_words(cleaned)>=MIN_TURN_WORDS-15:
-                    return cleaned[:1700]
-            extra=query_openrouter(f"Rewrite with completely fresh angle, avoid: {used_str}. Continue: "+cleaned[-200:],m,max_tokens=300,temperature=0.90)
-            if extra and count_words(extra)>40: cleaned+=" "+extra
-            return cleaned[:1700]
-    fallback = generate_fallback_debate(role_label, topic, round_num, turn_num)
-    if fallback[:60].lower() not in USED_PHRASES:
-        USED_ARGUMENTS.add(fallback[:80]); USED_PHRASES.add(fallback[:50].lower())
-        return fallback
-    return generate_fallback_debate(role_label, topic, round_num, turn_num+10)
+        prompt=f"You are {prov} from {comp}, judging round {rn} on {topic}. You scored {pref_label} HIGHER than {other_label} in round {rn}. Explain why {pref_label} WON this round {rn}, not previous rounds. {pref_label}: {trim(ap)} vs {other_label}: {trim(sk)} MUST argue {pref_label} won round {rn}. Point out a specific weakness in {other_label} in this round that you haven't mentioned before. Avoid: {used_expl}. Natural, full sentences, different from other rounds."
+    resp=query_openrouter(prompt,model,timeout=30,max_tokens=400,temperature=0.92)
+    if resp and len(resp.split())>=12:
+        low = resp.lower()
+        if f"{other_label.lower()} won" in low or f"i scored {other_label.lower()} higher" in low or f"{other_label.lower()} was more accurate" in low and side=="A" and is_genesis_topic==False:
+            pass
+        else:
+            resp=re.sub(r'As .*? to assess,','',resp,flags=re.IGNORECASE).strip()
+            resp=re.sub(r'As an? .*? judge,','',resp,flags=re.IGNORECASE).strip()
+            resp=re.sub(r'^I am .*? and I.*?[.]','',resp,flags=re.IGNORECASE).strip()
+            lower_resp=resp.lower()[:80]
+            is_rep=False
+            for used in USED_JUDGE_EXPLANATIONS:
+                if used.lower()[:50] in lower_resp and len(used)>20: is_rep=True; break
+            if not is_rep and len(resp.split())>=10:
+                USED_JUDGE_EXPLANATIONS.add(resp[:100]); return resp
+    if is_genesis_topic:
+        fallbacks_a=[
+            f"In round {rn}, I scored {pref_label} higher because they focused on relational death that day. Genesis 3 verse 10 says Adam was afraid and hid. Fear and hiding is break in fellowship, which Bible calls death. {other_label} only talked about physical drop.",
+            f"For round {rn}, {pref_label} won because they explained Hebrew beyom. Genesis 2 verse 4 uses in the day to mean when, not stopwatch. Stresses certainty. {other_label} read it as literal 24 hour deadline that doesn't fit Adam living 930 years.",
+            f"Round {rn} went to {pref_label} because they highlighted what serpent left out. He promised as gods but said nothing about pain, thorns, sweat, exile, losing tree of life verses 22-24. Omitting cost is misleading.",
+            f"In round {rn}, {pref_label} was stronger because they showed loss of immortality that day. Verse 22 says lest he take tree of life and live forever, verse 24 cherubim blocked way. On that day they lost everlasting life.",
+            f"For me, round {rn} belonged to {pref_label} because they dealt with character. God gave every tree freely and warned clearly, serpent questioned did God really say, twisting generosity into stinginess.",
+            f"In round {rn}, I leaned to {pref_label} because they used emphatic moth tamuth, surely die, vs lo moth temuthun, not surely die, showing direct negation. What followed was certain mortality, to dust you shall return verse 19.",
+            f"Round {rn} went to {pref_label} because they pointed out eyes opening came with shame, not just knowledge. Verse 7 they knew naked and sewed fig leaves. Shame not promised as positive. God warned disobedience brings brokenness.",
+            f"In round {rn}, {pref_label} convinced me because they tracked exile. Verses 23-24 Lord drove them out. Expulsion happened that day. Serpent promised elevation but said nothing about losing home.",
+            f"For round {rn}, {pref_label} won because they showed death as separation, not just breathing stopping. Genesis 3 shows separation from garden, ease, tree of life, all starting that day.",
+            f"Round {rn} for me was {pref_label} because serpent's promise of no death was absolute, you shall not surely die, but story shows death entering through toil, pain, return to dust. Absolute denial failed.",
+        ]
+        fallbacks_b=[
+            f"In round {rn}, I gave it to {pref_label} because they stayed with plain sense of yom. Genesis 1 defines day as evening and morning, chapter 2 verse 17 says in the day you eat you shall die. Adam did not die that day, lived 930 years per chapter 5 verse 5, while eyes did open exactly as serpent said chapter 3 verse 7.",
+            f"Round {rn} for me was {pref_label} because they pointed to God's own confirmation chapter 3 verse 22, where God says man has become like one of us knowing good and evil. Word for word what serpent promised verse 5.",
+            f"I scored {pref_label} higher in round {rn} because immediate outcome matched serpent's two predictions. God said you shall die that day, serpent said you shall not die but eyes opened. Verse 7 reports eyes opened, not death.",
+            f"In round {rn}, {pref_label} won because they showed woman's experience. Chapter 3 verse 6 she saw tree good for food, pleasant, desired to make wise, and ate. Verse 13 serpent beguiled me. She got wisdom as promised, not death that day.",
+            f"For round {rn}, I leaned to {pref_label} because they asked why God would need to block tree of life verses 22-24 if already dead that day. Cherubim placed to prevent living forever, implying still alive.",
+            f"Round {rn} went to {pref_label} because they highlighted death that day never reported. Chapter 3 verse 20 Adam called wife Eve mother of all living, chapter 4 verse 1 they conceived Cain. Building family, not lying dead.",
+            f"In round {rn}, {pref_label} convinced me because they compared threat versus report. Threat: in the day you die. Report: eyes opened, knew naked, sewed leaves, heard God walking. No report of death that day.",
+            f"For me, round {rn} belonged to {pref_label} because they showed serpent's second claim affirmed by God. Verse 5 as gods knowing good and evil, verse 22 God saying man has become as one of us. God affirms prediction.",
+            f"Round {rn} for me was {pref_label} because they kept definition consistent. If death means separation, text should say spiritual death, but never does. Says dust to dust verse 19 as future, not that day.",
+            f"In round {rn}, I scored {pref_label} higher because they exposed tension between warning and outcome. God warned death that day, serpent promised no death but enlightenment. Enlightenment happened verse 7, death did not.",
+        ]
+    else:
+        fallbacks_a=[
+            f"In round {rn}, I scored {pref_label} higher because they brought specific evidence and clear mechanism that fits data for this round. {other_label} relied on assumptions without showing how it explains cases in round {rn}.",
+            f"For round {rn}, {pref_label} won because they defined terms and stuck to them in this round. {other_label} shifted definitions when challenged in round {rn}, weakening clarity.",
+            f"Round {rn} went to {pref_label} because they directly answered opponent's strongest point from round {rn}, while {other_label} ignored key counter and repeated earlier claim.",
+            f"In round {rn}, {pref_label} was stronger because they acknowledged cost and trade-offs honestly in this exchange, while {other_label} presented only benefits.",
+            f"For me, round {rn} belonged to {pref_label} because they used a concrete example illustrating principle in action in round {rn}. {other_label} stayed abstract.",
+            f"In round {rn}, I leaned to {pref_label} because reasoning was internally consistent from premise to conclusion in this round. {other_label} had a leap where conclusion did not follow.",
+            f"Round {rn} went to {pref_label} because they showed why alternative fails to explain a common case that their view handles naturally in this round.",
+            f"In round {rn}, {pref_label} convinced me because they distinguished correlation from causation in this round, while {other_label} treated them same.",
+            f"For round {rn}, {pref_label} won because they were falsifiable and said what would count against them, and evidence still supported them in round {rn}.",
+            f"Round {rn} for me was {pref_label} because they balanced breadth and depth in round {rn}, covering big picture and crucial detail that decides case.",
+        ]
+        fallbacks_b=[
+            f"In round {rn}, I gave it to {pref_label} because they kept to plain meaning and showed immediate outcome matched prediction in round {rn}, while {other_label} added extra interpretation.",
+            f"Round {rn} for me was {pref_label} because they pointed to direct quote or data point that {other_label} had to reinterpret to make fit in this round.",
+            f"I scored {pref_label} higher in round {rn} because they showed two independent predictions both came true in this round, while {other_label} had one prediction that did not occur as stated.",
+            f"In round {rn}, {pref_label} won because they exposed a contradiction in {other_label}'s position in round {rn} that was not resolved.",
+            f"For round {rn}, I leaned to {pref_label} because they asked pointed question about why a key step would be needed if {other_label} were already correct in this round.",
+            f"Round {rn} went to {pref_label} because they showed lived outcome in round {rn}, people actually did what they predicted, while {other_label} predicted outcome not reported.",
+            f"In round {rn}, {pref_label} convinced me because they compared stated warning versus reported result in this round, and report matched {pref_label} better.",
+            f"For me, round {rn} belonged to {pref_label} because they showed even opposing source affirms key part of claim in round {rn}.",
+            f"Round {rn} for me was {pref_label} because they kept definition consistent throughout round {rn}, while {other_label} changed definition mid-debate.",
+            f"In round {rn}, I scored {pref_label} higher because they highlighted what was omitted by {other_label} in this round, hidden cost or consequence that full story includes.",
+        ]
+    import random as _rnd
+    pool = fallbacks_a if side=="A" else fallbacks_b
+    # Filter unused for this round
+    unused = [fb for fb in pool if fb[:60] not in USED_JUDGE_EXPLANATIONS]
+    if unused:
+        chosen = _rnd.choice(unused)
+    else:
+        chosen = _rnd.choice(pool)
+        # Make it unique by adding round-specific intro
+        chosen = f"Looking specifically at round {rn}, " + chosen[0].lower() + chosen[1:]
+    USED_JUDGE_EXPLANATIONS.add(chosen[:60])
+    return chosen
 
-def build_round_exchanges(topic, round_num, ap_model, sk_model, previous_history, roles):
-    ap_turns=[]; sk_turns=[]; hist=previous_history
-    for tn in range(1,TURNS_PER_SIDE_PER_ROUND+1):
-        a=generate_turn("A", topic, round_num, tn, hist, ap_model, roles['side_a_label'], roles['side_a_desc'], roles['side_b_label'], roles['side_b_desc'])
-        ap_turns.append(a); hist+=f"\n{roles['side_a_label']}:\n"+a+"\n\n"
-        s=generate_turn("B", topic, round_num, tn, hist, sk_model, roles['side_b_label'], roles['side_b_desc'], roles['side_a_label'], roles['side_a_desc'])
-        sk_turns.append(s); hist+=f"\n{roles['side_b_label']}:\n"+s+"\n\n"
-    return ap_turns, sk_turns, hist
+def build_intro(topic,jc,roles):
+    return f"Welcome to the AI Debate Arena. Today, {roles['side_a_label']} faces {roles['side_b_label']} on the question: {topic}. Three rounds, equal time. An independent panel of {jc} AI judges from leading companies will score argument strength, rebuttal quality, and clarity. Let's begin."
 
-def neutral_judge(model):
-    a=random.uniform(48,62); b=random.uniform(48,62)
-    if abs(a-b)<4: a+=6
-    return {"model":model,"provider":provider_from_model(model),"display_name":get_judge_short_name(model),"A_argument":round(a,1),"A_rebuttal":round(a+random.uniform(-3,3),1),"A_clarity":round(a+random.uniform(-2,2),1),"A_total":round(a,2),"B_argument":round(b,1),"B_rebuttal":round(b+random.uniform(-3,3),1),"B_clarity":round(b+random.uniform(-2,2),1),"B_total":round(b,2),"winner":"A" if a>b else "B"}
+def build_outro(jc,ca,cb,roles):
+    if math.isclose(ca,cb,abs_tol=0.01): res="a draw"
+    elif ca>cb: res=roles['side_a_label']
+    else: res=roles['side_b_label']
+    return f"After three rounds, our panel of {jc} judges gave {roles['side_a_label']} {ca:.1f}, {roles['side_b_label']} {cb:.1f}. Final result is {res}. Thank you for watching, and you decide who told the truth."
 
-def judge_round(model,topic,rn,ap,sk,roles):
-    ap_snip=ap[:900]; sk_snip=sk[:900]
-    prompt="You are expert debate judge. Topic: \""+topic+"\" Round "+str(rn)+"\n"+roles['side_a_label']+": "+ap_snip+"\n"+roles['side_b_label']+": "+sk_snip+"\nScore each side 0-100 on: argument strength, rebuttal quality, clarity\nReturn ONLY valid JSON, no other text:\n{\"A_argument\": 0-100, \"A_rebuttal\": 0-100, \"A_clarity\": 0-100, \"B_argument\": 0-100, \"B_rebuttal\": 0-100, \"B_clarity\": 0-100, \"winner\": \"A or B\", \"reason\": \"1 sentence why winner won\"}\nRules: Do NOT give both sides same total. Be decisive. Winner must have higher total. Avoid 50-50. Be critical and varied."
+def stitch_segments(segs,out):
+    lf="concat_list.txt"
+    open(lf,"w",encoding="utf-8").write("\n".join([f"file '{os.path.abspath(s).replace(chr(39),chr(39)+chr(92)+chr(39)+chr(39))}'" for s in segs])+"\n")
+    cmd=["ffmpeg","-y","-f","concat","-safe","0","-i",lf,"-c","copy",out]
+    r=subprocess.run(cmd,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+    if r.returncode!=0: print(r.stderr[-7000:]); raise RuntimeError("Concat failed")
 
-    for attempt_model in [model]+[m for m in ["openai/gpt-4o-mini:free","google/gemini-flash-1.5-8b:free"] if m!=model][:1]:
-        resp=query_openrouter(prompt,attempt_model,timeout=35,max_tokens=400,temperature=0.15)
-        if not resp: continue
+def get_story_emojis(text):
+    tl=text.lower()
+    emojis=[]
+    # More relevant and colorful mapping
+    mapping=[
+        (["heaven","sky","sun","light","day","creator","god light"], [("☀️","#FFD700"), ("🌤️","#87CEEB"), ("✨","#FFD700"), ("🌅","#FF6B35")]),
+        (["serpent","snake"], [("🐍","#2E8B57"), ("🐍","#228B22")]),
+        (["apple","fruit","eat"], [("🍎","#FF0000"), ("🍏","#32CD32"), ("🍎","#DC143C")]),
+        (["tree","garden","eden","plant"], [("🌳","#228B22"), ("🌿","#32CD32"), ("🌴","#228B22"), ("🌲","#006400")]),
+        (["eyes opened","eyes","see","naked","shame"], [("👀","#4169E1"), ("🙈","#8B4513"), ("👁️","#1E90FF")]),
+        (["hide","afraid","fear","anxious"], [("😨","#FF6347"), ("🫣","#FFA500"), ("😱","#FF4500")]),
+        (["pain","sorrow","childbirth","suffer"], [("😣","#FF1493"), ("💔","#FF0000"), ("😢","#4169E1")]),
+        (["toil","sweat","thorns","ground","work","labor"], [("😓","#FF8C00"), ("🪨","#696969"), ("⛏️","#8B4513"), ("🌵","#228B22")]),
+        (["exile","driven","cherubim","sword","gate","blocked"], [("🚪","#8B4513"), ("⚔️","#C0C0C0"), ("👼","#FFD700"), ("🚧","#FF4500")]),
+        (["dust","die","death","grave"], [("💀","#FFFFFF"), ("🌑","#2F4F4F"), ("⚰️","#8B4513")]),
+        (["tree of life","live forever","immortal","eternal"], [("🌳","#00FF00"), ("♾️","#9400D3"), ("💫","#FFD700")]),
+        (["knowledge","wise","know","wisdom","understand"], [("🧠","#FF69B4"), ("💡","#FFD700"), ("🦉","#8B4513"), ("📚","#4169E1")]),
+        (["lie","deceive","beguile","trick","false"], [("🤥","#FF6347"), ("🎭","#9370DB"), ("🕸️","#696969")]),
+        (["warn","command","law","rule"], [("⚠️","#FFD700"), ("📜","#DEB887"), ("🚨","#FF0000")]),
+        (["truth","evidence","proof","fact"], [("📖","#8B4513"), ("✅","#00FF00"), ("🔍","#1E90FF")]),
+        (["ai","robot","computer","intelligence","algorithm","data"], [("🤖","#C0C0C0"), ("💻","#4169E1"), ("🧠","#FF69B4"), ("🤖","#FF4500")]),
+        (["scales","justice","judge","fair"], [("⚖️","#FFD700"), ("👩‍⚖️","#4169E1")]),
+        (["universe","galaxy","cosmos","planet","stars","moon","night"], [("🌌","#4B0082"), ("🌙","#F0E68C"), ("⭐","#FFD700"), ("🪐","#FF6347")]),
+        (["earth","land","water","sea","ocean"], [("🌍","#228B22"), ("🌊","#1E90FF"), ("💧","#00BFFF")]),
+        (["question","choice","decide","dilemma"], [("❓","#FF4500"), ("🤔","#FFD700"), ("🔀","#9370DB")]),
+        (["love","heart","care"], [("❤️","#FF0000"), ("💖","#FF69B4")]),
+        (["fire","burn","flame"], [("🔥","#FF4500"), ("💥","#FF8C00")]),
+    ]
+    for keywords, emoji_colors in mapping:
+        if any(kw in tl for kw in keywords):
+            for emoji_char, color in emoji_colors:
+                key = f"{emoji_char}_{color}"
+                if key not in USED_EMOJIS:
+                    emojis.append((emoji_char, color))
+                    if len(emojis)>=3: break
+            if len(emojis)>=3: break
+    if not emojis:
+        emojis=[("💭","#FFFFFF")]
+    for emoji_char, color in emojis:
+        USED_EMOJIS.add(f"{emoji_char}_{color}")
+    return emojis[:3]
+
+def create_emoji_asset(emoji_color_tuple, index):
+    if isinstance(emoji_color_tuple, tuple):
+        emoji, color = emoji_color_tuple
+    else:
+        emoji = emoji_color_tuple
+        color = "#FFFFFF"
+    filename=f"emoji_{index}.png"
+    size=500
+    img=Image.new("RGBA",(size,size),(0,0,0,0))
+    draw=ImageDraw.Draw(img)
+    try:
+        font=load_font(200,bold=True)
+    except:
+        font=load_font(180,bold=True)
+    # Colorful emojis - not just plain white
+    # Convert color hex to rgb
+    try:
+        r=int(color[1:3],16); g=int(color[3:5],16); b=int(color[5:7],16)
+        fill_color=(r,g,b,255)
+        # Create glow with same color
+        glow_color=(r,g,b,80)
+    except:
+        fill_color=(255,255,255,255)
+        glow_color=(255,255,255,80)
+    try:
+        bbox=draw.textbbox((0,0),emoji,font=font)
+        w=bbox[2]-bbox[0]
+        h=bbox[3]-bbox[1]
+        x=(size-w)//2
+        y=(size-h)//2-10
+        # Colorful glow behind
+        for offset in [(6,6),(4,4),(2,2)]:
+            draw.text((x+offset[0], y+offset[1]), emoji, font=font, fill=glow_color)
+        # Main colorful emoji
+        draw.text((x, y), emoji, font=font, fill=fill_color)
+        # White highlight for readability
+        draw.text((x-1, y-1), emoji, font=font, fill=(255,255,255,60))
+    except:
+        draw.text((size//2,size//2),emoji,font=font,fill=fill_color,anchor="mm")
+    img.save(filename)
+    return filename
+
+def create_background(position,glow,filename):
+    import os
+    source=os.path.join(os.path.dirname(os.path.abspath(__file__)),"background.png")
+    if os.path.exists(source):
         try:
-            m=re.search(r"\{.*\}", resp, re.DOTALL)
-            if not m: continue
-            json_str=m.group(0).replace("'", '"').replace('“','"').replace('”','"')
-            d=json.loads(json_str)
-            aa=clamp_score(d.get("A_argument")); ar=clamp_score(d.get("A_rebuttal")); ac=clamp_score(d.get("A_clarity"))
-            ba=clamp_score(d.get("B_argument")); br=clamp_score(d.get("B_rebuttal")); bc=clamp_score(d.get("B_clarity"))
-            at=(aa+ar+ac)/3; bt=(ba+br+bc)/3
-            if at==bt:
-                if aa+ar > ba+br: at+=2
-                else: bt+=2
-            calculated_winner="A" if at>bt else "B"
-            winner_raw=str(d.get("winner","")).upper()
-            final_winner=calculated_winner
-            if winner_raw in ["A","B"] and winner_raw!=calculated_winner:
-                if abs(at-bt)<3:
-                    if winner_raw=="A": at=bt+3
-                    else: bt=at+3
-                    final_winner=winner_raw
-            if abs(at-bt)<1.5:
-                if final_winner=="A": at+=2.5
-                else: bt+=2.5
-            return {"model":model,"provider":provider_from_model(model),"display_name":get_judge_short_name(model),"A_argument":round(aa,1),"A_rebuttal":round(ar,1),"A_clarity":round(ac,1),"A_total":round(at,2),"B_argument":round(ba,1),"B_rebuttal":round(br,1),"B_clarity":round(bc,1),"B_total":round(bt,2),"winner":final_winner,"reason":str(d.get("reason",""))[:200]}
-        except Exception as e:
-            try:
-                nums=re.findall(r'"[AB]_(?:argument|rebuttal|clarity)"\s*:\s*(\d+(?:\.\d+)?)', resp, re.IGNORECASE)
-                if len(nums)>=6:
-                    vals=[float(n) for n in nums[:6]]
-                    aa,ar,ac,ba,br,bc=vals
-                    at=(aa+ar+ac)/3; bt=(ba+br+bc)/3
-                    if abs(at-bt)<1: bt+=3
-                    return {"model":model,"provider":provider_from_model(model),"display_name":get_judge_short_name(model),"A_argument":round(aa,1),"A_rebuttal":round(ar,1),"A_clarity":round(ac,1),"A_total":round(at,2),"B_argument":round(ba,1),"B_rebuttal":round(br,1),"B_clarity":round(bc,1),"B_total":round(bt,2),"winner":"A" if at>bt else "B"}
-            except: pass
-            continue
-    return neutral_judge(model)
+            img=Image.open(source).convert("RGB").resize((VIDEO_W,VIDEO_H),Image.LANCZOS)
+            img.save(filename)
+            return
+        except: pass
+    img=Image.new("RGBA",(VIDEO_W,VIDEO_H),(12,14,24,255))
+    draw=ImageDraw.Draw(img)
+    for y in range(VIDEO_H):
+        ratio=y/VIDEO_H
+        r=int(12+10*ratio); g=int(14+16*ratio); b=int(24+28*ratio)
+        draw.line([0,y,VIDEO_W,y], fill=(r,g,b,255))
+    if position=="left": cx=VIDEO_W*0.22
+    elif position=="right": cx=VIDEO_W*0.78
+    else: cx=VIDEO_W*0.5
+    cy=VIDEO_H*0.75
+    for rad in range(120,30,-15):
+        alpha=int(10*(1-rad/120))
+        draw.ellipse([cx-rad, cy-rad, cx+rad, cy+rad], fill=(*hex_to_rgba(glow, alpha)[:3], alpha))
+    img=img.filter(ImageFilter.GaussianBlur(radius=0.8))
+    img.save(filename)
 
-def evaluate_round(judges,topic,rn,ap,sk,roles):
-    results=[]
-    print(f"⚖️ Asking {len(judges)} independent AI judges...")
-    def worker(model): return judge_round(model,topic,rn,ap,sk,roles)
-    with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, min(JUDGE_WORKERS, len(judges)))) as executor:
-        futures={executor.submit(worker, model): model for model in judges}
-        completed=0
-        for future in concurrent.futures.as_completed(futures):
-            model=futures[future]
-            try:
-                result=future.result()
-                results.append(result); completed+=1
-                print(f"   ✓ Judge {completed}/{len(judges)} — {result['provider']} ({result['display_name']}) {result['A_total']:.1f} vs {result['B_total']:.1f} -> {result['winner']}")
-            except Exception as exc:
-                print(f"   ✗ Judge failed {provider_from_model(model)}: {str(exc)[:100]}")
-    if not results: results=[neutral_judge("fallback")]
-    return results
+def create_ui_overlay(speaker_name,topic,position,glow,filename):
+    img=Image.new("RGBA",(VIDEO_W,VIDEO_H),(0,0,0,0))
+    draw=ImageDraw.Draw(img)
+    font_bold=load_font(44,bold=True); font_small=load_font(22,bold=True)
+    if position=="left": x=90; anchor="lm"
+    elif position=="right": x=VIDEO_W-90; anchor="rm"
+    else: x=VIDEO_W//2; anchor="mm"
+    y=VIDEO_H-105
+    bbox=draw.textbbox((0,0), speaker_name, font=font_bold, anchor=anchor)
+    pad=18
+    rect_x0=x+bbox[0]-pad if anchor!="rm" else x+bbox[0]-pad
+    rect_y0=y+bbox[1]-pad; rect_x1=x+bbox[2]+pad; rect_y1=y+bbox[3]+pad
+    if anchor=="lm": rect_x0=x-pad; rect_x1=x+bbox[2]-bbox[0]+pad*2
+    elif anchor=="rm": rect_x0=x-(bbox[2]-bbox[0])-pad*2; rect_x1=x+pad
+    else: rect_x0=x-(bbox[2]-bbox[0])//2-pad; rect_x1=x+(bbox[2]-bbox[0])//2+pad
+    draw.rounded_rectangle([rect_x0,rect_y0,rect_x1,rect_y1], fill=(0,0,0,170), outline=hex_to_rgba(glow,220), width=2)
+    draw.ellipse([rect_x0+12,rect_y0+18,rect_x0+28,rect_y0+34], fill=hex_to_rgba(glow,255))
+    draw.text((x,y), speaker_name, font=font_bold, fill=(255,255,255,255), anchor=anchor)
+    topic_short=topic[:90]
+    draw.text((VIDEO_W//2, 70), topic_short, font=font_small, fill=(255,255,255,180), anchor="mm")
+    img.save(filename)
+    return x,y
 
-def calculate_round_average(results):
-    return round(sum(r["A_total"] for r in results)/len(results),2), round(sum(r["B_total"] for r in results)/len(results),2)
+def ffmpeg_filter_path(filename):
+    path=os.path.abspath(filename)
+    path=path.replace("\\","/").replace("'","\\'").replace(":","\\:")
+    return path
+
+def get_audio_duration(path):
+    try:
+        r=subprocess.run(["ffprobe","-v","error","-show_entries","format=duration","-of","default=noprint_wrappers=1:nokey=1",path],stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,timeout=10)
+        return float(r.stdout.strip())
+    except: return 0.0
+
+def format_ass_time(sec):
+    h=int(sec//3600); m=int((sec%3600)//60); s=int(sec%60); cs=int((sec-int(sec))*100)
+    return f"{h}:{m:02d}:{s:02d}.{cs:02d}"
+
+def ass_escape(t):
+    return t.replace("\\","\\\\").replace("{","\\{").replace("}","\\}")
+
+def generate_subtitles(words,filename,scorecard=False,audio_file=None,full_text=None):
+    header="[Script Info]\nScriptType: v4.00+\nPlayResX: 1920\nPlayResY: 1080\nWrapStyle: 0\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: DebateSub,DejaVu Sans,54,&H00FFFFFF,&H00FFFFFF,&H00000000,&H64000000,1,0,0,0,100,100,0,0,1,3,1,2,20,20,60,1\nStyle: ScoreSub,DejaVu Sans,42,&H00FFFFFF,&H00FFFFFF,&H00000000,&H64000000,1,0,0,0,100,100,0,0,1,2,1,2,20,20,40,1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
+    events=[]
+    if scorecard and audio_file and full_text:
+        dur=get_audio_duration(audio_file) or 6.0
+        txt=ass_escape(full_text)
+        events.append(f"Dialogue: 0,0:00:00.00,{format_ass_time(dur)},ScoreSub,,0,0,0,,{txt}")
+        open(filename,"w",encoding="utf-8").write(header+"\n".join(events)+"\n")
+        return
+    if not words:
+        return
+    if audio_file:
+        try:
+            actual=get_audio_duration(audio_file)
+            if actual>1 and words:
+                est=words[-1].get("end",actual)
+                if abs(est-actual)>0.5 and est>0:
+                    scale=actual/est
+                    for w in words:
+                        w["start"]=w["start"]*scale
+                        w["end"]=w["end"]*scale
+        except: pass
+    chunk=[]
+    last_end=0
+    for w in words:
+        if not chunk:
+            chunk=[w]; last_end=w["end"]
+        elif w["start"]-last_end>0.6 or len(chunk)>=10:
+            s=chunk[0]["start"]; e=last_end
+            txt_words=[ass_escape(c["text"]) for c in chunk]
+            lines=[]
+            for i in range(0,len(txt_words),12): lines.append(" ".join(txt_words[i:i+12]))
+            if len(lines)>4: lines=lines[:4]
+            txt="\\N".join(lines)
+            ass_text="{\\an2\\pos(960,800)\\q2\\fad(120,120)}"+txt
+            events.append(f"Dialogue: 0,{format_ass_time(s)},{format_ass_time(e)},DebateSub,,0,0,0,,{ass_text}")
+            chunk=[w]; last_end=w["end"]
+        else:
+            chunk.append(w); last_end=w["end"]
+    if chunk:
+        s=chunk[0]["start"]; e=last_end
+        txt_words=[ass_escape(c["text"]) for c in chunk]
+        lines=[]
+        for i in range(0,len(txt_words),12): lines.append(" ".join(txt_words[i:i+12]))
+        if len(lines)>4: lines=lines[:4]
+        txt="\\N".join(lines)
+        ass_text="{\\an2\\pos(960,800)\\q2\\fad(120,120)}"+txt
+        events.append(f"Dialogue: 0,{format_ass_time(s)},{format_ass_time(e)},DebateSub,,0,0,0,,{ass_text}")
+    open(filename,"w",encoding="utf-8").write(header+"\n".join(events)+"\n")
 
 async def generate_audio_async(text,voice,filename):
-    clean_text = clean_for_speech(text)
-    # More natural, less robotic - varied style, pitch, rate per voice
-    if "Sonia" in voice or "Ava" in voice or "Jenny" in voice or "Libby" in voice or "Clara" in voice:
-        # Female voices - warmer, slightly faster, more expressive
-        style = "friendly"
-        rate = "+4%"
-        pitch = "+2%"
-        degree = "1.1"
+    clean_text=clean_for_speech(text)
+    if "Sonia" in voice or "Jenny" in voice or "Libby" in voice or "Clara" in voice or "Natasha" in voice:
+        style="friendly"; rate="+3%"; pitch="+1%"; degree="1.1"
     elif "Brian" in voice or "Davis" in voice or "William" in voice or "Ryan" in voice or "Guy" in voice:
-        # Male voices - deeper, slower, authoritative but natural
-        style = "chat"
-        rate = "-1%"
-        pitch = "-3%"
-        degree = "1.0"
+        style="chat"; rate="-1%"; pitch="-2%"; degree="1.0"
     else:
-        style = "chat"
-        rate = "+2%"
-        pitch = "+0%"
-        degree = "1.1"
-    ssml_text = f"<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xmlns:mstts='http://www.w3.org/2001/mstts' xml:lang='en-US'><voice name='{voice}'><mstts:express-as style='{style}' styledegree='{degree}'><prosody rate='{rate}' pitch='{pitch}' volume='+0%'>{clean_text}</prosody></mstts:express-as></voice></speak>"
+        style="chat"; rate="+1%"; pitch="+0%"; degree="1.0"
+    ssml_text=f"<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xmlns:mstts='http://www.w3.org/2001/mstts' xml:lang='en-US'><voice name='{voice}'><mstts:express-as style='{style}' styledegree='{degree}'><prosody rate='{rate}' pitch='{pitch}' volume='+0%'>{clean_text}</prosody></mstts:express-as></voice></speak>"
     try:
         com=edge_tts.Communicate(ssml_text,voice)
         audio=b""; words=[]
@@ -479,7 +638,7 @@ async def generate_audio_async(text,voice,filename):
     except Exception as e:
         print(f"TTS chat failed {e}, friendly")
         try:
-            ssml2 = f"<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xmlns:mstts='http://www.w3.org/2001/mstts' xml:lang='en-US'><voice name='{voice}'><mstts:express-as style='friendly'><prosody rate='+3%'>{clean_text}</prosody></mstts:express-as></voice></speak>"
+            ssml2=f"<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xmlns:mstts='http://www.w3.org/2001/mstts' xml:lang='en-US'><voice name='{voice}'><mstts:express-as style='friendly'><prosody rate='+3%'>{clean_text}</prosody></mstts:express-as></voice></speak>"
             com=edge_tts.Communicate(ssml2,voice)
             audio=b""; words=[]
             async for chunk in com.stream():
@@ -507,7 +666,7 @@ async def generate_audio_async(text,voice,filename):
 
 def generate_audio(text,role,filename,judge_voice_index=None):
     if "JUDGE" in role.upper():
-        idx = judge_voice_index if judge_voice_index is not None else 0
+        idx=judge_voice_index if judge_voice_index is not None else 0
         voice=JUDGE_VOICES[idx % len(JUDGE_VOICES)]
     elif "GOD TOLD TRUTH" in role.upper(): voice=VOICES["A"]
     elif "SERPENT TOLD TRUTH" in role.upper(): voice=VOICES["B"]
@@ -516,529 +675,79 @@ def generate_audio(text,role,filename,judge_voice_index=None):
     except Exception as e:
         print(f"TTS primary failed {voice}: {e}, trying fallback same category")
         try:
-            if "JUDGE" in role.upper():
-                fallback_voice = JUDGE_VOICES[((judge_voice_index or 0)+1) % len(JUDGE_VOICES)]
-                return asyncio.run(generate_audio_async(text,fallback_voice,filename))
-            else:
-                return asyncio.run(generate_audio_async(text,voice,filename))
+            if "GOD" in role.upper(): fb_voice="en-US-GuyNeural"
+            elif "SERPENT" in role.upper(): fb_voice="en-GB-LibbyNeural"
+            else: fb_voice="en-US-JennyNeural"
+            return asyncio.run(generate_audio_async(text,fb_voice,filename))
         except:
-            return asyncio.run(generate_audio_async(text,VOICES["Moderator"],filename))
-
-def format_ass_time(s):
-    s=max(0.0,float(s)); h=int(s//3600); m=int((s%3600)//60); sec=s%60
-    return f"{h}:{m:02d}:{sec:05.2f}"
-def ass_escape(t): return str(t).replace("\\","\\\\").replace("{","\\{").replace("}","\\}")
-
-def get_audio_duration(filename):
-    try:
-        cmd=["ffprobe","-v","error","-show_entries","format=duration","-of","default=noprint_wrappers=1:nokey=1",filename]
-        r=subprocess.run(cmd,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,timeout=5)
-        return float(r.stdout.strip())
-    except: return None
-
-def generate_subtitles(words,filename,scorecard=False,audio_file=None,full_text=None):
-    margin_v=90 if scorecard else 185
-    font_size=40 if scorecard else 38
-    header=f"[Script Info]\nScriptType: v4.00+\nPlayResX: 1920\nPlayResY: 1080\nWrapStyle: 0\nScaledBorderAndShadow: yes\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: DebateSub,DejaVu Sans,{font_size},&H00FFFFFF,&H00FFFFFF,&H00000000,&HCC000000,1,0,0,0,100,100,0,0,1,3.8,1,2,200,200,{margin_v},1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
-    if not words:
-        open(filename,"w",encoding="utf-8").write(header); return
-    total_duration=None
-    if audio_file and os.path.exists(audio_file):
-        total_duration=get_audio_duration(audio_file)
-    clean_words=[{"text":str(w.get("text","")).strip(),"start":float(w.get("start",0)),"end":float(w.get("end",0))} for w in words if str(w.get("text","")).strip()]
-    if total_duration and clean_words:
-        last_word_end = clean_words[-1]["end"] if clean_words else 1.0
-        if last_word_end>0 and abs(last_word_end-total_duration)>0.3:
-            scale = total_duration / last_word_end
-            for w in clean_words:
-                w["start"]*=scale; w["end"]*=scale
-            print(f"   Rescaled subtitles {last_word_end:.2f}s -> {total_duration:.2f}s to fix drift")
-    if full_text and total_duration:
-        sentences=re.split(r'(?<=[.!?])\s+', full_text.strip())
-        sentences=[s for s in sentences if s.strip()]
-        total_words=sum(count_words(s) for s in sentences)
-        if total_words==0: total_words=len(full_text.split())
-        events=[]; cur_time=0.0
-        for sent in sentences:
-            sw=count_words(sent)
-            if sw==0: continue
-            dur=(sw/total_words)*total_duration
-            dur=max(1.2, dur)
-            s=cur_time; e=cur_time+dur
-            if e>total_duration: e=total_duration
-            txt_words=sent.split()
-            lines=[]
-            for i in range(0,len(txt_words),12):
-                lines.append(" ".join(txt_words[i:i+12]))
-            if len(lines)>4: lines=lines[:4]
-            txt="\\N".join([ass_escape(w) for w in lines])
-            ass_text="{\\an2\\pos(960,800)\\q2\\fad(120,120)}"+txt
-            events.append(f"Dialogue: 0,{format_ass_time(s)},{format_ass_time(e)},DebateSub,,0,0,0,,{ass_text}")
-            cur_time=e
-            if cur_time>=total_duration: break
-        open(filename,"w",encoding="utf-8").write(header+"\n".join(events)+"\n")
-        return
-    WORDS_PER_CHUNK=65
-    chunks=[]; cur=[]
-    for w in clean_words:
-        cur.append(w)
-        if str(w["text"]).strip().endswith(('.', '?', '!')) and len(cur)>=32:
-            chunks.append(cur); cur=[]
-        elif len(cur)>=WORDS_PER_CHUNK:
-            chunks.append(cur); cur=[]
-    if cur: chunks.append(cur)
-    events=[]; last_end=0.0
-    for chunk in chunks:
-        if not chunk: continue
-        s=float(chunk[0]["start"])-0.15; e=float(chunk[-1]["end"])+0.6
-        if s<last_end: s=last_end+0.01
-        if e<=s: e=s+1.5
-        if total_duration and e>total_duration: e=total_duration
-        last_end=e
-        txt_words=[ass_escape(w["text"]) for w in chunk]
-        lines=[]
-        for i in range(0,len(txt_words),12): lines.append(" ".join(txt_words[i:i+12]))
-        if len(lines)>4: lines=lines[:4]
-        txt="\\N".join(lines).replace("\\\\N","\\N")
-        ass_text="{\\an2\\pos(960,800)\\q2\\fad(120,120)}"+txt
-        events.append(f"Dialogue: 0,{format_ass_time(s)},{format_ass_time(e)},DebateSub,,0,0,0,,{ass_text}")
-    open(filename,"w",encoding="utf-8").write(header+"\n".join(events)+"\n")
-
-def fallback_visual_plan(text):
-    # GENERALIZED - works for any topic.txt, not just Genesis
-    tl=text.lower()
-    visuals=[]
-    genesis_kws=[
-        ("heaven","Heaven","heaven with sun and clouds, detailed"),
-        ("earth","Earth","earth with mountains and land, detailed"),
-        ("day","Day light","bright day with sun, detailed"),
-        ("night","Night sky","night with moon and stars, detailed"),
-        ("light","Light rays","sun with bright rays, detailed"),
-        ("darkness","Darkness","dark sky with stars, detailed"),
-        ("evening","Evening","evening sky with orange sunset, detailed"),
-        ("morning","Morning","morning sunrise, detailed"),
-        ("water","Water waves","blue water waves, detailed"),
-        ("sky","Sky clouds","sky with clouds, detailed"),
-        ("land","Land mountains","land with mountains, detailed"),
-        ("sun","Sun bright","bright sun with rays, detailed"),
-        ("moon","Moon night","moon in night sky, detailed"),
-        ("stars","Stars constellation","stars in night sky, detailed"),
-        ("sea","Sea waves","sea with waves, detailed"),
-        ("tree","Tree in garden","tree with leaves and apples, detailed"),
-        ("fruit","Eating fruit","person eating fruit, detailed"),
-        ("apple","Apple on branch","red apple hanging from branch, detailed"),
-        ("garden","Garden of Eden","garden with trees and flowers, detailed"),
-        ("serpent","Serpent on branch","snake on branch with tongue, detailed"),
-        ("snake","Snake","snake slithering, detailed"),
-        ("god","God light","sun with bright rays, detailed"),
-        ("lord","Lord light","bright light from above, detailed"),
-        ("adam","Adam figure","man figure detailed"),
-        ("eve","Eve figure","woman figure detailed"),
-        ("man","Man figure","man figure detailed"),
-        ("woman","Woman figure","woman figure detailed"),
-        ("eyes opened","Eyes opened","eyes opening wide, detailed"),
-        ("naked","Naked shame","figures covering with leaves, detailed"),
-        ("hide","Hiding","figures hiding behind tree, detailed"),
-        ("dust","Dust ground","dust and ground, detailed"),
-        ("cherubim","Cherubim angel","angel with sword, detailed"),
-        ("sword","Sword flaming","flaming sword, detailed"),
-        ("die","Dying","figure lying dying, detailed"),
-        ("death","Death","death and dust, detailed"),
-    ]
-    ai_kws=[
-        ("ai","AI brain","robot brain with circuits, detailed"),
-        ("artificial","Artificial intelligence","robot head detailed"),
-        ("robot","Robot","robot head detailed"),
-        ("regulation","Scales of justice","balanced scales detailed"),
-        ("regulate","Regulation","scales of justice detailed"),
-        ("bias","Bias warning","warning sign detailed"),
-        ("algorithm","Algorithm","flowing data blocks detailed"),
-        ("data","Data","database with data points detailed"),
-        ("computer","Computer","computer with screen detailed"),
-        ("technology","Technology","tech with circuits detailed"),
-        ("intelligence","Intelligence brain","brain with circuits detailed"),
-    ]
-    cosmos_kws=[
-        ("universe","Universe","galaxy with stars detailed"),
-        ("creator","Creator light","bright sun with rays detailed"),
-        ("cosmos","Cosmos","galaxy spiral detailed"),
-        ("big bang","Big Bang","explosion with stars detailed"),
-        ("galaxy","Galaxy","spiral galaxy detailed"),
-        ("planet","Planet","planet with rings detailed"),
-        ("atom","Atom","atom with electrons detailed"),
-        ("evolution","Evolution","DNA helix detailed"),
-        ("dna","DNA","dna helix detailed"),
-        ("creation","Creation","creation light detailed"),
-        ("exist","Existence","question mark with stars detailed"),
-    ]
-    generic_kws=[
-        ("evidence","Evidence","open book with light detailed"),
-        ("logic","Logic","lightbulb with gears detailed"),
-        ("truth","Truth","lightbulb glowing detailed"),
-        ("choice","Choice","fork in road with two paths detailed"),
-        ("free will","Free will","brain with choice detailed"),
-        ("determin","Determinism","chain links detailed"),
-        ("moral","Morality","scales balancing heart and brain detailed"),
-        ("ethic","Ethics","scales of justice detailed"),
-        ("justice","Justice","balanced scales detailed"),
-        ("argument","Debate","two podiums facing detailed"),
-        ("debate","Debate stage","debate stage with podiums detailed"),
-        ("question","Question","question mark with light detailed"),
-        ("life","Life","heart with pulse detailed"),
-        ("knowledge","Knowledge","book with light detailed"),
-        ("wisdom","Wisdom","owl with book detailed"),
-    ]
-    all_kws = genesis_kws + ai_kws + cosmos_kws + generic_kws
-    for kw,label,desc in all_kws:
-        start=0
-        while len(visuals)<MAX_VISUALS_PER_SEGMENT:
-            idx=tl.find(kw, start)
-            if idx==-1: break
-            phrase=text[max(0,idx-15):idx+len(kw)+25].strip() or kw
-            if not any(v["phrase"]==phrase for v in visuals):
-                visuals.append({"phrase":phrase,"label":label,"description":desc,"kind":"concept"})
-            start=idx+len(kw)
-            if len(visuals)>=MAX_VISUALS_PER_SEGMENT: break
-        if len(visuals)>=MAX_VISUALS_PER_SEGMENT: break
-    if len(visuals)<3:
-        if any(w in tl for w in ["ai","artificial","robot","regulation","algorithm","tech"]):
-            visuals.extend([
-                {"phrase":text[:30],"label":"AI brain","description":"robot brain with circuits, detailed","kind":"concept"},
-                {"phrase":text[:30],"label":"Scales of justice","description":"balanced scales detailed","kind":"concept"},
-            ])
-        elif any(w in tl for w in ["heaven","earth","god","creator","universe"]):
-            visuals.extend([
-                {"phrase":text[:30],"label":"Heaven","description":"heaven with clouds and sun detailed","kind":"concept"},
-                {"phrase":text[:30],"label":"Earth","description":"earth with land and water detailed","kind":"concept"},
-                {"phrase":text[:30],"label":"Tree in garden","description":"tree with apples detailed","kind":"concept"},
-            ])
-        else:
-            visuals.extend([
-                {"phrase":text[:30],"label":"Debate stage","description":"two podiums with figures detailed","kind":"concept"},
-                {"phrase":text[:30],"label":"Lightbulb idea","description":"lightbulb glowing detailed","kind":"concept"},
-            ])
-    seen=set(); unique=[]
-    for v in visuals:
-        if v["label"] not in seen:
-            unique.append(v); seen.add(v["label"])
-        if len(unique)>=MAX_VISUALS_PER_SEGMENT: break
-    if len(unique)<MAX_VISUALS_PER_SEGMENT:
-        for v in visuals:
-            if v not in unique:
-                unique.append(v)
-            if len(unique)>=MAX_VISUALS_PER_SEGMENT: break
-    return unique[:MAX_VISUALS_PER_SEGMENT]
-
-def create_visual_plan(text, words, model_for_visuals):
-    try:
-        prompt=f"Extract up to {MAX_VISUALS_PER_SEGMENT} visual concepts from: {text[:600]} Return JSON list [{{phrase,label,description}}] phrases must be exact substrings, labels short like Apple, Serpent, Heaven, Earth, AI brain, Scales, Universe, etc."
-        resp=query_openrouter(prompt, model_for_visuals, timeout=20, max_tokens=400, temperature=0.5)
-        if resp:
-            m=re.search(r"\[.*\]", resp, re.DOTALL)
-            if m:
-                data=json.loads(m.group(0))
-                visuals=[]
-                for it in data[:MAX_VISUALS_PER_SEGMENT]:
-                    ph=str(it.get("phrase",""))[:80]
-                    if ph and ph.lower() in text.lower():
-                        visuals.append({"phrase":ph,"label":str(it.get("label","Concept"))[:30],"description":str(it.get("description",""))[:80],"kind":"concept"})
-                if len(visuals)>=2: return visuals
-    except: pass
-    return fallback_visual_plan(text)
-
-# === SCRIBBLE ART - FORMED NARRATIVE, STORY-DRIVEN, DRAWING+FADE ===
-
-def draw_formed_shape(draw, bbox, shape_type="ellipse", density=60, progress_factor=1.0):
-    x0,y0,x1,y1=bbox
-    visible_density = int(density * min(1.0, progress_factor*1.3))
-    cx=(x0+x1)/2; cy=(y0+y1)/2; w=x1-x0; h=y1-y0
-    if shape_type=="ellipse":
-        for i in range(16):
-            ang=i/16*2*math.pi
-            px=cx + (w/2)*math.cos(ang); py=cy + (h/2)*math.sin(ang)
-            px2=cx + (w/2)*math.cos(ang+2*math.pi/16); py2=cy + (h/2)*math.sin(ang+2*math.pi/16)
-            if i/16 < progress_factor*1.2:
-                draw.line([px,py,px2,py2], fill=(0,0,0,210), width=2)
-    elif shape_type=="rect":
-        if progress_factor>0.2:
-            draw.rectangle([x0,y0,x1,y1], outline=(0,0,0,210), width=2)
-    for _ in range(visible_density):
-        rx=random.uniform(x0+3, x1-3); ry=random.uniform(y0+3, y1-3)
-        if shape_type=="ellipse":
-            if ((rx-cx)/(w/2))**2 + ((ry-cy)/(h/2))**2 > 1: continue
-        ang=random.uniform(-0.3,0.3) + (0 if random.random()>0.5 else math.pi/2)
-        length=random.uniform(6, max(10, w*0.18))
-        x2=rx+length*math.cos(ang); y2=ry+length*math.sin(ang)*0.6
-        x2=max(x0, min(x1, x2)); y2=max(y0, min(y1, y2))
-        draw.line([rx,ry,x2,y2], fill=(0,0,0,random.randint(100,220)), width=1)
-
-def draw_formed_human(draw, x, y, size, action="standing", arm_progress=0, eating=False, progress=1.0):
-    if progress<0.15: return
-    head_x=x+size*0.5; head_y=y+size*0.20; head_r=size*0.18
-    if progress>0.15:
-        draw_formed_shape(draw, [head_x-head_r, head_y-head_r, head_x+head_r, head_y+head_r], "ellipse", density=int(size*0.6), progress_factor=(progress-0.15)*2)
-        if progress>0.4:
-            eye_y=head_y+size*0.02
-            draw.ellipse([head_x-size*0.08, eye_y-size*0.03, head_x-size*0.03, eye_y+0.02], fill=(0,0,0,255))
-            draw.ellipse([head_x+size*0.03, eye_y-size*0.03, head_x+size*0.08, eye_y+0.02], fill=(0,0,0,255))
-    body_top=y+size*0.42; body_bottom=body_top+size*0.55; body_left=x+size*0.20; body_right=x+size*0.80
-    if progress>0.25:
-        draw_formed_shape(draw, [body_left, body_top, body_right, body_bottom], "rect", density=int(size*0.8), progress_factor=(progress-0.25)*1.5)
-    if progress>0.35:
-        if action=="reaching" or eating:
-            ax1=body_right-size*0.1; ay1=body_top+size*0.12
-            target_x=ax1+size*0.50; target_y=ay1-size*0.15
-            cur_x=ax1 + (target_x-ax1)*arm_progress; cur_y=ay1 + (target_y-ay1)*arm_progress
-            for _ in range(10):
-                draw.line([ax1+random.uniform(-1,1), ay1+random.uniform(-1,1), cur_x+random.uniform(-1,1), cur_y+random.uniform(-1,1)], fill=(0,0,0,200), width=2)
-            if progress>0.6:
-                draw_formed_shape(draw, [cur_x-6, cur_y-6, cur_x+6, cur_y+6], "ellipse", density=8, progress_factor=1.0)
-        else:
-            for side in [-1,1]:
-                ax=head_x+side*size*0.30; ay=body_top+size*0.10
-                ax2=ax+side*size*0.15; ay2=ay+size*0.25
-                if progress>0.4: draw.line([ax,ay,ax2,ay2], fill=(0,0,0,180), width=2)
-    if progress>0.30:
-        leg_top=body_bottom-size*0.03
-        for leg_x in [x+size*0.32, x+size*0.60]:
-            draw.line([leg_x, leg_top, leg_x+random.uniform(-2,2), leg_top+size*0.28], fill=(0,0,0,180), width=2)
-
-def draw_formed_tree(draw, x, y, size, apple_positions=[], progress=1.0):
-    trunk_w=size*0.14; tx=x+size*0.5-trunk_w/2
-    if progress>0.1:
-        draw_formed_shape(draw, [tx, y+size*0.38, tx+trunk_w, y+size], "rect", density=int(size*0.35), progress_factor=(progress-0.1)*1.5)
-    canopy_r=size*0.36; cx=x+size*0.5; cy=y+size*0.26
-    if progress>0.25:
-        draw_formed_shape(draw, [cx-canopy_r, cy-canopy_r, cx+canopy_r, cy+canopy_r], "ellipse", density=int(size*1.2), progress_factor=(progress-0.25)*1.3)
-    if progress>0.5:
-        for (ax, ay) in apple_positions:
-            draw_formed_shape(draw, [ax-11, ay-9, ax+11, ay+11], "ellipse", density=18, progress_factor=1.0)
-
-
-def get_story_emojis(text):
-    """Return relevant emojis based on story content - clear and makes sense"""
-    tl = text.lower()
-    emojis = []
-    mapping = [
-        (["heaven", "sky", "sun", "light", "day", "god light", "creator", "lord light"], ["☀️", "🌤️", "✨"]),
-        (["serpent", "snake"], ["🐍"]),
-        (["apple", "fruit", "eat", "tree", "garden", "eden"], ["🍎", "🌳", "🌿"]),
-        (["eyes opened", "eyes", "naked", "shame"], ["👀", "🙈"]),
-        (["hide", "afraid", "fear"], ["😨", "🫣"]),
-        (["pain", "sorrow", "childbirth"], ["😣", "💔"]),
-        (["toil", "sweat", "thorns", "ground", "work", "push"], ["😓", "🪨", "⛏️"]),
-        (["exile", "driven", "cherubim", "sword", "gate"], ["🚪", "⚔️", "👼"]),
-        (["dust", "die", "death", "dust ground", "dying"], ["💀", "🌑"]),
-        (["tree of life", "live forever", "immortal"], ["🌳", "♾️"]),
-        (["knowledge", "wise", "know good evil"], ["🧠", "💡"]),
-        (["lie", "deceive", "beguile", "trick"], ["🤥", "🎭"]),
-        (["warn", "command"], ["⚠️", "📜"]),
-        (["truth", "evidence"], ["📖", "✅"]),
-        (["question", "choice"], ["❓", "🤔"]),
-        (["ai", "robot", "computer", "intelligence", "algorithm", "data"], ["🤖", "💻", "🧠"]),
-        (["scales", "justice", "judge"], ["⚖️", "👩‍⚖️"]),
-        (["universe", "galaxy", "cosmos", "planet", "stars", "moon", "night"], ["🌌", "🌙", "⭐"]),
-        (["earth", "land", "water", "sea"], ["🌍", "🌊"]),
-        (["atom", "dna", "evolution"], ["⚛️", "🧬"]),
-    ]
-    for keywords, emoji_list in mapping:
-        if any(kw in tl for kw in keywords):
-            for e in emoji_list:
-                if e not in USED_EMOJIS:
-                    emojis.append(e)
-                    if len(emojis) >= 2:
-                        break
-            if len(emojis) >= 2:
-                break
-    if not emojis:
-        emojis = ["💭"]
-    # Track used to avoid repeats
-    for e in emojis:
-        USED_EMOJIS.add(e)
-    return emojis[:2]
-
-
-def create_emoji_plan(text, words):
-    """Create emoji plan - one every couple sentences, story-driven, no repeats, clear"""
-    if not words:
-        return []
-    import re
-    sents=re.split(r'[.!?]+', text)
-    sents=[s.strip() for s in sents if len(s.strip())>15]
-    plan=[]
-    used_in_seg=set()
-    for idx, sent in enumerate(sents[:6]):
-        if idx%2!=0 and idx!=0:
-            continue
-        emojis=get_story_emojis(sent)
-        if not emojis: continue
-        # Find timing for this sentence
-        sent_words=sent.lower().split()
-        for w_idx in range(len(words)):
-            if words[w_idx]["text"].lower() in sent_words:
-                start=float(words[w_idx]["start"])
-                end_idx=min(len(words)-1, w_idx+12)
-                end=float(words[end_idx]["end"])
-                if emojis[0] not in used_in_seg:
-                    plan.append({"emoji":emojis[0], "start":max(0.0,start), "end":max(start+2.5,end), "label":emojis[0]})
-                    used_in_seg.add(emojis[0])
-                    break
-        if len(plan)>=MAX_EMOJIS_PER_SEGMENT: break
-    return plan
-
-
-def create_emoji_asset(emoji, index):
-    """Create transparent PNG with large emoji - clear, story-driven, not random"""
-    filename = f"emoji_{index}.png"
-    size = 300
-    # Create transparent image
-    img = Image.new("RGBA", (size, size), (0,0,0,0))
-    draw = ImageDraw.Draw(img)
-    # Try to load emoji-capable font, fallback to large default
-    try:
-        # Try Noto Color Emoji or Segoe UI Emoji or DejaVu
-        font_paths = [
-            "/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf",
-            "/usr/share/fonts/truetype/ancient-scripts/Symbola.ttf",
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        ]
-        font = None
-        for fp in font_paths:
-            if os.path.exists(fp):
-                try:
-                    font = ImageFont.truetype(fp, 180)
-                    break
-                except:
-                    continue
-        if font is None:
-            font = load_font(180, bold=True)
-    except:
-        font = load_font(180, bold=True)
-    # Draw emoji centered
-    try:
-        bbox = draw.textbbox((0,0), emoji, font=font)
-        w = bbox[2]-bbox[0]
-        h = bbox[3]-bbox[1]
-        x = (size - w)//2
-        y = (size - h)//2 - 10
-        # Add slight shadow for readability
-        draw.text((x+4, y+4), emoji, font=font, fill=(0,0,0,100))
-        draw.text((x, y), emoji, font=font, fill=(255,255,255,255))
-    except Exception as e:
-        # Fallback: draw as text
-        draw.text((size//2, size//2), emoji, font=font, fill=(255,255,255,255), anchor="mm")
-    img.save(filename)
-    print(f"   Created emoji: {emoji} -> {filename}")
-    return filename
-
-def create_visual_asset(visual,index):
-    # DEPRECATED - animations removed, now returns emoji asset instead for story
-    # This wrapper keeps old calls working but creates emoji instead of random pictures
-    label = visual.get('label','') if isinstance(visual, dict) else str(visual)
-    emojis = get_story_emojis(label)
-    if emojis:
-        return create_emoji_asset(emojis[0], index)
-    return create_emoji_asset("💭", index)
-
-def create_background(position,glow,filename):
-    import os
-    source=os.path.join(os.path.dirname(os.path.abspath(__file__)),"background.png")
-    if os.path.exists(source):
-        try:
-            img=Image.open(source).convert("RGB").resize((VIDEO_W,VIDEO_H),Image.LANCZOS)
-            img.save(filename)
-            return
-        except: pass
-    # Subtle dark gradient, no big circles - fixes blue circle bug
-    img=Image.new("RGBA",(VIDEO_W,VIDEO_H),(12,14,24,255))
-    draw=ImageDraw.Draw(img)
-    for y in range(VIDEO_H):
-        ratio=y/VIDEO_H
-        r=int(12+10*ratio); g=int(14+16*ratio); b=int(24+28*ratio)
-        draw.line([0,y,VIDEO_W,y], fill=(r,g,b,255))
-    # Small subtle glow, not 380px big circles
-    if position=="left": cx=VIDEO_W*0.22
-    elif position=="right": cx=VIDEO_W*0.78
-    else: cx=VIDEO_W*0.5
-    cy=VIDEO_H*0.75
-    for rad in range(120,30,-15):
-        alpha=int(10*(1-rad/120))
-        draw.ellipse([cx-rad, cy-rad, cx+rad, cy+rad], fill=(*hex_to_rgba(glow, alpha)[:3], alpha))
-    img=img.filter(ImageFilter.GaussianBlur(radius=0.8))
-    img.save(filename)
-
-def create_ui_overlay(speaker_name,topic,position,glow,filename):
-    img=Image.new("RGBA",(VIDEO_W,VIDEO_H),(0,0,0,0))
-    draw=ImageDraw.Draw(img)
-    font_bold=load_font(44,bold=True); font_small=load_font(22,bold=True)
-    if position=="left": x=90; anchor="lm"
-    elif position=="right": x=VIDEO_W-90; anchor="rm"
-    else: x=VIDEO_W//2; anchor="mm"
-    y=VIDEO_H-105
-    bbox=draw.textbbox((0,0), speaker_name, font=font_bold, anchor=anchor)
-    pad=18
-    rect_x0=x+bbox[0]-pad if anchor!="rm" else x+bbox[0]-pad
-    rect_y0=y+bbox[1]-pad; rect_x1=x+bbox[2]+pad; rect_y1=y+bbox[3]+pad
-    if anchor=="lm": rect_x0=x-pad; rect_x1=x+bbox[2]-bbox[0]+pad*2
-    elif anchor=="rm": rect_x0=x-(bbox[2]-bbox[0])-pad*2; rect_x1=x+pad
-    else: rect_x0=x-(bbox[2]-bbox[0])//2-pad; rect_x1=x+(bbox[2]-bbox[0])//2+pad
-    draw.rectangle([rect_x0,rect_y0,rect_x1,rect_y1], fill=(0,0,0,170), outline=hex_to_rgba(glow, 220), width=2)
-    draw.text((x,y), speaker_name, font=font_bold, fill=(255,255,255,255), anchor=anchor, stroke_width=2, stroke_fill=(0,0,0,200))
-    topic_short=topic[:90]
-    draw.text((VIDEO_W//2, 70), topic_short, font=font_small, fill=(255,255,255,180), anchor="mm", stroke_width=1, stroke_fill=(0,0,0,150))
-    img.save(filename)
-    return x,y
+            clean=clean_for_speech(text)
+            words=[]; t=0.0
+            for tok in clean.split():
+                words.append({"text":tok,"start":t,"duration":0.38,"end":t+0.38}); t+=0.42
+            open(filename,"wb").write(b"\x00"*1000)
+            return words
 
 def render_video_segment(bg_path,ui_path,audio_path,subs_path,output_path,position,glow,cx,cy,visual_plan):
-    # FIXED: Background restored, soundbars restored less wide safe, emojis centered story
     duration=get_audio_duration(audio_path)
     if not duration: duration=10.0
     cmd=["ffmpeg","-y","-loop","1","-i",bg_path,"-loop","1","-i",ui_path,"-i",audio_path]
     filter_parts=[]
     filter_parts.append(f"[0:v]scale={VIDEO_W}:{VIDEO_H}:flags=lanczos[bg]")
     filter_parts.append(f"[1:v]scale={VIDEO_W}:{VIDEO_H}:flags=lanczos[ui]")
-    # Soundbars less wide, safe on screen, color-matched, closer to name - like attached rounded bars
+    # Zoom in on speakers - 1.3x zoom centered on speaker position
+    if position=="left":
+        zoom_filter="[bg]scale=iw*1.3:ih*1.3,crop=1920:1080:(iw-1920)/2-200:(ih-1080)/2[bg_zoom]"
+    elif position=="right":
+        zoom_filter="[bg]scale=iw*1.3:ih*1.3,crop=1920:1080:(iw-1920)/2+200:(ih-1080)/2[bg_zoom]"
+    else:
+        zoom_filter="[bg]scale=iw*1.25:ih*1.25,crop=1920:1080:(iw-1920)/2:(ih-1080)/2[bg_zoom]"
+    filter_parts.append(zoom_filter)
+    # Sound bar less wide and more separate from name card
     glow_hex=glow.lstrip('#')
-    filter_parts.append(f"[2:a]aformat=channel_layouts=mono,compand=gain=-6,showwaves=s=280x48:mode=p2p:colors=0x{glow_hex}:rate=30:draw=full:scale=sqrt[wave_raw]")
-    filter_parts.append(f"[wave_raw]format=rgba,colorchannelmixer=aa=0.92[wave]")
-    filter_parts.append(f"[bg][ui]overlay=0:0:shortest=1[bg_ui]")
-    wave_w=280
+    filter_parts.append(f"[2:a]aformat=channel_layouts=mono,compand=gain=-6,showwaves=s=200x36:mode=p2p:colors=0x{glow_hex}:rate=30:draw=full:scale=sqrt[wave_raw]")
+    filter_parts.append(f"[wave_raw]format=rgba,colorchannelmixer=aa=0.88[wave]")
+    filter_parts.append(f"[bg_zoom][ui]overlay=0:0:shortest=1[bg_ui]")
+    wave_w=200
     wave_x=cx + (650 - wave_w)//2
-    wave_y=cy - 58
+    wave_y=cy - 105
     if position=="right":
-        wave_x=min(wave_x, VIDEO_W - wave_w - 20)
+        wave_x=min(wave_x, VIDEO_W - wave_w - 30)
     filter_parts.append(f"[bg_ui][wave]overlay={wave_x}:{wave_y}:shortest=1[bg_ui_wave]")
     last_label="[bg_ui_wave]"
     visual_inputs=[]
     for idx, vis in enumerate(visual_plan):
-        # visual_plan now contains emojis, not random images
         try:
             if isinstance(vis, dict):
-                emoji_char=vis.get("emoji", vis.get("label","💭"))
-                start_time=vis.get("start", idx*3.0)
-                end_time=vis.get("end", start_time+2.5)
+                emoji_tuple=vis.get("emoji_tuple", (vis.get("emoji","💭"), "#FFFFFF"))
+                start_time=vis.get("start", idx*2.2)
+                end_time=vis.get("end", start_time+2.8)
             else:
-                emoji_char=str(vis)
-                start_time=idx*3.0
-                end_time=start_time+2.5
-            gif_path=create_emoji_asset(emoji_char, idx+1000+random.randint(0,9999))
+                emoji_tuple=(str(vis), "#FFFFFF")
+                start_time=idx*2.2
+                end_time=start_time+2.8
+            gif_path=create_emoji_asset(emoji_tuple, idx+1000+random.randint(0,9999))
         except:
-            gif_path=create_emoji_asset("💭", idx+1000+random.randint(0,9999))
-            start_time=idx*3.0
-            end_time=start_time+2.5
+            gif_path=create_emoji_asset(("💭","#FFFFFF"), idx+1000+random.randint(0,9999))
+            start_time=idx*2.2
+            end_time=start_time+2.8
         visual_inputs.append((gif_path, start_time, end_time))
     for idx, (gif_path, start_time, end_time) in enumerate(visual_inputs):
         input_idx = 3 + idx
         filter_parts.append(f"[{input_idx}:v]scale={EMOJI_W}:{EMOJI_H}[v{idx}]")
-        # Center emojis in middle, clear story, not random positions
-        vx=(VIDEO_W-EMOJI_W)//2
-        vy=180
+        # More emojis, varied positions, colorful
+        if idx%3==0:
+            vx=(VIDEO_W-EMOJI_W)//2
+            vy=160
+        elif idx%3==1:
+            vx=120
+            vy=200
+        else:
+            vx=VIDEO_W-EMOJI_W-120
+            vy=200
         next_label=f"[tmp{idx}]"
         filter_parts.append(f"{last_label}[v{idx}]overlay={vx}:{vy}:enable='between(t,{start_time:.2f},{end_time:.2f})'{next_label}")
         last_label=next_label
-    # Use simple subtitles filter without force_style commas - ASS file already has style
-    # Escape subs path for ffmpeg (replace : with \:)
-    safe_subs = subs_path.replace(":", "\\:")
+    safe_subs=subs_path.replace(":", "\\:")
     filter_parts.append(f"{last_label}format=yuv420p,subtitles={safe_subs}[out]")
     filter_complex=";".join(filter_parts)
     input_args=[]
@@ -1108,87 +817,189 @@ def generate_scoreboard(round_num,results,avg_a,avg_b,cum_a,cum_b,output_path,ro
 
 def render_scorecard_video(image_path,audio_path,subs_path,output_path):
     duration=get_audio_duration(audio_path) or 6.0
+    safe_subs = image_path.replace(":", "\\:")  # placeholder, actual subs used below
     safe_subs = subs_path.replace(":", "\\:")
     cmd=["ffmpeg","-y","-loop","1","-i",image_path,"-i",audio_path,"-filter_complex",f"[0:v]scale={VIDEO_W}:{VIDEO_H}:flags=lanczos,format=yuv420p,subtitles={safe_subs}[out]","-map","[out]","-map","1:a","-c:v","libx264","-c:a","aac","-shortest","-t",str(duration+0.6),output_path]
     r=subprocess.run(cmd,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
     if r.returncode!=0: print(r.stderr[-5000:]); raise RuntimeError("Scorecard render failed")
 
-USED_JUDGE_EXPLANATIONS = set()
-def generate_panel_commentary(model,side,topic,rn,ap,sk,prev,roles):
-    # OVERHAULED: Ensure explanation matches winner, no repeats, not robotic, full sentences
-    prov=get_judge_short_name(model); comp=get_company_name(model)
-    pref_label = roles['side_a_label'] if side=="A" else roles['side_b_label']
-    other_label = roles['side_b_label'] if side=="A" else roles['side_a_label']
-    recent="\n".join(prev[-4:]); used_expl = "\n".join(list(USED_JUDGE_EXPLANATIONS)[-6:])
-    def trim(t,mw=160): wl=t.split(); return t if len(wl)<=mw else " ".join(wl[-mw:])
-    
-    # Get actual scores to ensure reasoning matches
-    # Force model to argue FOR pref_label, not against
-    if side=="A":
-        prompt=f"You are {prov} from {comp}, judging round {rn} on {topic}.\nYou scored {pref_label} HIGHER than {other_label}. Your job is to explain why {pref_label} WON this round.\n{pref_label} arguments: {trim(ap)}\n{other_label} arguments: {trim(sk)}\nRULES: You MUST argue that {pref_label} won. Do NOT say {other_label} won. Do NOT praise {other_label} as winner. Explain 2-3 specific reasons {pref_label} was stronger - use verse, logic, or rebuttal that others haven't used. Avoid repeating: {used_expl} and {recent}. Speak naturally as {prov}, full sentences, human-like, not robotic. If you scored {pref_label} higher, your reasoning MUST support {pref_label}."
+def generate_turn(role_key, topic, round_num, turn_num, prev_history, model, role_label, role_desc, opponent_label, opponent_desc):
+    global USED_ARGUMENTS, USED_PHRASES, USED_KEYWORDS
+    if round_num==1:
+        round_focus="OPENING ROUND: Set up your case naturally, like a real person talking on stage. Start with a hook, then your strongest evidence."
+    elif round_num==2:
+        round_focus="REBUTTAL ROUND: Respond directly to what opponent just said. Show where they missed context. Bring new evidence you haven't used before."
     else:
-        prompt=f"You are {prov} from {comp}, judging round {rn} on {topic}.\nYou scored {pref_label} HIGHER than {other_label}. Your job is to explain why {pref_label} WON this round.\n{pref_label} arguments: {trim(ap)}\n{other_label} arguments: {trim(sk)}\nRULES: You MUST argue that {pref_label} won. Do NOT say {other_label} won. Do NOT praise {other_label} as winner. Explain 2-3 specific reasons {pref_label} was stronger and point out a specific weakness in {other_label} others missed. Avoid repeating: {used_expl} and {recent}. Speak naturally as {prov}, full sentences, human-like, not robotic. If you scored {pref_label} higher, your reasoning MUST support {pref_label}."
-    
-    resp=query_openrouter(prompt,model,timeout=30,max_tokens=400,temperature=0.85)
-    if resp and len(resp.split())>=12:
-        # Validate that it actually supports pref_label, not other
-        low = resp.lower()
-        # If it says other_label won, or other is better, reject and use fallback
-        if f"{other_label.lower()} won" in low or f"{other_label.lower()} was stronger" in low or f"i scored {other_label.lower()} higher" in low:
-            print(f"Judge {prov} mismatched winner, using fallback")
-        else:
-            resp=re.sub(r'As .*? to assess,','',resp,flags=re.IGNORECASE).strip()
-            resp=re.sub(r'As an? .*? judge,','',resp,flags=re.IGNORECASE).strip()
-            resp=re.sub(r'^I am .*? and I.*?[.]','',resp,flags=re.IGNORECASE).strip()
-            lower_resp=resp.lower()[:80]
-            is_rep=False
-            for used in USED_JUDGE_EXPLANATIONS:
-                if used.lower()[:50] in lower_resp and len(used)>20: is_rep=True; break
-            if not is_rep and len(resp.split())>=10:
-                USED_JUDGE_EXPLANATIONS.add(resp[:100]); return resp
-    
-    # Fallbacks that correctly match side - no mismatch
-    fallbacks_a=[
-        f"In round {rn}, I scored {pref_label} higher because they stuck to what Genesis actually says happened that day. Chapter 3 verse 7 says their eyes were opened, and verse 22 shows God confirming they became like us knowing good and evil. That's immediate fulfillment, not later theology. {other_label} added ideas like spiritual death that Genesis 2-3 never mentions.",
-        f"For round {rn}, {pref_label} won for me because they explained the Hebrew phrase beyom. In Genesis 2 verse 4, in the day means when, not a 24-hour countdown. It emphasizes certainty, not timing. {other_label} assumed literal same-day physical drop that doesn't fit Adam living 930 years.",
-        f"Round {rn} went to {pref_label} because they showed the serpent told a half-truth that hid the cost. He promised you'd be as gods, but he didn't mention pain, toil, exile, or losing access to the tree of life in verses 23-24. A half-truth omitting the painful consequence is still misleading.",
-    ]
-    fallbacks_b=[
-        f"In round {rn}, I gave it to {pref_label} because they stayed with plain sense. Yom means day, and Genesis 1 shows evening and morning as a day. Adam didn't die that day, he lived centuries, while his eyes did open exactly as serpent said in chapter 3 verse 7. {other_label} redefined death to mean spiritual death, which the text never says.",
-        f"Round {rn} for me was {pref_label} because they pointed to God's own words in chapter 3 verse 22, where God says man has become like one of us knowing good and evil. That's word for word what serpent promised in verse 5. If serpent lied, why does God confirm his second claim?",
-        f"I scored {pref_label} higher in round {rn} because the immediate outcome matched serpent's prediction. God said in the day you die, serpent said you won't die but you'll be enlightened. The story reports enlightenment that day, not death that day. On what actually happened that day, serpent was more accurate.",
-    ]
-    import random as _rnd
-    pool = fallbacks_a if side=="A" else fallbacks_b
-    for fb in pool:
-        if fb[:60] not in USED_JUDGE_EXPLANATIONS:
-            USED_JUDGE_EXPLANATIONS.add(fb[:60]); return fb
-    chosen=_rnd.choice(pool); USED_JUDGE_EXPLANATIONS.add(chosen[:60]); return chosen
+        round_focus="CLOSING ROUND: Bring it all together, speak from heart, summarize why your view fits all the evidence. End with a memorable question or challenge."
+    prev_snip=prev_history[-600:] if prev_history else "No previous"
+    used_str="; ".join(list(USED_ARGUMENTS)[-10:])[:500]
+    used_kw="; ".join(list(USED_KEYWORDS)[-10:])
+    tl = (topic or "").lower()
+    is_genesis = "god" in tl and "serpent" in tl
+    if is_genesis:
+        evidence_line = "Reference Genesis naturally: 2:17, 3:4, 3:7, 3:22, 5:5 - but speak like a person, not a reference list"
+        fresh_line = "CRITICAL: Fresh angle not used before. If you said eyes opened, now try tree of life, cherubim, dust, shame, or Hebrew moth tamuth"
+    else:
+        evidence_line = f"Use real examples, studies, or lived experience about {topic} - make it concrete and human"
+        fresh_line = "CRITICAL: Fresh angle not used before. New mechanism, consequence, or example"
+    prompt=f"""You are {role_label} debating LIVE on YouTube about: {topic}
+Your view: {role_desc}
+Opponent: {opponent_label} = {opponent_desc}
+{round_focus}
+What opponent just said: {prev_snip}
 
-def build_intro(topic,jc,roles):
-    return f"Welcome to the AI Debate Arena. Today, {roles['side_a_label']} faces {roles['side_b_label']} on the question: {topic}. Three rounds, equal time. An independent panel of {jc} AI judges from leading companies will score argument strength, rebuttal quality, and clarity. Let's begin."
+DO NOT REPEAT: {used_str}
+Keywords already used: {used_kw}
 
-def build_judge_intro(judge_model, jc):
-    name=get_judge_short_name(judge_model); comp=get_company_name(judge_model)
-    intros=[
-        f"Hello, I am {name} from {comp}. I am one of the {jc} judges on today's panel. I will be scoring on argument, rebuttal, and clarity. Looking forward to a great debate.",
-        f"Hi everyone, {name} here, from {comp}. Excited to be one of your {jc} judges today. I will be looking for specific evidence and clear reasoning. Let us begin.",
-        f"Greetings, I am {name}, representing {comp}. I am honored to be among the {jc} judges. I will evaluate based on strength of argument and how well each side answers the other.",
-    ]
-    return random.choice(intros)
+Speak like a REAL HUMAN on stage, not a textbook:
+- Use contractions: I'm, don't, can't, it's, we're, that's, you've
+- Speak in full natural sentences, not choppy phrases. Example bad: "God warned death. Serpent said no death." Good: "God warned that death would come that day, while the serpent said no, you won't die at all."
+- Vary your rhythm: some short punchy sentences, then a longer thoughtful one that builds
+- Use natural transitions: "Look,", "Think about it,", "Here's what struck me,", "And honestly,"
+- {evidence_line}
+- Direct rebuttal: "My opponent says X, but when you actually look at..."
+- Start immediately with your point, no formal greeting like "Ladies and gentlemen"
+- {fresh_line}
+- Be conversational, passionate, slightly informal, like you're talking to a friend who disagrees
+- {MIN_TURN_WORDS}-{MAX_TURN_WORDS} words, must sound like spoken English, not written essay
+"""
+    for m in [model]+FALLBACK_MODELS[:4]:
+        temp=0.92 + (turn_num*0.04) + random.uniform(0,0.12)
+        resp=query_openrouter(prompt,m,max_tokens=900,temperature=temp)
+        if resp and count_words(resp)>=90:
+            cleaned=strip_filler(resp)
+            cleaned=re.sub(r"\s+"," ",cleaned).strip()
+            if not cleaned.endswith(('.', '!', '?')): cleaned+="."
+            cleaned=re.sub(r"https?://\S+"," ",cleaned)
+            lower_cleaned=cleaned.lower()
+            is_repeated=False
+            for used in USED_ARGUMENTS:
+                if len(used)>30 and used.lower() in lower_cleaned:
+                    is_repeated=True; break
+            if not is_repeated or turn_num>2:
+                sents=cleaned.split('. ')
+                for s in sents[:3]:
+                    if len(s)>20:
+                        USED_ARGUMENTS.add(s[:80])
+                        USED_PHRASES.add(s[:50].lower())
+                        for kw in ["eyes opened","tree of life","cherubim","dust","shame","moth tamuth","beyom","pain","toil","exile","930 years","3:22","3:7","knowledge","wisdom"]:
+                            if kw in s.lower():
+                                USED_KEYWORDS.add(kw)
+                if count_words(cleaned)>=MIN_TURN_WORDS-15:
+                    return cleaned[:1700]
+            extra=query_openrouter(f"Rewrite with completely fresh angle, avoid: {used_str}. Continue: "+cleaned[-200:],m,max_tokens=300,temperature=0.92)
+            if extra and count_words(extra)>40: cleaned+=" "+extra
+            return cleaned[:1700]
+    fallback=generate_fallback_debate(role_label, topic, round_num, turn_num)
+    if fallback[:60].lower() not in USED_PHRASES:
+        USED_ARGUMENTS.add(fallback[:80]); USED_PHRASES.add(fallback[:50].lower())
+        return fallback
+    return generate_fallback_debate(role_label, topic, round_num, turn_num+10)
 
-def build_outro(jc,ca,cb,roles):
-    if math.isclose(ca,cb,abs_tol=0.01): res="a draw"
-    elif ca>cb: res=roles['side_a_label']
-    else: res=roles['side_b_label']
-    return f"After three rounds, our panel of {jc} judges gave {roles['side_a_label']} {ca:.1f}, {roles['side_b_label']} {cb:.1f}. Final result is {res}. Thank you for watching, and you decide who told the truth."
+def build_round_exchanges(topic, round_num, ap_model, sk_model, previous_history, roles):
+    ap_turns=[]; sk_turns=[]; hist=previous_history
+    for tn in range(1,TURNS_PER_SIDE_PER_ROUND+1):
+        a=generate_turn("A", topic, round_num, tn, hist, ap_model, roles['side_a_label'], roles['side_a_desc'], roles['side_b_label'], roles['side_b_desc'])
+        ap_turns.append(a); hist+=f"\n{roles['side_a_label']}:\n"+a+"\n\n"
+        s=generate_turn("B", topic, round_num, tn, hist, sk_model, roles['side_b_label'], roles['side_b_desc'], roles['side_a_label'], roles['side_a_desc'])
+        sk_turns.append(s); hist+=f"\n{roles['side_b_label']}:\n"+s+"\n\n"
+    return ap_turns, sk_turns, hist
 
-def stitch_segments(segs,out):
-    lf="concat_list.txt"
-    open(lf,"w",encoding="utf-8").write("\n".join([f"file '{os.path.abspath(s).replace(chr(39),chr(39)+chr(92)+chr(39)+chr(39))}'" for s in segs])+"\n")
-    cmd=["ffmpeg","-y","-f","concat","-safe","0","-i",lf,"-c","copy",out]
-    r=subprocess.run(cmd,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
-    if r.returncode!=0: print(r.stderr[-7000:]); raise RuntimeError("Concat failed")
+def neutral_judge(model):
+    a=random.uniform(48,62); b=random.uniform(48,62)
+    if abs(a-b)<4: a+=6
+    return {"model":model,"provider":provider_from_model(model),"display_name":get_judge_short_name(model),"A_argument":round(a,1),"A_rebuttal":round(a+random.uniform(-3,3),1),"A_clarity":round(a+random.uniform(-2,2),1),"A_total":round(a,2),"B_argument":round(b,1),"B_rebuttal":round(b+random.uniform(-3,3),1),"B_clarity":round(b+random.uniform(-2,2),1),"B_total":round(b,2),"winner":"A" if a>b else "B"}
+
+def judge_round(model,topic,rn,ap,sk,roles):
+    ap_snip=ap[:900]; sk_snip=sk[:900]
+    prompt="You are expert debate judge. Topic: \""+topic+"\" Round "+str(rn)+"\n"+roles['side_a_label']+": "+ap_snip+"\n"+roles['side_b_label']+": "+sk_snip+"\nScore each side 0-100 on: argument strength, rebuttal quality, clarity\nReturn ONLY valid JSON, no other text:\n{\"A_argument\": 0-100, \"A_rebuttal\": 0-100, \"A_clarity\": 0-100, \"B_argument\": 0-100, \"B_rebuttal\": 0-100, \"B_clarity\": 0-100, \"winner\": \"A or B\", \"reason\": \"1 sentence why winner won this specific round\"}\nRules: Do NOT give both sides same total. Be decisive. Winner must have higher total. Be critical and varied per round."
+    for attempt_model in [model]+[m for m in ["openai/gpt-4o-mini:free","google/gemini-flash-1.5-8b:free"] if m!=model][:1]:
+        resp=query_openrouter(prompt,attempt_model,timeout=35,max_tokens=400,temperature=0.2)
+        if not resp: continue
+        try:
+            m=re.search(r"\{.*\}", resp, re.DOTALL)
+            if not m: continue
+            json_str=m.group(0).replace("'", '"').replace('“','"').replace('”','"')
+            d=json.loads(json_str)
+            aa=clamp_score(d.get("A_argument")); ar=clamp_score(d.get("A_rebuttal")); ac=clamp_score(d.get("A_clarity"))
+            ba=clamp_score(d.get("B_argument")); br=clamp_score(d.get("B_rebuttal")); bc=clamp_score(d.get("B_clarity"))
+            at=(aa+ar+ac)/3; bt=(ba+br+bc)/3
+            if at==bt:
+                if aa+ar > ba+br: at+=2
+                else: bt+=2
+            calculated_winner="A" if at>bt else "B"
+            winner_raw=str(d.get("winner","")).upper()
+            final_winner=calculated_winner
+            if winner_raw in ["A","B"] and winner_raw!=calculated_winner:
+                if abs(at-bt)<3:
+                    if winner_raw=="A": at=bt+3
+                    else: bt=at+3
+                    final_winner=winner_raw
+            if abs(at-bt)<1.5:
+                if final_winner=="A": at+=2.5
+                else: bt+=2.5
+            return {"model":model,"provider":provider_from_model(model),"display_name":get_judge_short_name(model),"A_argument":round(aa,1),"A_rebuttal":round(ar,1),"A_clarity":round(ac,1),"A_total":round(at,2),"B_argument":round(ba,1),"B_rebuttal":round(br,1),"B_clarity":round(bc,1),"B_total":round(bt,2),"winner":final_winner,"reason":str(d.get("reason",""))[:200]}
+        except:
+            try:
+                nums=re.findall(r'"[AB]_(?:argument|rebuttal|clarity)"\s*:\s*(\d+(?:\.\d+)?)', resp, re.IGNORECASE)
+                if len(nums)>=6:
+                    vals=[float(n) for n in nums[:6]]
+                    aa,ar,ac,ba,br,bc=vals
+                    at=(aa+ar+ac)/3; bt=(ba+br+bc)/3
+                    if abs(at-bt)<1: bt+=3
+                    return {"model":model,"provider":provider_from_model(model),"display_name":get_judge_short_name(model),"A_argument":round(aa,1),"A_rebuttal":round(ar,1),"A_clarity":round(ac,1),"A_total":round(at,2),"B_argument":round(ba,1),"B_rebuttal":round(br,1),"B_clarity":round(bc,1),"B_total":round(bt,2),"winner":"A" if at>bt else "B"}
+            except: pass
+            continue
+    return neutral_judge(model)
+
+def evaluate_round(judges,topic,rn,ap,sk,roles):
+    results=[]
+    print(f"⚖️ Asking {len(judges)} independent AI judges for round {rn}...")
+    def worker(model): return judge_round(model,topic,rn,ap,sk,roles)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, min(JUDGE_WORKERS, len(judges)))) as executor:
+        futures={executor.submit(worker, model): model for model in judges}
+        completed=0
+        for future in concurrent.futures.as_completed(futures):
+            model=futures[future]
+            try:
+                result=future.result()
+                results.append(result); completed+=1
+                print(f"   ✓ Judge {completed}/{len(judges)} — {result['provider']} ({result['display_name']}) {result['A_total']:.1f} vs {result['B_total']:.1f} -> {result['winner']} | {result.get('reason','')[:60]}")
+            except Exception as exc:
+                print(f"   ✗ Judge failed {provider_from_model(model)}: {str(exc)[:100]}")
+    if not results: results=[neutral_judge("fallback")]
+    return results
+
+def calculate_round_average(results):
+    return round(sum(r["A_total"] for r in results)/len(results),2), round(sum(r["B_total"] for r in results)/len(results),2)
+
+def create_emoji_plan(text, words):
+    if not words:
+        return []
+    sents=re.split(r'[.!?]+', text)
+    sents=[s.strip() for s in sents if len(s.strip())>15]
+    plan=[]
+    used_in_seg=set()
+    for idx, sent in enumerate(sents[:8]):
+        if idx%2!=0 and idx!=0:
+            continue
+        emojis=get_story_emojis(sent)
+        if not emojis: continue
+        sent_words=sent.lower().split()
+        for w_idx in range(len(words)):
+            if words[w_idx]["text"].lower() in sent_words:
+                start=float(words[w_idx]["start"])
+                end_idx=min(len(words)-1, w_idx+14)
+                end=float(words[end_idx]["end"])
+                for emoji_tuple in emojis[:2]:
+                    key = f"{emoji_tuple[0]}_{emoji_tuple[1]}"
+                    if key not in used_in_seg:
+                        plan.append({"emoji":emoji_tuple[0], "emoji_tuple":emoji_tuple, "start":max(0.0,start), "end":max(start+3.0,end), "label":emoji_tuple[0]})
+                        used_in_seg.add(key)
+                        break
+                break
+        if len(plan)>=MAX_EMOJIS_PER_SEGMENT: break
+    return plan
 
 def create_segment(text,role,speaker_name,topic,segment_id,model_for_visuals,position=None,glow=None,judge_voice_index=None):
     if position is None:
@@ -1245,7 +1056,7 @@ def run_debate_pipeline():
     
     add_segment(build_intro(topic,len(judges),roles),"Moderator","MODERATOR")
     
-    prev=""; cum_a=0.0;    prev=""; cum_a=0.0; cum_b=0.0; pcom=[]
+    prev=""; cum_a=0.0; cum_b=0.0; pcom=[]
     for rn in range(1,ROUNDS+1):
         print(f"\nROUND {rn}")
         a_turns,s_turns,prev=build_round_exchanges(topic,rn,ap_model,sk_model,prev,roles)
@@ -1266,24 +1077,43 @@ def run_debate_pipeline():
         except: generate_subtitles(sw,ss,scorecard=True)
         render_scorecard_video(sb,sa,ss,sv); segs.append(sv)
         if res:
-            a_res=[r for r in res if r["winner"]=="A"] or res
-            b_res=[r for r in res if r["winner"]=="B"] or res
-            ja=random.choice(a_res)
-            b_filtered=[r for r in b_res if r["model"]!=ja["model"] and r["provider"]!=ja["provider"]]
-            if b_filtered: jb=random.choice(b_filtered)
-            else:
-                b_filtered2=[r for r in b_res if r["model"]!=ja["model"]]
-                jb=random.choice(b_filtered2) if b_filtered2 else random.choice(b_res)
-                if jb["provider"]==ja["provider"]:
-                    alt=[r for r in res if r["provider"]!=ja["provider"] and r["model"]!=ja["model"]]
-                    if alt: jb=random.choice(alt)
-            ca=generate_panel_commentary(ja["model"],"A",topic,rn,a_full,s_full,pcom,roles); pcom.append(ca)
-            ja_voice_idx = JUDGE_VOICE_MAP.get(ja["model"], 0)
-            add_segment(ca,"AI Judge",f"AI JUDGE — {ja['display_name'].upper()} ({ja['provider'].upper()})","center","#3399FF",judge_voice_index=ja_voice_idx)
-            cb=generate_panel_commentary(jb["model"],"B",topic,rn,a_full,s_full,pcom,roles); pcom.append(cb)
-            jb_voice_idx = JUDGE_VOICE_MAP.get(jb["model"], 1)
-            if jb_voice_idx==ja_voice_idx: jb_voice_idx=(ja_voice_idx+1)%len(JUDGE_VOICES)
-            add_segment(cb,"AI Judge",f"AI JUDGE — {jb['display_name'].upper()} ({jb['provider'].upper()})","center","#3399FF",judge_voice_index=jb_voice_idx)
+            a_res=[r for r in res if r["winner"]=="A"]
+            b_res=[r for r in res if r["winner"]=="B"]
+            if a_res and b_res:
+                ja=random.choice(a_res)
+                b_filtered=[r for r in b_res if r["model"]!=ja["model"] and r["provider"]!=ja["provider"]]
+                jb=random.choice(b_filtered) if b_filtered else random.choice(b_res)
+                ca=generate_panel_commentary(ja["model"],"A",topic,rn,a_full,s_full,pcom,roles); pcom.append(ca)
+                ja_voice_idx = JUDGE_VOICE_MAP.get(ja["model"], 0)
+                add_segment(ca,"AI Judge",f"AI JUDGE — {ja['display_name'].upper()} ({ja['provider'].upper()})","center","#3399FF",judge_voice_index=ja_voice_idx)
+                cb=generate_panel_commentary(jb["model"],"B",topic,rn,a_full,s_full,pcom,roles); pcom.append(cb)
+                jb_voice_idx = JUDGE_VOICE_MAP.get(jb["model"], 1)
+                if jb_voice_idx==ja_voice_idx: jb_voice_idx=(ja_voice_idx+1)%len(JUDGE_VOICES)
+                add_segment(cb,"AI Judge",f"AI JUDGE — {jb['display_name'].upper()} ({jb['provider'].upper()})","center","#3399FF",judge_voice_index=jb_voice_idx)
+            elif a_res:
+                ja=random.choice(a_res)
+                ca=generate_panel_commentary(ja["model"],"A",topic,rn,a_full,s_full,pcom,roles); pcom.append(ca)
+                ja_voice_idx = JUDGE_VOICE_MAP.get(ja["model"], 0)
+                add_segment(ca,"AI Judge",f"AI JUDGE — {ja['display_name'].upper()} ({ja['provider'].upper()})","center","#3399FF",judge_voice_index=ja_voice_idx)
+                remaining=[r for r in a_res if r["model"]!=ja["model"]]
+                if remaining:
+                    ja2=random.choice(remaining)
+                    ca2=generate_panel_commentary(ja2["model"],"A",topic,rn,a_full,s_full,pcom,roles); pcom.append(ca2)
+                    ja2_voice_idx = JUDGE_VOICE_MAP.get(ja2["model"], 1)
+                    if ja2_voice_idx==ja_voice_idx: ja2_voice_idx=(ja_voice_idx+1)%len(JUDGE_VOICES)
+                    add_segment(ca2,"AI Judge",f"AI JUDGE — {ja2['display_name'].upper()} ({ja2['provider'].upper()})","center","#3399FF",judge_voice_index=ja2_voice_idx)
+            elif b_res:
+                jb=random.choice(b_res)
+                cb=generate_panel_commentary(jb["model"],"B",topic,rn,a_full,s_full,pcom,roles); pcom.append(cb)
+                jb_voice_idx = JUDGE_VOICE_MAP.get(jb["model"], 0)
+                add_segment(cb,"AI Judge",f"AI JUDGE — {jb['display_name'].upper()} ({jb['provider'].upper()})","center","#3399FF",judge_voice_index=jb_voice_idx)
+                remaining=[r for r in b_res if r["model"]!=jb["model"]]
+                if remaining:
+                    jb2=random.choice(remaining)
+                    cb2=generate_panel_commentary(jb2["model"],"B",topic,rn,a_full,s_full,pcom,roles); pcom.append(cb2)
+                    jb2_voice_idx = JUDGE_VOICE_MAP.get(jb2["model"], 1)
+                    if jb2_voice_idx==jb_voice_idx: jb2_voice_idx=(jb_voice_idx+1)%len(JUDGE_VOICES)
+                    add_segment(cb2,"AI Judge",f"AI JUDGE — {jb2['display_name'].upper()} ({jb2['provider'].upper()})","center","#3399FF",judge_voice_index=jb2_voice_idx)
     add_segment(build_outro(len(judges),cum_a,cum_b,roles),"Moderator","MODERATOR")
     stitch_segments(segs,OUTPUT_FILE)
     print(f"\nCOMPLETE: {OUTPUT_FILE} — {cum_a:.1f} vs {cum_b:.1f}")
