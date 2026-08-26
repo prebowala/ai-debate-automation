@@ -33,7 +33,7 @@ JUDGE_WORKERS = 7
 
 MAX_VISUALS_PER_SEGMENT = 0
 MIN_VISUAL_GAP = 2.2
-MAX_EMOJIS_PER_SEGMENT = 1
+MAX_EMOJIS_PER_SEGMENT = 6
 EMOJI_W = 180
 EMOJI_H = 180
 USED_EMOJIS = set()
@@ -41,6 +41,23 @@ USED_ARGUMENTS = set()
 USED_PHRASES = set()
 USED_KEYWORDS = set()
 USED_JUDGE_EXPLANATIONS = set()
+
+# === UNIQUE VOICE CAST - NO DUPLICATES EVER ===
+# Pool of distinct voices - each cast member gets unique voice
+VOICE_POOL = [
+    "en-US-BrianMultilingualNeural",   # 0 - Side A pro
+    "en-GB-SoniaNeural",               # 1 - Side B con
+    "en-AU-NatashaNeural",             # 2 - Moderator
+    "en-US-JennyNeural",               # 3 - Judge 1
+    "en-GB-RyanNeural",                # 4 - Judge 2
+    "en-US-GuyNeural",                 # 5 - Judge 3
+    "en-GB-LibbyNeural",               # 6 - Judge 4
+    "en-US-DavisNeural",               # 7 - Judge 5
+    "en-AU-WilliamNeural",             # 8 - Judge 6
+    "en-CA-ClaraNeural",               # 9 - Judge 7
+    "en-US-AriaNeural",                # 10 - backup
+    "en-GB-LibbyNeural",               # 11 - backup
+]
 
 VOICES = {
     "A": "en-US-BrianMultilingualNeural",
@@ -57,6 +74,23 @@ JUDGE_VOICES = [
     "en-CA-ClaraNeural",
 ]
 JUDGE_VOICE_MAP = {}
+# Global cast voice assignment - ensures no duplicates
+CAST_VOICE_ASSIGNMENT = {}
+
+def assign_unique_voices(roles):
+    global CAST_VOICE_ASSIGNMENT, JUDGE_VOICE_MAP
+    CAST_VOICE_ASSIGNMENT = {}
+    # Side A and B get first two unique voices
+    CAST_VOICE_ASSIGNMENT[roles['side_a_label']] = VOICE_POOL[0]
+    CAST_VOICE_ASSIGNMENT[roles['side_b_label']] = VOICE_POOL[1]
+    CAST_VOICE_ASSIGNMENT["MODERATOR"] = VOICE_POOL[2]
+    # Reserve judges from remaining pool - guaranteed not overlapping with A,B,Mod
+    remaining = VOICE_POOL[3:]
+    JUDGE_VOICE_MAP = {}
+    print(f"Voice cast: {roles['side_a_label']}={VOICE_POOL[0]}, {roles['side_b_label']}={VOICE_POOL[1]}, MODERATOR={VOICE_POOL[2]}")
+    print(f"Judge pool: {remaining[:7]}")
+    return CAST_VOICE_ASSIGNMENT
+
 
 FALLBACK_MODELS = [
     "openai/gpt-4o-mini:free",
@@ -226,9 +260,14 @@ def choose_judges(avail,primary):
 
 def get_debate_roles(topic, model):
     tl=(topic or "").lower()
+    # Special handling for common topics to be versatile
     if "god" in tl and "serpent" in tl:
         return {"side_a_label": "GOD TOLD TRUTH","side_a_desc": "Defends God told truth in Genesis","side_b_label": "SERPENT TOLD TRUTH","side_b_desc": "Defends serpent told truth",}
-    prompt='Topic: "'+topic+'" Return ONLY JSON: {"side_a_label":"FOR label 2-3 words","side_a_desc":"sentence","side_b_label":"AGAINST label","side_b_desc":"sentence"} Labels uppercase, short opposite.'
+    if "does god exist" in tl or "does a god exist" in tl or "existence of god" in tl or tl.strip()=="does god exist?" or "is there a god" in tl:
+        return {"side_a_label": "GOD EXISTS","side_a_desc": "Argues God exists, uses cosmological, teleological, moral arguments","side_b_label": "GOD DOES NOT EXIST","side_b_desc": "Argues God does not exist, uses problem of evil, lack of evidence, parsimony",}
+    if "god exist" in tl:
+        return {"side_a_label": "GOD EXISTS","side_a_desc": "Defends existence of God","side_b_label": "NO GOD","side_b_desc": "Argues against existence of God",}
+    prompt='Topic: "'+topic+'" Return ONLY JSON: {"side_a_label":"FOR label 2-4 words uppercase","side_a_desc":"one sentence for side","side_b_label":"AGAINST label 2-4 words uppercase","side_b_desc":"one sentence against"} Make labels short, opposite, clear, like GOD EXISTS vs NO GOD, or FREE WILL vs DETERMINISM. No extra text.'
     resp=query_openrouter(prompt, model, timeout=25, max_tokens=250, temperature=0.4)
     if resp:
         try:
@@ -240,7 +279,14 @@ def get_debate_roles(topic, model):
                 if a and b and a!=b:
                     return {"side_a_label":a,"side_a_desc":str(data.get("side_a_desc",a)),"side_b_label":b,"side_b_desc":str(data.get("side_b_desc",b))}
         except: pass
-    return {"side_a_label": "AFFIRMATIVE","side_a_desc": f"Argues FOR {topic}","side_b_label": "NEGATIVE","side_b_desc": f"Argues AGAINST {topic}",}
+    # Fallback versatile parsing
+    if " vs " in tl or " versus " in tl:
+        parts=re.split(r"\s+vs\.?\s+|\s+versus\s+", topic, flags=re.IGNORECASE)
+        if len(parts)>=2:
+            a=parts[0][:20].strip().upper()
+            b=parts[1][:20].strip().upper()
+            return {"side_a_label": a or "SIDE A","side_a_desc": f"Argues for {parts[0]}","side_b_label": b or "SIDE B","side_b_desc": f"Argues for {parts[1]}",}
+    return {"side_a_label": "AFFIRMATIVE","side_a_desc": f"Argues FOR {topic} with evidence and reasoning","side_b_label": "NEGATIVE","side_b_desc": f"Argues AGAINST {topic} with evidence and reasoning",}
 
 def strip_filler(text):
     for pat in [r"^(ladies and gentlemen[,.]?\s*)",r"^(my friends[,.]?\s*)",r"^(well[,.]?\s*)",r"^(thank you[,.]?\s*)"]:
@@ -248,8 +294,49 @@ def strip_filler(text):
     return text
 
 def generate_fallback_debate(side_label, topic, round_num, turn_num):
+    tl=(topic or "").lower()
     topic_short = topic[:130] if len(topic)>130 else topic
-    if "GOD TOLD TRUTH" in side_label.upper():
+    sl=side_label.upper()
+
+    # === VERSATILE: DOES GOD EXIST ===
+    if "does god exist" in tl or "does a god" in tl or "existence of god" in tl or "is there a god" in tl or ("god exist" in tl and "serpent" not in tl):
+        if "GOD EXISTS" in sl or "AFFIRMATIVE" in sl or "THEIST" in sl or "FOR" in sl or "GOD"==sl.strip():
+            theist_templates={
+                (1,1): "I want to start with something we all experience, that everything that begins to exist has a cause. The universe began to exist about 13.8 billion years ago, that's the standard big bang cosmology. If the universe began, it needs a cause beyond itself, something timeless, spaceless, enormously powerful. That sounds a lot like what people mean by God. It's not just saying yes, it's pointing to a cause that explains why there's something rather than nothing.",
+                (1,2): "Look at fine tuning, and I'm not just saying the universe looks nice. The constants of physics are balanced on a razor's edge. If gravity were slightly stronger, stars would burn out too fast for life, if the cosmological constant were different by one part in 10 to the 120, galaxies never form. Physicists like Martin Rees call this uncanny. The best explanation is not luck, it's design. That's a real point, not just yes God exists.",
+                (1,3): "Think about consciousness and moral experience. We all feel that some things are truly right and wrong, not just preferences, like torturing a child for fun is really wrong. Where does that objective moral value come from if we're just atoms bumping around? And consciousness itself, the fact you are aware right now, that subjective experience doesn't fit neatly into pure materialism. Theism gives a grounding for both mind and morals.",
+                (1,4): "There is also the contingency argument. Why does the universe exist at all? It could have not existed. Everything we see is contingent, it depends on something else. There has to be a necessary foundation, something that exists by its own nature and explains everything else. That necessary being is what classical theists call God. It's not just saying yes, it's asking what ultimately grounds reality.",
+                (2,1): "My opponent brings up the problem of evil, and it's a serious point, I won't dismiss it. But the existence of evil doesn't disprove God, it assumes a standard of good that needs grounding. If there's no God, evil is just what we don't like, not objectively wrong. And free will explains a lot, God creates free creatures who can choose love, which requires the possibility of choosing harm. That suffering is real, but it doesn't make God's existence impossible.",
+                (2,2): "They say there's no evidence, but that's not quite right. We have philosophical arguments, cosmic fine tuning, moral experience, religious experience across cultures, and historical claims. You might not find it convincing, but it's not zero evidence. And lack of evidence isn't evidence of absence, especially if God is not the kind of thing you'd detect like a planet, but the ground of being itself.",
+                (2,3): "If God doesn't exist, you still have to explain why the universe is intelligible, why math works so beautifully to describe physics, why we have rational minds that can do science at all. Einstein said the most incomprehensible thing is that the universe is comprehensible. Theism says that's expected, a rational mind behind reality made minds that can understand it. That's a positive argument.",
+                (2,4): "Consider personal experience, not as proof for everyone, but as evidence for the person. Millions of people across history report encountering something transcendent, a presence, a moral transformation. You can dismiss each as psychology, but the sheer breadth and transformative effect, people overcoming addiction, radical forgiveness, that pattern suggests something real, not just wishful thinking.",
+                (3,1): "Let me pull it together. We have a universe that began, finely tuned for life, governed by elegant laws, containing conscious beings who perceive objective moral values and long for meaning. Each piece alone might have an alternative, but together they form a cumulative case. Theism gives one simple explanation that ties them together. Atheism needs separate stories for each, and each story feels a bit strained.",
+                (3,2): "Who has the more complete explanation? The atheist says it's all brute fact, it just is, no deeper reason. The theist says there is a necessary, intelligent, good foundation that explains why there's something rather than nothing, why it's ordered, why we are moral and conscious. If you're looking for ultimate explanation, not just how but why, God exists is not just yes, it's the best explanation for the totality of what we experience.",
+                (3,3): "Think about what we are as humans. We ask why, we seek purpose, we love, we feel guilt and awe when we look at stars. If God doesn't exist, those longings are accidental byproducts of evolution with no fulfillment. If God does exist, they make sense, we are made for relationship with our source. That doesn't prove God, but it shows theism fits human nature better than saying all our deepest longings point to nothing.",
+                (3,4): "Final point, and I want to be clear, I'm not saying believe because it's comforting. I'm saying the evidence of a beginning, fine tuning, consciousness, morality, reason, and religious experience all point in same direction. It's an inference to best explanation. The universe looks like it has mind behind it, not just matter. That is why I say God exists, not as a blind yes, but as reasoned conclusion.",
+            }
+            key = (round_num, turn_num if turn_num<=4 else ((turn_num-1)%4+1))
+            return theist_templates.get(key, theist_templates[(3,4)])
+        else:
+            atheist_templates={
+                (1,1): "I want to start with the burden of proof. The claim God exists is an extraordinary claim about an invisible, all powerful being who created everything. Extraordinary claims need extraordinary evidence, and we just don't have it. We have old books, personal feelings, and philosophical arguments that have been challenged for centuries. Science explains the universe without needing to add God, and adding God doesn't actually explain anything, it just pushes the question back, who made God?",
+                (1,2): "Look at the problem of evil, and I'm not being abstract. Children die of cancer, earthquakes kill thousands, predators tear animals apart slowly. If there is an all powerful, all loving God, why would he design a world with so much gratuitous suffering? Evolution explains suffering as byproduct of natural selection, not design. An all loving designer wouldn't build a system where survival requires suffering. That's a real argument, not just no.",
+                (1,3): "Think about divine hiddenness. If God wants relationship with us, why is he so hidden? Why do billions of sincere seekers find nothing? Why does prayer not work any better than chance in controlled studies? Why is revelation so geographically concentrated, if you're born in ancient China you never hear of Jesus. A loving God who wants to be known would make himself more obvious. Hiddenness suggests he's not there.",
+                (1,4): "The God hypothesis has been shrinking. We used to think God made lightning, now we know it's electricity. We used to think God made species, now we know evolution does. Every time we learn more, we need God less to explain gaps. This is the God of the gaps problem. The universe looks exactly like you'd expect if there's no God, vast, mostly empty, indifferent, with life as a tiny accident on one planet.",
+                (2,1): "My opponent says fine tuning proves design, but that misunderstands probability. We don't know if constants could be different, maybe there's a multiverse with many universes and we happen to be in one that allows life, anthropic principle. And invoking a designer to explain order is not simple, God would be infinitely more complex and tuned than the universe, so who fine tuned God? It doesn't solve the problem, it makes it bigger.",
+                (2,2): "They talk about objective morality needing God, but that's backwards. We can explain morality through evolution and social contracts, empathy helped groups survive. And if morality comes from God, is something good because God says so, or does God say so because it's good? If first, morality is arbitrary, God could say torture is good. If second, good exists independent of God, so you don't need God for it. That's Euthyphro dilemma, 2400 years old and still unsolved.",
+                (2,3): "Consciousness is mysterious, yes, but mystery is not evidence for God. We didn't understand lightning once, we didn't say therefore God, we investigated. Neuroscience is making progress linking brain activity to experience. Saying God did it stops inquiry. And if God is pure mind without brain, how does that work? We have never seen mind without brain, so theism introduces a bigger mystery than it solves.",
+                (2,4): "Religious experience is not reliable. People of different religions have contradictory experiences, Hindu experiences Krishna, Christian experiences Jesus, they can't all be true. And experiences are heavily influenced by culture and expectation. Plus people experience all kinds of false things, ghosts, aliens. Without independent verification, personal experience can't be trusted as evidence for a cosmic being.",
+                (3,1): "Let me bring it together. We have a universe that science explains increasingly well without God, suffering that makes no sense if a loving God designed it, a God who stays hidden when he should be obvious, and arguments for God that have serious logical problems. The simplest explanation that fits all the data is that God does not exist, and religion is a human creation to explain what we didn't understand and comfort us about death.",
+                (3,2): "Who has the better explanation for what we actually see? Theist has to add extra assumptions, God is timeless, spaceless, invisible, yet personal and caring, intervenes but not detectably, allows evil for mysterious reasons. Atheism says reality is what we see, no extra invisible layer. Occam's razor says don't multiply entities beyond necessity. No God is simpler and fits the evidence better.",
+                (3,3): "Final thought, I'm not saying I know for sure there's no God, I'm saying there's no good reason to believe there is. Belief should be proportioned to evidence, and the evidence for God is weak, contradictory, and better explained by psychology and culture. Until better evidence comes, the honest position is to withhold belief. That's not just saying no, it's asking for real reasons and not finding them.",
+                (3,4): "If God exists and wants us to believe, he could make it clear, appear, heal amputees, write in the sky. He doesn't. Instead we get ancient texts with contradictions and moral problems, and a world that looks exactly indifferent. The lack of clear evidence where we would expect it is itself evidence of absence. That is why I say God does not exist, not as dogma, but as conclusion from what we actually observe.",
+            }
+            key = (round_num, turn_num if turn_num<=4 else ((turn_num-1)%4+1))
+            return atheist_templates.get(key, atheist_templates[(3,4)])
+
+    # === GENESIS TOPIC ===
+    if "GOD TOLD TRUTH" in sl:
         god_templates = {
             (1,1): "I want to start with what God actually said in Genesis 2 verse 17. He said in the day you eat of it you shall surely die, and the Hebrew is moth tamuth, an emphatic form meaning dying you shall die. It is about certainty, not just timing. The serpent directly contradicts that in chapter 3 verse 4 when he says you shall not surely die. So who is telling the truth? Look at what happened that very day. They experienced shame, fear, hiding, and separation from God. That is the beginning of death.",
             (1,2): "Look at how generous God is in Genesis 2 verse 16. He says you may freely eat of every tree in the garden. Every single tree except one. That is incredibly generous. Then the serpent twists it in chapter 3 verse 1 and asks, did God really say you shall not eat of every tree? He makes God sound stingy when God was actually abundant. That kind of twisting is deceptive. God told the truth about provision.",
@@ -266,7 +353,7 @@ def generate_fallback_debate(side_label, topic, round_num, turn_num):
         }
         key = (round_num, turn_num if turn_num<=4 else ((turn_num-1)%4+1))
         return god_templates.get(key, god_templates[(3,4)])
-    elif "SERPENT TOLD TRUTH" in side_label.upper():
+    elif "SERPENT TOLD TRUTH" in sl:
         serpent_templates = {
             (1,1): "I want us to read what the text actually says, not what we think it should say. Genesis 2 verse 17 has God saying, in the day you eat you shall surely die, and the plain sense of in the day is that same day. Yet Genesis 5 verse 5 says Adam lived nine hundred and thirty years and then died. He did not die that day. He lived for centuries afterward. The serpent says in chapter 3 verse 4, you shall not surely die, and that is exactly what happened. They did not die that day. He also says your eyes shall be opened and you shall be as gods knowing good and evil, and chapter 3 verse 7 says their eyes were opened, and God Himself says in verse 22, man has become as one of us to know good and evil. God confirms the serpent was right.",
             (1,2): "Think about the Hebrew word yom, day. In Genesis 1, evening and morning were the first day, a literal day. So when God says in the day you eat you shall surely die, the natural reading is that same day. Adam did not die that day. The serpent's prediction about the immediate outcome was more accurate. He said you shall not die, and they did not. He said you shall be as gods knowing good and evil, and God says in chapter 3 verse 22, they have become like one of us. Two claims by the serpent, both validated by the story itself, while God's threat did not happen as stated that day.",
@@ -283,15 +370,43 @@ def generate_fallback_debate(side_label, topic, round_num, turn_num):
         }
         key = (round_num, turn_num if turn_num<=4 else ((turn_num-1)%4+1))
         return serpent_templates.get(key, serpent_templates[(3,4)])
-    else:
-        generic = {
-            (1,1): f"When we look at {topic_short}, I think {side_label} has the stronger case because it fits what we actually observe. The other side relies on assumptions that sound nice in theory but do not hold up when you test them against real cases. That is why {side_label} should be preferred here.",
-            (1,2): f"Let me put {topic_short} in simple terms. {side_label} is saying there is a clear mechanism that you can check. You can actually test it, and when you do, the evidence lines up. The opposing view struggles to explain the common cases we see every day. That points toward {side_label}.",
-            (1,3): f"Think about {topic_short} from first principles. What are we trying to explain? {side_label} offers an explanation that covers both the big picture and the details. The alternative sounds plausible until you look at the edge cases, then it breaks down.",
-            (1,4): f"On {topic_short}, I think we should ask what would happen if we adopted the other side. Would it make accurate predictions? {side_label} does. It tells you what to expect and you see it happen. That predictive power matters.",
+    
+    # === VERSATILE GENERIC FOR ANY TOPIC ===
+    # Provide real arguments, not yes/no
+    if "GOD" in sl or "EXISTS" in sl or "THEIST" in sl or sl in ["FOR","AFFIRMATIVE","PRO"]:
+        versatile_for={
+            (1,1): f"When we look at {topic_short}, I think the case for {side_label} starts with a basic observation about how we explain things. Everything we see has an explanation, either in itself or in something else, and {topic_short} fits that pattern. The idea behind {side_label} gives us a deeper why, not just a how, and it connects a lot of dots that otherwise stay scattered. That's why I find {side_label} more compelling here.",
+            (1,2): f"Let me put {topic_short} in everyday terms. If {side_label} is right, we would expect to see order, intelligibility, and real value in the world, and we do. We can do science, we understand math, we feel moral urgency. {side_label} says that's not an accident, there's a foundation that makes sense of it. The alternative has to say it's all just brute fact, it just is, and that feels less explanatory to me.",
+            (1,3): f"Think about {topic_short} from first principles. What are we trying to explain? Not just one fact, but a cluster, existence, order, consciousness, value. {side_label} offers one unified story that covers all of them. My opponent's view needs a separate patch for each, and when you need many patches, it starts to look ad hoc. {side_label} has explanatory power.",
+            (1,4): f"On {topic_short}, I think we should ask what we would predict if {side_label} were true. We would expect a world that is rational, discoverable, with creatures who can reason and care about truth. And that's exactly what we find. That predictive success matters. {side_label} doesn't just say yes, it tells you what to expect and you see it.",
+            (2,1): f"My opponent says {topic_short} can be explained without {side_label}, but I don't think their alternative really explains, it just describes. Saying it just happened or it's just natural law doesn't give a deeper reason why laws exist at all. {side_label} pushes one step further and asks what grounds the laws, what grounds existence itself. That's a legitimate philosophical move, not just saying yes.",
+            (2,2): f"They argue that {side_label} adds complexity, but actually {side_label} is simpler in the sense of ultimate explanation. Instead of many unexplained brute facts, you have one necessary foundation that explains the many. That's what we do in science too, we seek a unified theory. {side_label} is the ultimate unified theory for why there is something rather than nothing.",
+            (2,3): f"If {side_label} were false, you'd expect a very different world. You'd expect either nothing at all, or chaos with no laws, or minds that can't trust their reasoning because evolution only cares about survival, not truth. But we have laws, we have reliable reasoning, we have a universe that is stunningly intelligible. That is exactly what {side_label} predicts.",
+            (2,4): f"Consider personal experience and history. Across cultures, people report encountering transcendence, moral transformation, awe that changes lives. You can call each one illusion, but the pattern is vast. {side_label} makes sense of that pattern as contact with something real, not just wishful thinking. That lived evidence counts for something in this debate about {topic_short}.",
+            (3,1): f"Let me pull this together for {topic_short}. We have existence itself, order, consciousness, morality, reason, and experience. Individually each might have a naturalistic story, but together they form a cumulative case. {side_label} ties them into one coherent picture. The other side needs many independent, strained stories. Cumulatively, {side_label} is stronger.",
+            (3,2): f"Who has the more complete explanation for {topic_short}? {side_label} says there is a deeper foundation that is necessary, rational, and good, and that explains why the world is the way it is. The alternative says it's all contingent, no ultimate reason. If you care about ultimate why, not just how, {side_label} answers the question the other side leaves hanging.",
+            (3,3): f"Think about what it means to be human in this debate about {topic_short}. We ask why, we seek purpose, we love and reason and feel moral guilt. If {side_label} is false, those deep features are accidental side effects pointing to nothing. If {side_label} is true, they make sense as clues to our origin. I think {side_label} fits human nature better.",
+            (3,4): f"Final point on {topic_short}, I'm not asking you to believe because it's comforting. I'm saying look at the total evidence, the beginning, the fine tuning, the intelligibility, the moral and conscious life we live. It looks like mind is fundamental, not just matter. That is why I defend {side_label}, not as blind yes, but as inference to best explanation.",
         }
         key = (round_num, turn_num if turn_num<=4 else ((turn_num-1)%4+1))
-        return generic.get(key, f"On {topic_short}, {side_label} offers a clearer and more consistent account that fits the evidence we have.")
+        return versatile_for.get(key, versatile_for[(3,4)])
+    else:
+        versatile_against={
+            (1,1): f"When we look at {topic_short}, I think we have to start with what we actually have evidence for. The claim behind {side_label} is a big one, it says more exists than we can see or measure. But big claims need good evidence, and when I look for independent, testable evidence for {topic_short}, I don't find it. Science explains more and more without needing that extra layer, and that extra layer doesn't actually explain, it just pushes the mystery back.",
+            (1,2): f"Let me put {topic_short} plainly. If {side_label} were true, we would expect the world to look different than it does. We would expect clear, unmistakable signs, not ambiguity and hiddenness. But what we see looks exactly like you'd expect if {side_label} were not true, vast, mostly empty, indifferent, with suffering built into how nature works. That's a real point, not just no.",
+            (1,3): f"Think about parsimony for {topic_short}. We have two stories. One says reality is what we observe, no extra invisible realm. The other adds an extra realm that is timeless, spaceless, undetectable, yet somehow does things. Occam's razor says don't multiply entities beyond necessity. Until we have strong reason to add that extra, the simpler story is that {side_label} is not needed.",
+            (1,4): f"On {topic_short}, the history matters. We used to invoke extra explanations for lightning, disease, planetary motion, and each time we learned the natural explanation. That's the God of the gaps pattern, or more generally, gaps pattern. {topic_short} looks like another gap that shrinks as we learn more. The world works exactly like a system with no extra intervention.",
+            (2,1): f"My opponent says {topic_short} explains order or value, but I think that gets it backwards. Order comes from natural laws, which we describe, not prescribe. And value comes from evolved social beings who need cooperation to survive. You don't need to add {side_label} to get those, and adding {side_label} creates a bigger puzzle, what explains that extra being? Who designed the designer?",
+            (2,2): f"They say {topic_short} gives meaning, but that is an appeal to consequences, not evidence. Wanting something to be true doesn't make it true. And the meaning it gives comes at a cost, you have to believe despite hiddenness, despite suffering that seems pointless, despite contradictory revelations across cultures. That cost makes {side_label} less plausible, not more.",
+            (2,3): f"If {side_label} were true, you would expect convergence, everyone discovering the same thing. But for {topic_short}, we see divergence, different cultures come to opposite conclusions, and those conclusions track geography and upbringing. That pattern suggests {topic_short} is a cultural product, not a discovery of an objective extra reality. Real discoveries converge, like math.",
+            (2,4): f"Consider how we know things. We trust methods that are public, repeatable, checkable. The evidence offered for {side_label} is mostly private, anecdotal, or philosophical arguments that have been debated for centuries without consensus. If {topic_short} were as solid as gravity, we wouldn't still be debating it after thousands of years. The lack of convergence is evidence against it.",
+            (3,1): f"Let me bring it together for {topic_short}. We have a world that science explains better and better without adding {side_label}, suffering that doesn't fit a good extra purpose, hiddenness where we would expect clarity, and arguments for {side_label} that have serious logical issues. The best fit for all that data is that {side_label} is a human story, comforting, but not true.",
+            (3,2): f"Who has the better explanation for {topic_short} as we actually observe it? {side_label} has to add special pleas, it is timeless but acts in time, invisible but personal, all powerful but can't make its existence clear. My view says reality is what we see, no special pleading needed. Simpler, and it matches what we observe, not what we wish.",
+            (3,3): f"Final thought on {topic_short}, I'm not claiming certainty, I'm claiming proportion. Belief should match evidence, and the evidence for {side_label} is weak, conflicting, and better explained by psychology and culture. Until better evidence arrives, the honest move is to not affirm {side_label}. That's not just saying no to be contrary, it's taking evidence seriously.",
+            (3,4): f"If {side_label} were true and important, you would expect it to be obvious, like the sun. Instead we get ambiguity, ancient texts with contradictions, and a world that looks indifferent. The absence of clear evidence where we would expect it is itself evidence of absence. That is why I defend {side_label} in the negative, not as dogma, but as conclusion from what we actually see.",
+        }
+        key = (round_num, turn_num if turn_num<=4 else ((turn_num-1)%4+1))
+        return versatile_against.get(key, versatile_against[(3,4)])
 
 USED_JUDGE_EXPLANATIONS = set()
 def generate_panel_commentary(model,side,topic,rn,ap,sk,prev,roles):
@@ -347,6 +462,7 @@ def generate_panel_commentary(model,side,topic,rn,ap,sk,prev,roles):
             f"In round {rn}, I scored {pref_label} higher because there is a real tension there that did not get resolved. God warned death that day, the serpent promised no death but enlightenment, and enlightenment is what happens in verse 7 while death does not. That tension made me lean toward {pref_label} for this round.",
         ]
     else:
+        # Versatile fallbacks for any topic
         fallbacks_a=[
             f"Look, in round {rn} I gave it to {pref_label} because they actually brought evidence you can check, not just ideas. They laid out a clear mechanism that fits what we see, while {other_label} kept relying on assumptions that sound nice but do not explain the cases from this round.",
             f"For me, round {rn} belonged to {pref_label} because they defined their terms and stuck to them the whole way through. I noticed {other_label} shifted what they meant when they got pushed in round {rn}, and that made their case feel less clear to me.",
@@ -389,7 +505,7 @@ def build_outro(jc,ca,cb,roles):
     if math.isclose(ca,cb,abs_tol=0.01): res="a draw"
     elif ca>cb: res=roles['side_a_label']
     else: res=roles['side_b_label']
-    return f"After three rounds, our panel of {jc} judges gave {roles['side_a_label']} {ca:.1f}, {roles['side_b_label']} {cb:.1f}. Final result is {res}. Thank you for watching, and you decide who told the truth."
+    return f"After three rounds, our panel of {jc} judges gave {roles['side_a_label']} {ca:.1f}, {roles['side_b_label']} {cb:.1f}. Final result is {res}. Thank you for watching, and you decide who is right."
 
 def stitch_segments(segs,out):
     lf="concat_list.txt"
@@ -398,36 +514,23 @@ def stitch_segments(segs,out):
     r=subprocess.run(cmd,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
     if r.returncode!=0: print(r.stderr[-7000:]); raise RuntimeError("Concat failed")
 
-# === STANDARD EMOJIS WITH TWEMOJI DOWNLOAD - FIX WHITE BOXES + ETHNICALLY AMBIGUOUS ===
+# === STANDARD EMOJIS WITH TWEMOJI DOWNLOAD - FIX WHITE BOXES + ETHNICALLY AMBIGUOUS + LONGER DURATION ===
 def emoji_to_codepoint(emoji_char):
-    # Convert emoji to Twemoji codepoint string like 1f9d1-200d-1f9b1
-    # Remove variation selectors and handle ZWJ sequences
     codes=[]
     for ch in emoji_char:
         cp=ord(ch)
-        if cp==0xfe0f: # variation selector, skip in twemoji naming but keep logic
-            continue
+        if cp==0xfe0f: continue
         codes.append(f"{cp:x}")
     return "-".join(codes)
 
 def get_visual_story_flow(topic):
     tl=(topic or "").lower()
-    if "god" in tl or "serpent" in tl or "adam" in tl or "eve" in tl or "genesis" in tl:
-        # Ethnically ambiguous: 🧑 person (yellow default, most ambiguous), 👤 bust silhouette (no skin), 👥 people
-        # 🧑‍🦱 person curly hair - still yellow ambiguous
-        # Flows: person -> people, apple -> apple tree -> tree
-        return [
-            "🧑", "👤", "🧑‍🦱", "👥",
-            "🧑", "👤",
-            "🌿", "🌱",
-            "🍎", "🍏", "🌳", "🌲",
-            "🐍",
-            "👀", "👁️", "🙈", "😨",
-            "😣", "😓", "🪨", "🚪", "⚔️", "👼", "💀",
-            "💡", "🧠",
-        ]
+    if "god" in tl and "serpent" in tl:
+        return ["🧑", "👤", "🧑‍🦱", "👥","🧑","👤","🌿","🌱","🍎","🍏","🌳","🌲","🐍","👀","👁️","🙈","😨","😣","😓","🪨","🚪","⚔️","👼","💀","💡","🧠",]
+    elif "god" in tl and "exist" in tl:
+        return ["🌌","⭐","🌍","🧠","💡","❓","🤔","⚖️","💭","🙏","👤","👥","🌱","🔬","📖","💀","😇","✨"]
     else:
-        return ["💡","🔍","📖","⚖️","🧠","🌍","🌌","⭐","🔥","💧","🌳","🤖","💻","⚠️","✅","❓","🤔","💭"]
+        return ["💡","🔍","📖","⚖️","🧠","🌍","🌌","⭐","🔥","💧","🌳","🤖","💻","⚠️","✅","❓","🤔","💭","👤","👥","🌱","✨"]
 
 def get_story_emojis(text):
     tl=text.lower()
@@ -446,11 +549,11 @@ def get_story_emojis(text):
         "cherubim":"👼","angel":"👼","sword":"⚔️",
         "death":"💀","die":"💀",
         "knowledge":"💡","wise":"🧠","wisdom":"🧠","light":"💡","idea":"💡",
+        "god":"✨","universe":"🌌","cosmos":"🌌","stars":"⭐","world":"🌍","earth":"🌍",
+        "exist":"❓","exists":"❓","evidence":"🔍","proof":"🔍",
+        "moral":"⚖️","good":"😇","evil":"😈","suffering":"😣","pain":"😣",
+        "science":"🔬","faith":"🙏","pray":"🙏","believe":"🤔","think":"🤔","reason":"🧠",
         "ai":"🤖","robot":"🤖","computer":"💻",
-        "justice":"⚖️","judge":"⚖️","scales":"⚖️",
-        "universe":"🌌","galaxy":"🌌","stars":"⭐","moon":"🌙","night":"🌙",
-        "earth":"🌍","world":"🌍","water":"🌊","sea":"🌊",
-        "question":"❓","choice":"🤔","think":"🤔",
     }
     relevant=[]
     for kw, emoji_char in keyword_to_emoji.items():
@@ -468,23 +571,19 @@ def get_story_emojis(text):
         USED_EMOJIS.add(emoji_char)
     return relevant[:3]
 
-# Cache dir for twemoji
 EMOJI_CACHE_DIR="emoji_cache"
 os.makedirs(EMOJI_CACHE_DIR, exist_ok=True)
 
 def create_emoji_asset(emoji_char, index):
     filename=f"emoji_{index}.png"
     size=500
-    # Try Twemoji download first - standard colorful emojis, fixes white boxes
     try:
         code=emoji_to_codepoint(emoji_char)
-        # Twemoji CDN URLs - try multiple
         urls=[
             f"https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/{code}.png",
             f"https://cdn.jsdelivr.net/gh/twitter/twemoji@latest/assets/72x72/{code}.png",
             f"https://raw.githubusercontent.com/twitter/twemoji/master/assets/72x72/{code}.png",
         ]
-        # Also try without ZWJ handling for complex emojis - fallback to first codepoint
         if "-" in code:
             first=code.split("-")[0]
             urls.append(f"https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/{first}.png")
@@ -506,13 +605,10 @@ def create_emoji_asset(emoji_char, index):
                 except:
                     continue
         if emoji_img is not None:
-            # Composite onto 500x500 transparent canvas
             img=Image.new("RGBA",(size,size),(0,0,0,0))
-            # Resize emoji to fit nicely with padding
             emoji_resized=emoji_img.resize((380,380), Image.LANCZOS)
             x=(size-380)//2
             y=(size-380)//2
-            # Add subtle shadow for readability
             shadow=Image.new("RGBA",(size,size),(0,0,0,0))
             shadow_draw=ImageDraw.Draw(shadow)
             shadow_draw.ellipse([x+6,y+6,x+380+6,y+380+6], fill=(0,0,0,60))
@@ -523,11 +619,9 @@ def create_emoji_asset(emoji_char, index):
             return filename
     except Exception as e:
         print(f"Twemoji download failed for {emoji_char} {code}: {e}, falling back to font")
-    # Fallback to font rendering with DejaVu if download fails
     img=Image.new("RGBA",(size,size),(0,0,0,0))
     draw=ImageDraw.Draw(img)
     try:
-        # Try to find any emoji font
         for fp in ["/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf","/usr/share/fonts/truetype/noto/NotoEmoji-Regular.ttf","/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"]:
             if os.path.exists(fp):
                 try:
@@ -546,7 +640,6 @@ def create_emoji_asset(emoji_char, index):
                     return filename
                 except:
                     continue
-        # Last resort - text label
         font=load_font(80,bold=True)
         draw.ellipse([50,50,450,450], fill=(100,100,100,200), outline=(255,255,255,200), width=4)
         draw.text((250,250), emoji_char[:2], font=font, fill=(255,255,255,255), anchor="mm")
@@ -729,18 +822,46 @@ async def generate_audio_async(text,voice,filename):
         return words
 
 def generate_audio(text,role,filename,judge_voice_index=None):
+    # UNIQUE VOICE LOGIC - no duplicates ever
     if "JUDGE" in role.upper():
         idx=judge_voice_index if judge_voice_index is not None else 0
-        voice=JUDGE_VOICES[idx % len(JUDGE_VOICES)]
-    elif "GOD TOLD TRUTH" in role.upper(): voice=VOICES["A"]
-    elif "SERPENT TOLD TRUTH" in role.upper(): voice=VOICES["B"]
-    else: voice=VOICES["A"] if "GOD" in role.upper() else VOICES["B"] if "SERPENT" in role.upper() else VOICES["Moderator"]
+        # Judges use pool starting at index 3, guaranteed not A,B,Moderator
+        judge_pool = VOICE_POOL[3:]
+        voice=judge_pool[idx % len(judge_pool)]
+    elif role in CAST_VOICE_ASSIGNMENT:
+        voice=CAST_VOICE_ASSIGNMENT[role]
+    elif role.upper() in CAST_VOICE_ASSIGNMENT:
+        voice=CAST_VOICE_ASSIGNMENT[role.upper()]
+    elif "GOD TOLD TRUTH" in role.upper() or "GOD EXISTS" in role.upper():
+        voice=CAST_VOICE_ASSIGNMENT.get("GOD TOLD TRUTH", CAST_VOICE_ASSIGNMENT.get("GOD EXISTS", VOICE_POOL[0]))
+        # Find actual key that contains GOD EXISTS or similar
+        for k,v in CAST_VOICE_ASSIGNMENT.items():
+            if "GOD EXISTS" in k.upper() or "GOD TOLD TRUTH" in k.upper() or ("GOD" in k.upper() and "NOT" not in k.upper() and "NO" not in k.upper()):
+                if "AFFIRMATIVE" not in k.upper() and "NEGATIVE" not in k.upper():
+                    voice=v
+                    break
+        if "GOD TOLD TRUTH" in role.upper() or ("GOD EXISTS" in role.upper() and "NOT" not in role.upper()):
+            voice=VOICE_POOL[0]
+    elif "SERPENT" in role.upper() or "GOD DOES NOT EXIST" in role.upper() or "NO GOD" in role.upper():
+        voice=VOICE_POOL[1]
+        for k,v in CAST_VOICE_ASSIGNMENT.items():
+            if "SERPENT" in k.upper() or "DOES NOT EXIST" in k.upper() or "NO GOD" in k.upper() or "NEGATIVE" in k.upper():
+                voice=v
+                break
+    elif "MODERATOR" in role.upper():
+        voice=VOICE_POOL[2]
+    else:
+        # Fallback unique - check assignment
+        if role in CAST_VOICE_ASSIGNMENT:
+            voice=CAST_VOICE_ASSIGNMENT[role]
+        else:
+            voice=VOICE_POOL[0]
     try: return asyncio.run(generate_audio_async(text,voice,filename))
     except Exception as e:
         print(f"TTS primary failed {voice}: {e}, trying fallback same category")
         try:
-            if "GOD" in role.upper(): fb_voice="en-US-GuyNeural"
-            elif "SERPENT" in role.upper(): fb_voice="en-GB-LibbyNeural"
+            if "GOD" in role.upper() and "NOT" not in role.upper(): fb_voice="en-US-GuyNeural"
+            elif "SERPENT" in role.upper() or "NOT" in role.upper() or "NO GOD" in role.upper(): fb_voice="en-GB-LibbyNeural"
             else: fb_voice="en-US-JennyNeural"
             return asyncio.run(generate_audio_async(text,fb_voice,filename))
         except:
@@ -796,11 +917,9 @@ def render_video_segment(bg_path,ui_path,audio_path,subs_path,output_path,positi
     for idx, (gif_path, start_time, end_time) in enumerate(visual_inputs):
         input_idx = 3 + idx
         filter_parts.append(f"[{input_idx}:v]scale={EMOJI_W}:{EMOJI_H}[v{idx}]")
-        # One at a time, centre of screen, slightly larger, not overlapping subtitles
         vx=(VIDEO_W-EMOJI_W)//2
-        vy=(VIDEO_H-EMOJI_H)//2 - 50  # centre screen, 50px above true centre to sit in open area
+        vy=(VIDEO_H-EMOJI_H)//2 - 50
         next_label=f"[tmp{idx}]"
-        # Small bounce effect for chat-like pop
         filter_parts.append(f"{last_label}[v{idx}]overlay={vx}:{vy}:enable='between(t,{start_time:.2f},{end_time:.2f})'{next_label}")
         last_label=next_label
     safe_subs=subs_path.replace(":", "\\:")
@@ -881,22 +1000,30 @@ def render_scorecard_video(image_path,audio_path,subs_path,output_path):
 def generate_turn(role_key, topic, round_num, turn_num, prev_history, model, role_label, role_desc, opponent_label, opponent_desc):
     global USED_ARGUMENTS, USED_PHRASES, USED_KEYWORDS
     if round_num==1:
-        round_focus="OPENING ROUND: Set up your case naturally, like a real person talking on stage. Start with a hook, then your strongest evidence."
+        round_focus="OPENING ROUND: Set up your case naturally, like a real person talking on stage. Start with a hook, then your strongest evidence. Give REAL arguments, not just yes/no."
     elif round_num==2:
-        round_focus="REBUTTAL ROUND: Respond directly to what opponent just said. Show where they missed context. Bring new evidence you haven't used before."
+        round_focus="REBUTTAL ROUND: Respond directly to what opponent just said. Show where they missed context. Bring new evidence you haven't used before. Real points, examples, reasoning."
     else:
-        round_focus="CLOSING ROUND: Bring it all together, speak from heart, summarize why your view fits all the evidence. End with a memorable question or challenge."
-    prev_snip=prev_history[-600:] if prev_history else "No previous"
+        round_focus="CLOSING ROUND: Bring it all together, speak from heart, summarize why your view fits all the evidence. End with a memorable question or challenge. Make sense for any topic."
+    prev_snip=prev_history[-800:] if prev_history else "No previous"
     used_str="; ".join(list(USED_ARGUMENTS)[-10:])[:500]
     used_kw="; ".join(list(USED_KEYWORDS)[-10:])
     tl = (topic or "").lower()
     is_genesis = "god" in tl and "serpent" in tl
+    is_god_exist = "god" in tl and "exist" in tl
     if is_genesis:
         evidence_line = "Reference Genesis naturally: 2:17, 3:4, 3:7, 3:22, 5:5 - but speak like a person, not a reference list"
         fresh_line = "CRITICAL: Fresh angle not used before. If you said eyes opened, now try tree of life, cherubim, dust, shame, or Hebrew moth tamuth"
+    elif is_god_exist:
+        if "DOES NOT EXIST" in role_label.upper() or "NO GOD" in role_label.upper() or "NEGATIVE" in role_label.upper():
+            evidence_line = "Use real arguments: problem of evil, divine hiddenness, lack of evidence, parsimony, God of gaps, Euthyphro dilemma. Give concrete examples, not just no."
+            fresh_line = "CRITICAL: Fresh angle, if you used evil before, now try hiddenness or parsimony or incoherence. Real points."
+        else:
+            evidence_line = "Use real arguments: cosmological (cause), teleological (fine-tuning), moral argument, consciousness, contingency, personal experience. Give concrete examples, not just yes."
+            fresh_line = "CRITICAL: Fresh angle, if you used cosmological before, now try fine-tuning or moral or consciousness. Real points."
     else:
-        evidence_line = f"Use real examples, studies, or lived experience about {topic} - make it concrete and human"
-        fresh_line = "CRITICAL: Fresh angle not used before. New mechanism, consequence, or example"
+        evidence_line = f"Use real examples, studies, lived experience, mechanisms, consequences about {topic} - make it concrete and human, not just yes/no"
+        fresh_line = "CRITICAL: Fresh angle not used before. New mechanism, consequence, or example that makes sense for this topic"
     prompt=f"""You are {role_label} debating LIVE on YouTube about: {topic}
 Your view: {role_desc}
 Opponent: {opponent_label} = {opponent_desc}
@@ -905,6 +1032,13 @@ What opponent just said: {prev_snip}
 
 DO NOT REPEAT: {used_str}
 Keywords already used: {used_kw}
+
+CRITICAL VERSATILITY RULES - MUST FOLLOW FOR ANY TOPIC LIKE Does God exist:
+- NEVER just say yes or no. Always give 2-3 real points with reasoning.
+- For Does God exist, if you are GOD EXISTS, argue cosmological, fine-tuning, moral, consciousness.
+- If you are GOD DOES NOT EXIST, argue evil, hiddenness, lack of evidence, parsimony.
+- For any topic, give evidence, example, mechanism, not just position.
+- Make sense, be substantive.
 
 Speak like a REAL HUMAN on stage, not a textbook:
 - Use contractions: I'm, don't, can't, it's, we're, that's, you've
@@ -917,6 +1051,7 @@ Speak like a REAL HUMAN on stage, not a textbook:
 - {fresh_line}
 - Be conversational, passionate, slightly informal, like you're talking to a friend who disagrees
 - {MIN_TURN_WORDS}-{MAX_TURN_WORDS} words, must sound like spoken English, not written essay
+- Must be versatile and make sense for topic: {topic}
 """
     for m in [model]+FALLBACK_MODELS[:4]:
         temp=0.92 + (turn_num*0.04) + random.uniform(0,0.12)
@@ -927,6 +1062,9 @@ Speak like a REAL HUMAN on stage, not a textbook:
             if not cleaned.endswith(('.', '!', '?')): cleaned+="."
             cleaned=re.sub(r"https?://\S+"," ",cleaned)
             lower_cleaned=cleaned.lower()
+            # Check not just yes/no
+            if len(lower_cleaned.split())<20 and ("yes" in lower_cleaned or "no" in lower_cleaned):
+                continue
             is_repeated=False
             for used in USED_ARGUMENTS:
                 if len(used)>30 and used.lower() in lower_cleaned:
@@ -937,7 +1075,7 @@ Speak like a REAL HUMAN on stage, not a textbook:
                     if len(s)>20:
                         USED_ARGUMENTS.add(s[:80])
                         USED_PHRASES.add(s[:50].lower())
-                        for kw in ["eyes opened","tree of life","cherubim","dust","shame","moth tamuth","beyom","pain","toil","exile","930 years","3:22","3:7","knowledge","wisdom"]:
+                        for kw in ["eyes opened","tree of life","cherubim","dust","shame","moth tamuth","beyom","pain","toil","exile","930 years","3:22","3:7","knowledge","wisdom","fine tuning","evil","hiddenness","cosmological","moral","consciousness"]:
                             if kw in s.lower():
                                 USED_KEYWORDS.add(kw)
                 if count_words(cleaned)>=MIN_TURN_WORDS-15:
@@ -1029,32 +1167,36 @@ def calculate_round_average(results):
     return round(sum(r["A_total"] for r in results)/len(results),2), round(sum(r["B_total"] for r in results)/len(results),2)
 
 def create_emoji_plan(text, words):
-    # Chat-like: when a specific word is spoken, show emoji over subtitles synced to that word
-    # Like typing "serpent" and it becomes 🐍 right as you say it
     if not words:
         return []
-    # Word -> emoji mapping for direct replacement sync
+    # Word -> emoji mapping for direct replacement sync - versatile for any topic
     word_emoji_map={
-        "adam":"🧑","man":"🧑","human":"🧑","person":"👤","people":"👥","eve":"🧑","woman":"🧑",
-        "garden":"🌿","eden":"🌿",
-        "apple":"🍎","fruit":"🍎","trees":"🌳","tree":"🌳",
+        "adam":"🧑","man":"🧑","men":"👥","human":"🧑","person":"👤","people":"👥","mankind":"👥","humanity":"👥",
+        "eve":"🧑","woman":"🧑","women":"👥",
+        "garden":"🌿","eden":"🌿","plant":"🌱",
+        "apple":"🍎","fruit":"🍎","eat":"🍎","eating":"🍎","trees":"🌳","tree":"🌳",
         "serpent":"🐍","snake":"🐍",
-        "eyes":"👀","eye":"👀","naked":"🙈","shame":"🙈",
+        "eyes":"👀","eye":"👀","see":"👁️","naked":"🙈","shame":"🙈",
         "afraid":"😨","fear":"😨","hide":"😨","hid":"😨",
-        "death":"💀","die":"💀","dust":"💀",
+        "death":"💀","die":"💀","died":"💀","dying":"💀","dust":"💀",
         "sword":"⚔️","cherubim":"👼","angel":"👼",
-        "knowledge":"🧠","wise":"🧠","wisdom":"💡",
-        "god":"✨","lord":"✨",
+        "knowledge":"🧠","wise":"🧠","wisdom":"💡","smart":"🧠",
+        "god":"✨","lord":"✨","creator":"✨",
+        "universe":"🌌","cosmos":"🌌","space":"🌌","stars":"⭐","star":"⭐","world":"🌍","earth":"🌍",
+        "exist":"❓","exists":"❓","evidence":"🔍","proof":"🔍","real":"✅",
+        "moral":"⚖️","good":"😇","evil":"😈","suffering":"😣","pain":"😣",
+        "science":"🔬","faith":"🙏","pray":"🙏","believe":"🤔","think":"🤔","reason":"🧠","logic":"🧠",
+        "love":"❤️","heart":"❤️","soul":"✨",
+        "begin":"🌱","began":"🌱","beginning":"🌱","cause":"💥","caused":"💥",
+        "design":"🎨","designed":"🎨","fine":"✨","tuned":"🎯","tuning":"🎯",
     }
     plan=[]
-    # Track used times to avoid overlap
     used_times=[]
     for w_idx, w in enumerate(words):
         clean_w = re.sub(r"[^a-z]", "", w["text"].lower())
         if clean_w in word_emoji_map:
             start=float(w["start"])
-            end=float(w["end"]) + 1.2  # show for 1.2s as word is spoken, like chat replacement
-            # Avoid overlapping - only one at a time over subtitles
+            end=float(w["end"]) + 3.5  # LONGER - stays 3.5s after word, not 1.2s
             overlaps=False
             for s,e in used_times:
                 if not (end < s or start > e):
@@ -1062,26 +1204,26 @@ def create_emoji_plan(text, words):
                     break
             if overlaps:
                 continue
-            # Only show if not too frequent - at least 1.5s gap
-            if used_times and start - used_times[-1][1] < 1.2:
+            if used_times and start - used_times[-1][1] < 1.0:
                 continue
             emoji_char=word_emoji_map[clean_w]
-            # Skip if already shown very recently
             if emoji_char in [p["emoji"] for p in plan[-2:]]:
                 continue
             plan.append({"emoji":emoji_char, "start":max(0.0,start), "end":end, "label":clean_w, "word":w["text"]})
             used_times.append((start,end))
-            if len(plan)>=6:  # max 6 per segment, but spaced out one at a time
+            if len(plan)>=6:
                 break
     return plan
 
 def create_segment(text,role,speaker_name,topic,segment_id,model_for_visuals,position=None,glow=None,judge_voice_index=None):
     if position is None:
-        if "GOD" in role.upper(): position="left"
-        elif "SERPENT" in role.upper(): position="right"
+        if "GOD TOLD TRUTH" in role.upper() or "GOD EXISTS" in role.upper(): position="left"
+        elif "SERPENT" in role.upper() or "NOT EXIST" in role.upper() or "NO GOD" in role.upper(): position="right"
         else: position="center" if "JUDGE" in role.upper() or role=="Moderator" else "left"
     if glow is None:
-        glow="#00FFCC" if "GOD" in role.upper() else "#FF00FF" if "SERPENT" in role.upper() else "#3399FF" if "JUDGE" in role.upper() else "#FFD700"
+        if "GOD TOLD TRUTH" in role.upper() or "GOD EXISTS" in role.upper(): glow="#00FFCC"
+        elif "SERPENT" in role.upper() or "NOT EXIST" in role.upper() or "NO GOD" in role.upper(): glow="#FF00FF"
+        else: glow="#3399FF" if "JUDGE" in role.upper() else "#FFD700"
     af=f"audio_{segment_id}.mp3"; sf=f"subs_{segment_id}.ass"; bf=f"bg_{segment_id}.png"; uf=f"ui_{segment_id}.png"; vf=f"segment_{segment_id}.mp4"
     words=generate_audio(text,role,af,judge_voice_index)
     try:
@@ -1091,7 +1233,7 @@ def create_segment(text,role,speaker_name,topic,segment_id,model_for_visuals,pos
     eplan=[]
     try:
         eplan=create_emoji_plan(clean_for_speech(text),words)
-        if eplan: print(f"   {len(eplan)} emoji(s): {', '.join(v['emoji'] for v in eplan)}")
+        if eplan: print(f"   {len(eplan)} emoji(s) 3.5s each: {', '.join(v['emoji']+'('+v['word']+')' for v in eplan)}")
     except Exception as e: print(f"Emoji planning skipped: {e}")
     create_background(position,glow,bf)
     cx,cy=create_ui_overlay(speaker_name,topic,position,glow,uf)
@@ -1109,7 +1251,9 @@ def run_debate_pipeline():
     if not avail: avail=FALLBACK_MODELS.copy()
     ap_model,sk_model=choose_primary_models(avail)
     roles=get_debate_roles(topic, ap_model)
+    assign_unique_voices(roles)
     print(f"Roles: {roles['side_a_label']} VS {roles['side_b_label']} - VERSATILE TOPIC-ADAPTIVE")
+    print(f"UNIQUE VOICES: {CAST_VOICE_ASSIGNMENT}")
     print(f"Debate engines: {get_judge_short_name(ap_model)} [{provider_from_model(ap_model)}] vs {get_judge_short_name(sk_model)} [{provider_from_model(sk_model)}]")
     print(f"Voices UNIQUE: GOD={VOICES['A']}, SERPENT={VOICES['B']}, MOD={VOICES['Moderator']}, JUDGES={', '.join(JUDGE_VOICES[:len(avail)])}")
     judges=choose_judges(avail,(ap_model,sk_model))
@@ -1125,7 +1269,7 @@ def run_debate_pipeline():
     segs=[]; sid=0
     def add_segment(text,role,name,position=None,glow=None,judge_voice_index=None):
         nonlocal sid
-        vm=sk_model if "SERPENT" in role.upper() or role=="B" else ap_model
+        vm=sk_model if "SERPENT" in role.upper() or "NOT" in role.upper() or "NO GOD" in role.upper() or role=="B" else ap_model
         v=create_segment(text,role,name,topic,sid,vm,position,glow,judge_voice_index); segs.append(v); sid+=1
     
     add_segment(build_intro(topic,len(judges),roles),"Moderator","MODERATOR")
