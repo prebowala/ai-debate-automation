@@ -286,10 +286,16 @@ def strip_filler(text):
         text=re.sub(pat,"",text,flags=re.IGNORECASE).strip()
     return text
 
-def generate_fallback_debate(side_label, topic, round_num, turn_num):
+def generate_fallback_debate(side_label, topic, round_num, turn_num, opponent_last=""):
     tl=(topic or "").lower()
     topic_short = topic[:130] if len(topic)>130 else topic
     sl=side_label.upper()
+    # Build rebuttal prefix if opponent_last exists and not first turn
+    rebuttal_prefix = ""
+    if opponent_last and not (round_num==1 and turn_num==1):
+        opp_snip = opponent_last[:150].strip()
+        if opp_snip:
+            rebuttal_prefix = f"You just argued that {opp_snip}, but that doesn't hold up. "
     if "does god exist" in tl or "does a god" in tl or "existence of god" in tl or "is there a god" in tl or ("god exist" in tl and "serpent" not in tl):
         if "GOD EXISTS" in sl or "AFFIRMATIVE" in sl or "THEIST" in sl or "FOR" in sl or sl=="GOD" or "GOD" in sl and "NOT" not in sl and "NO" not in sl:
             if "NOT" in sl or "NO GOD" in sl or "NEGATIVE" in sl:
@@ -310,7 +316,8 @@ def generate_fallback_debate(side_label, topic, round_num, turn_num):
                     (3,4): "Final point, I'm not saying believe because it's comforting. I'm saying the evidence of a beginning, fine tuning, consciousness, morality, reason, and religious experience all point in same direction. It's an inference to best explanation. The universe looks like it has mind behind it, not just matter.",
                 }
                 key = (round_num, turn_num if turn_num<=4 else ((turn_num-1)%4+1))
-                return theist_templates.get(key, theist_templates[(3,4)])
+                base = theist_templates.get(key, theist_templates[(3,4)])
+                return (rebuttal_prefix + base) if rebuttal_prefix else base
         # atheist / no god
         atheist_templates={
             (1,1): "I want to start with the burden of proof. The claim God exists is an extraordinary claim about an invisible, all powerful being who created everything. Extraordinary claims need extraordinary evidence, and we just don't have it. We have old books, personal feelings, and philosophical arguments that have been challenged for centuries. Science explains the universe without needing to add God.",
@@ -327,7 +334,8 @@ def generate_fallback_debate(side_label, topic, round_num, turn_num):
             (3,4): "If God exists and wants us to believe, he could make it clear, appear, heal amputees, write in the sky. He doesn't. Instead we get ancient texts with contradictions and moral problems, and a world that looks exactly indifferent. The lack of clear evidence where we would expect it is itself evidence of absence.",
         }
         key = (round_num, turn_num if turn_num<=4 else ((turn_num-1)%4+1))
-        return atheist_templates.get(key, atheist_templates[(3,4)])
+        base = atheist_templates.get(key, atheist_templates[(3,4)])
+        return (rebuttal_prefix + base) if rebuttal_prefix else base
     if "GOD TOLD TRUTH" in sl:
         god_templates = {
             (1,1): "I want to start with what God actually said in Genesis 2 verse 17. He said in the day you eat of it you shall surely die, and the Hebrew is moth tamuth, an emphatic form meaning dying you shall die. It is about certainty, not just timing. The serpent directly contradicts that in chapter 3 verse 4 when he says you shall not surely die. So who is telling the truth? Look at what happened that very day. They experienced shame, fear, hiding, and separation from God. That is the beginning of death.",
@@ -344,7 +352,8 @@ def generate_fallback_debate(side_label, topic, round_num, turn_num):
             (3,4): "One last point about the Hebrew. Moth tamuth in Genesis 2 verse 17 is infinitive absolute, it emphasizes certainty, you shall surely die. The serpent says lo moth temuthun, you shall not surely die, directly negating God's emphasis. What happened? They did die, not as an instant drop, but relationally that day, and they began dying physically, and eventually returned to dust.",
         }
         key = (round_num, turn_num if turn_num<=4 else ((turn_num-1)%4+1))
-        return god_templates.get(key, god_templates[(3,4)])
+        base = god_templates.get(key, god_templates[(3,4)])
+        return (rebuttal_prefix + base) if rebuttal_prefix else base
     elif "SERPENT TOLD TRUTH" in sl:
         serpent_templates = {
             (1,1): "I want us to read what the text actually says, not what we think it should say. Genesis 2 verse 17 has God saying, in the day you eat you shall surely die, and the plain sense of in the day is that same day. Yet Genesis 5 verse 5 says Adam lived nine hundred and thirty years and then died. He did not die that day. He lived for centuries afterward. The serpent says in chapter 3 verse 4, you shall not surely die, and that is exactly what happened.",
@@ -361,7 +370,8 @@ def generate_fallback_debate(side_label, topic, round_num, turn_num):
             (3,4): "If we are honest about the text, Genesis 3 is not about who lied, but about who gave a more accurate description of what would happen when they ate. God said death that day. The serpent said no death, but knowledge and godlikeness. Knowledge and godlikeness happen that day, confirmed by God in chapter 3 verse 22. Death that day does not happen.",
         }
         key = (round_num, turn_num if turn_num<=4 else ((turn_num-1)%4+1))
-        return serpent_templates.get(key, serpent_templates[(3,4)])
+        base = serpent_templates.get(key, serpent_templates[(3,4)])
+        return (rebuttal_prefix + base) if rebuttal_prefix else base
     # Versatile generic
     if "GOD" in sl and "NOT" not in sl and "NO" not in sl:
         versatile_for={
@@ -379,7 +389,8 @@ def generate_fallback_debate(side_label, topic, round_num, turn_num):
             (3,4): f"Final point on {topic_short}, I'm not asking you to believe because it's comforting. I'm saying look at the total evidence, the beginning, the fine tuning, the intelligibility, the moral and conscious life we live. It looks like mind is fundamental, not just matter.",
         }
         key = (round_num, turn_num if turn_num<=4 else ((turn_num-1)%4+1))
-        return versatile_for.get(key, versatile_for[(3,4)])
+        base = versatile_for.get(key, versatile_for[(3,4)])
+        return (rebuttal_prefix + base) if rebuttal_prefix else base
     else:
         versatile_against={
             (1,1): f"When we look at {topic_short}, I think we have to start with what we actually have evidence for. The claim behind {side_label} is a big one, it says more exists than we can see or measure. But big claims need good evidence, and when I look for independent, testable evidence for {topic_short}, I don't find it.",
@@ -396,7 +407,8 @@ def generate_fallback_debate(side_label, topic, round_num, turn_num):
             (3,4): f"If {side_label} were true and important, you would expect it to be obvious, like the sun. Instead we get ambiguity, ancient texts with contradictions, and a world that looks indifferent. The absence of clear evidence where we would expect it is itself evidence of absence.",
         }
         key = (round_num, turn_num if turn_num<=4 else ((turn_num-1)%4+1))
-        return versatile_against.get(key, versatile_against[(3,4)])
+        base = versatile_against.get(key, versatile_against[(3,4)])
+        return (rebuttal_prefix + base) if rebuttal_prefix else base
 
 USED_JUDGE_EXPLANATIONS = set()
 def generate_panel_commentary(model,side,topic,rn,ap,sk,prev,roles):
@@ -475,30 +487,31 @@ def generate_panel_commentary(model,side,topic,rn,ap,sk,prev,roles):
             f"In round {rn}, I scored {pref_label} higher because there is an unresolved tension between warning and outcome. God warned death that day, serpent promised no death but enlightenment, enlightenment happens in verse 7 while death does not. {pref_label} stayed with the reported outcome, {other_label} didn't close that gap.",
         ]
     else:
-        # Versatile fallbacks - specific, relevant, varied openers, no Look/Honestly overuse
+        # Versatile fallbacks - ULTRA SPECIFIC with actual round quotes
+        # Use ap_claim and sk_claim which contain actual round text
         fallbacks_a=[
-            f"What stood out to me in round {rn} was how {pref_label} brought checkable evidence that ties directly to this round's exchange. They laid out a mechanism you can test, while {other_label} relied on a general assumption that sounded plausible but didn't explain the specific cases raised in round {rn}.",
-            f"The reason I leaned toward {pref_label} in round {rn} is definition consistency. They defined their key terms early in round {rn} and stuck to them, while I noticed {other_label} shifted meaning when pressed on a counter-example in this round, which made their argument less clear.",
-            f"I kept coming back to one exchange in round {rn} where {pref_label} answered {other_label}'s strongest point head on with a concrete reply. {other_label} skipped that counter and repeated an earlier claim instead of engaging with what was just said in round {rn}. That direct engagement mattered to me.",
-            f"For round {rn}, I found myself siding with {pref_label} because they were honest about costs and trade-offs specific to this topic in this round. They said here's what you gain and here's what it costs, while {other_label} only talked about benefits and didn't address the downside raised in round {rn}.",
-            f"Round {rn} was interesting because {pref_label} used a concrete, lived example that made their principle click in the context of this round's debate. You could picture it happening, while {other_label} stayed abstract and I couldn't see how their view would work for the example at hand in round {rn}.",
-            f"When I compare the reasoning in round {rn}, {pref_label} flowed cleanly from premise to conclusion without a jump, while {other_label} had a moment where the conclusion didn't follow from the evidence they cited in this round. That logical gap weakened them for me.",
-            f"What tipped it for me in this round was explanatory scope in round {rn}. {pref_label} showed why the alternative fails to explain a common case that came up in this round, while their view handles it naturally. {other_label} didn't address that common case in round {rn}.",
-            f"Looking at round {rn} specifically, {pref_label} distinguished correlation from causation clearly in their reply to {other_label} in this exchange. {other_label} treated them as the same thing in round {rn}, which made their inference weaker this round.",
-            f"The detail that stuck with me in round {rn} was falsifiability. {pref_label} said what would count against them in this round and then showed evidence still supported them. {other_label} didn't offer that kind of testable standard in round {rn}, which made {pref_label} feel more rigorous.",
-            f"In round {rn}, I scored {pref_label} higher because they balanced breadth and depth for this specific round, covering the big picture and the crucial detail that decides this round's question. {other_label} either stayed high level or got lost in minutiae and missed that balance in round {rn}.",
+            f"What decided round {rn} for me was {pref_label} directly answering {other_label}'s point. {other_label} said '{sk_claim[:120]}...' and {pref_label} came back with '{ap_claim[:120]}...' which actually engaged that claim. {other_label} in round {rn} just moved to a new fact without answering, while {pref_label} stayed in conversation.",
+            f"The reason I went with {pref_label} in round {rn} comes down to rebuttal. In this round {pref_label} argued '{ap_claim[:100]}...' which directly counters what {other_label} claimed about '{sk_claim[:80]}...'. {other_label} didn't address {pref_label}'s previous point, they just added another argument. Real debate requires answering.",
+            f"Round {rn} came down to a specific exchange, {pref_label} said '{ap_claim[:110]}...' while {other_label} said '{sk_claim[:110]}...'. The difference is {pref_label} actually quoted and dismantled {other_label}'s last point, while {other_label} ignored what {pref_label} had just said in round {rn}. That's why {pref_label} won this round.",
+            f"When I look at what actually happened in round {rn}, {pref_label} did the debate work, they took {other_label}'s claim '{sk_claim[:100]}...' and showed why it fails because '{ap_claim[:100]}...'. {other_label} in round {rn} just stated '{sk_claim[:60]}...' without engaging {pref_label}'s prior argument. That lack of direct reply cost them.",
+            f"For me, round {rn} hinged on whether they were actually talking to each other. {pref_label} was, they said '{ap_claim[:120]}...' directly responding to {other_label}. {other_label} in round {rn} said '{sk_claim[:120]}...' but didn't address what {pref_label} had argued just before. In a debate, you have to answer.",
+            f"Two things made me score round {rn} for {pref_label}, first they quoted {other_label}'s point about '{sk_claim[:80]}...' and gave counter-evidence '{ap_claim[:80]}...', second they didn't just add a new topic. {other_label} in round {rn} moved to a new claim without finishing the previous exchange.",
+            f"In round {rn}, {pref_label} did something {other_label} didn't, they actually listened. When {other_label} argued '{sk_claim[:100]}...', {pref_label} replied '{ap_claim[:100]}...' showing why that point doesn't hold. {other_label} just pivoted to '{sk_claim[:60]}...' without rebuttal in round {rn}.",
+            f"I'm scoring round {rn} for {pref_label} because they answered the previous turn. {other_label} claimed '{sk_claim[:110]}...' and {pref_label} answered it with '{ap_claim[:110]}...' with specific evidence. {other_label} in round {rn} failed to return the favor and just introduced new material without addressing {pref_label}.",
+            f"What decided round {rn} for me was specificity. {pref_label} said '{ap_claim[:120]}...' which directly addresses {other_label}'s '{sk_claim[:60]}...' from this round. {other_label} spoke generally in round {rn} without anchoring to what {pref_label} had just said, so it felt like two monologues, not a debate, and {pref_label} broke that.",
+            f"The reason I went with {pref_label} in round {rn} comes down to this exchange: {other_label} argued '{sk_claim[:100]}...' and {pref_label} countered '{ap_claim[:100]}...'. That's direct engagement. {other_label} in round {rn} didn't provide that same direct counter to {pref_label}'s last point.",
         ]
         fallbacks_b=[
-            f"What stood out to me in round {rn} was how {pref_label} stuck to the plain meaning of what was said in this round's exchange. Their prediction matched what happened right away in round {rn}, while {other_label} had to add extra interpretation to make theirs fit in this specific round.",
-            f"The reason I leaned toward {pref_label} in round {rn} is they pointed to a direct quote from this round that {other_label} had to reinterpret to make fit. When you have to twist the quote to make it work in round {rn}, it feels like stretching, and {pref_label} didn't need to do that here.",
-            f"I kept coming back to predictive track record in round {rn}. {pref_label} had two independent claims that both lined up with what came up in this round, while {other_label} had one prediction that didn't occur as stated in round {rn}. That count matters for this round.",
-            f"For round {rn}, I found myself siding with {pref_label} because they exposed a contradiction in {other_label}'s position in this round that never got resolved. I kept waiting for an answer to that contradiction in round {rn} and it didn't come, while {pref_label} stayed consistent.",
-            f"Round {rn} was interesting because {pref_label} asked a pointed question specific to this round's logic: if {other_label} were already correct in this round, why would that extra step be needed? That question stuck with me and {other_label} didn't answer it in round {rn}.",
-            f"When I compare what actually happened in round {rn}, {pref_label} showed lived outcome from this round's examples, people actually doing what they predicted, while {other_label} predicted an outcome that wasn't reported in this round. That fit with observed outcome in round {rn} mattered.",
-            f"What tipped it for me in this round was comparing stated claim versus reported result in round {rn}. I looked at what was claimed in this round and what was reported, and the report matched {pref_label} better for this round. It's not about preference, it's about what round {rn} showed.",
-            f"Looking at round {rn} specifically, even the opposing material in this round affirmed a key part of {pref_label}'s claim. When the other side's own source in round {rn} supports you, that's telling, and I thought {pref_label} had that here.",
-            f"The detail that stuck with me in round {rn} was definitional stability. {pref_label} kept the same definition from start to finish in this round, while {other_label} changed what they meant halfway through round {rn}, which made it hard to trust their case for this round.",
-            f"In round {rn}, I scored {pref_label} higher because they highlighted what {other_label} omitted in this round, a hidden cost or consequence that the full exchange in round {rn} includes. Leaving out that cost gave an incomplete picture of this round, and {pref_label} gave the fuller one.",
+            f"What decided round {rn} for me was direct rebuttal. {pref_label} took {other_label}'s claim '{sk_claim[:100]}...' and answered it with '{ap_claim[:100]}...' which directly addresses that point. {other_label} in round {rn} said '{sk_claim[:80]}...' but didn't actually answer what {pref_label} had argued right before. That's the difference.",
+            f"The reason I went with {pref_label} in round {rn} comes down to answering. {other_label} argued '{sk_claim[:110]}...' and {pref_label} countered '{ap_claim[:110]}...' with specific counter-evidence. {other_label} in round {rn} ignored {pref_label}'s previous point '{ap_claim[:60]}...' and just moved on, which is not how you win a round.",
+            f"Round {rn} came down to a specific exchange, {other_label} said '{sk_claim[:100]}...' and {pref_label} replied '{ap_claim[:100]}...' showing why that doesn't hold. In round {rn}, {other_label} didn't do that same work, they said '{sk_claim[:80]}...' without engaging {pref_label}'s last argument.",
+            f"When I look at what actually happened in round {rn}, {pref_label} was having a conversation, {other_label} was giving a speech. {pref_label} quoted '{sk_claim[:90]}...' and explained why it's wrong because '{ap_claim[:90]}...'. {other_label} in round {rn} didn't quote {pref_label} at all.",
+            f"For me, round {rn} hinged on whether they answered each other. {pref_label} did, they said '{ap_claim[:120]}...' in direct response to {other_label}'s '{sk_claim[:60]}...'. {other_label} in round {rn} introduced '{sk_claim[:100]}...' but left {pref_label}'s prior point unanswered.",
+            f"Two things made me score round {rn} for {pref_label}, first they actually addressed {other_label}'s point about '{sk_claim[:80]}...' with '{ap_claim[:80]}...', second {other_label} in round {rn} pivoted to a new topic '{sk_claim[:60]}...' without rebutting. You have to answer to win.",
+            f"In round {rn}, {pref_label} did something {other_label} didn't, they stayed on the same topic. When {other_label} argued '{sk_claim[:100]}...', {pref_label} stayed with it and said '{ap_claim[:100]}...'. {other_label} changed subject in round {rn} instead of finishing the exchange.",
+            f"I'm scoring round {rn} for {pref_label} because they showed they were listening. {other_label} claimed '{sk_claim[:110]}...' and {pref_label} answered '{ap_claim[:110]}...' point for point. {other_label} in round {rn} failed to answer {pref_label}'s previous argument about '{ap_claim[:60]}...'.",
+            f"What decided round {rn} for me was engagement. {pref_label} argued '{ap_claim[:120]}...' which is a direct reply to {other_label}'s '{sk_claim[:60]}...' in this round. {other_label} spoke generally in round {rn} about '{sk_claim[:60]}...' without anchoring to what {pref_label} had just said.",
+            f"The reason I went with {pref_label} in round {rn} comes down to this, {other_label} said '{sk_claim[:100]}...' and {pref_label} gave a specific counter '{ap_claim[:100]}...'. That's what rebuttal looks like. {other_label} in round {rn} didn't provide that counter to {pref_label}'s last point.",
         ]
     import random as _rnd
     pool = fallbacks_a if side=="A" else fallbacks_b
@@ -1114,6 +1127,23 @@ Speak like a REAL HUMAN on stage:
             lower_cleaned=cleaned.lower()
             if len(lower_cleaned.split())<20 and ("yes" in lower_cleaned or "no" in lower_cleaned):
                 continue
+            # ENFORCE REBUTTAL - must address opponent if not first turn
+            if not (round_num==1 and turn_num==1):
+                has_rebuttal = any(phrase in lower_cleaned for phrase in ["you said", "you claimed", "you argued", "my opponent", "you just said", "you're saying", "your point", "you mention", "opponent says"])
+                # Also check if it quotes opponent_last words
+                opp_words = opponent_last.lower().split()[:8]
+                overlap = sum(1 for w in opp_words if len(w)>3 and w in lower_cleaned)
+                if not has_rebuttal and overlap < 1:
+                    # Retry with stricter rebuttal prompt
+                    strict_prompt = f"Your last response DID NOT rebut opponent. You just listed new facts. That's not a debate. You MUST start by directly quoting and rebutting opponent's last claim: '{opponent_last[:300]}'. Start with 'You said...' then explain why it's wrong, THEN add your new point. Rewrite this turn to actually answer opponent: {cleaned[:400]}"
+                    retry = query_openrouter(strict_prompt, m, max_tokens=900, temperature=0.85)
+                    if retry and count_words(retry)>=80:
+                        # Check retry has rebuttal
+                        retry_low = retry.lower()
+                        if any(p in retry_low for p in ["you said", "you claimed", "you argued", "my opponent"]):
+                            cleaned = strip_filler(retry)
+                            cleaned=re.sub(r"\s+"," ",cleaned).strip()
+                            if not cleaned.endswith(('.', '!', '?')): cleaned+="."
             is_repeated=False
             for used in USED_ARGUMENTS:
                 if len(used)>30 and used.lower() in lower_cleaned:
@@ -1132,11 +1162,12 @@ Speak like a REAL HUMAN on stage:
             extra=query_openrouter(f"Rewrite with completely fresh angle, avoid: {used_str}. Continue: "+cleaned[-200:],m,max_tokens=300,temperature=0.92)
             if extra and count_words(extra)>40: cleaned+=" "+extra
             return cleaned[:1700]
-    fallback=generate_fallback_debate(role_label, topic, round_num, turn_num)
+    # Use rebuttal-aware fallback
+    fallback=generate_fallback_debate(role_label, topic, round_num, turn_num, opponent_last)
     if fallback[:60].lower() not in USED_PHRASES:
         USED_ARGUMENTS.add(fallback[:80]); USED_PHRASES.add(fallback[:50].lower())
         return fallback
-    return generate_fallback_debate(role_label, topic, round_num, turn_num+10)
+    return generate_fallback_debate(role_label, topic, round_num, turn_num+10, opponent_last)
 
 def build_round_exchanges(topic, round_num, ap_model, sk_model, previous_history, roles):
     ap_turns=[]; sk_turns=[]; hist=previous_history
@@ -1153,8 +1184,11 @@ def neutral_judge(model):
     return {"model":model,"provider":provider_from_model(model),"display_name":get_judge_short_name(model),"A_argument":round(a,1),"A_rebuttal":round(a+random.uniform(-3,3),1),"A_clarity":round(a+random.uniform(-2,2),1),"A_total":round(a,2),"B_argument":round(b,1),"B_rebuttal":round(b+random.uniform(-3,3),1),"B_clarity":round(b+random.uniform(-2,2),1),"B_total":round(b,2),"winner":"A" if a>b else "B"}
 
 def judge_round(model,topic,rn,ap,sk,roles):
-    ap_snip=ap[:900]; sk_snip=sk[:900]
-    prompt="You are expert debate judge. Topic: \""+topic+"\" Round "+str(rn)+"\n"+roles['side_a_label']+": "+ap_snip+"\n"+roles['side_b_label']+": "+sk_snip+"\nScore each side 0-100 on: argument strength, rebuttal quality, clarity\nReturn ONLY valid JSON, no other text:\n{\"A_argument\": 0-100, \"A_rebuttal\": 0-100, \"A_clarity\": 0-100, \"B_argument\": 0-100, \"B_rebuttal\": 0-100, \"B_clarity\": 0-100, \"winner\": \"A or B\", \"reason\": \"1 sentence why winner won this specific round\"}\nRules: Do NOT give both sides same total. Be decisive. Winner must have higher total. Be critical and varied per round."
+    ap_snip=ap[:1200]; sk_snip=sk[:1200]
+    # Extract specific claims for reason
+    ap_first_sentence = ap.split('. ')[0][:200] if ap else ""
+    sk_first_sentence = sk.split('. ')[0][:200] if sk else ""
+    prompt="You are expert debate judge. Topic: \""+topic+"\" Round "+str(rn)+"\n"+roles['side_a_label']+" argued: "+ap_snip+"\n"+roles['side_b_label']+" argued: "+sk_snip+"\nScore each side 0-100 on: argument strength (how strong evidence), rebuttal quality (did they directly answer opponent's last point from this round?), clarity\nReturn ONLY valid JSON, no other text:\n{\"A_argument\": 0-100, \"A_rebuttal\": 0-100, \"A_clarity\": 0-100, \"B_argument\": 0-100, \"B_rebuttal\": 0-100, \"B_clarity\": 0-100, \"winner\": \"A or B\", \"reason\": \"1-2 sentences specifically quoting what each side said in THIS round and why winner was better, e.g. 'A quoted Genesis 3:22 while B ignored it' or 'B raised evil but A didn't answer' - must reference actual round content\"}\nRules: Do NOT give both sides same total. Be decisive. Winner must have higher total. Be critical. Reason MUST mention specific arguments from THIS round, not generic praise."
     for attempt_model in [model]+[m for m in ["openai/gpt-4o-mini:free","google/gemini-flash-1.5-8b:free"] if m!=model][:1]:
         resp=query_openrouter(prompt,attempt_model,timeout=35,max_tokens=400,temperature=0.2)
         if not resp: continue
