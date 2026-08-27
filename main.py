@@ -290,81 +290,33 @@ def generate_fallback_debate(side_label, topic, round_num, turn_num, opponent_la
     tl=(topic or "").lower()
     topic_short = topic[:130] if len(topic)>130 else topic
     sl=side_label.upper()
-    # Build natural varied rebuttal prefix - SIDE-AWARE, not same "I hear you" every time
-    rebuttal_prefix = ""
-    is_for_god_side = "GOD EXISTS" in sl and "NOT" not in sl and "NO" not in sl or "GOD TOLD TRUTH" in sl
-    is_against_god_side = "DOES NOT EXIST" in sl or "NO GOD" in sl or "NEGATIVE" in sl
+    is_for_god = "GOD EXISTS" in sl and "NOT" not in sl and "NO" not in sl and "TOLD TRUTH" not in sl
+    is_against = "DOES NOT EXIST" in sl or "NO GOD" in sl
+
+    # Deep rebuttal that actually counters, not generic segue
+    rebuttal = ""
     if opponent_last and not (round_num==1 and turn_num==1):
-        import random as _rp
-        tl_opp = opponent_last.lower()
-        if "evil" in tl_opp or "suffer" in tl_opp or "cancer" in tl_opp or "pain" in tl_opp:
-            if is_against_god_side:
-                # ATHEIST: suffering is evidence AGAINST God, do NOT defend it
-                options = [
-                    "You mention suffering, and that's exactly why I find the God claim hard to hold. ",
-                    "That point about pain is important, because a world with this much gratuitous suffering looks like ",
-                    "Suffering is where the theist story strains, because ",
-                    "If we take suffering seriously, it points away from an all-loving designer, because ",
-                ]
+        low_opp = opponent_last.lower()
+        if is_for_god:
+            if "evil" in low_opp or "suffer" in low_opp:
+                rebuttal = "The suffering you point to is real, and it should haunt us. But calling it evil already assumes there is a real standard for good and evil that is not just preference, and that standard needs grounding. If we are just atoms, evil is just what we dislike. Theism grounds that standard. And love requires freedom, freedom that can be misused, which is why a world with real love will have the possibility of real harm. That is why evil does not disprove God, it actually points to a moral law that needs a lawgiver. "
+            elif "hidden" in low_opp:
+                rebuttal = "If God wanted to force belief, making himself obvious would be easy. But if what matters is free relationship, not coerced acknowledgement, hiddenness makes sense. Love does not overwhelm, it invites. And people across cultures do report finding, which is why this question persists. So hiddenness does not disprove God, it fits a God who values freedom. "
+            elif "no evidence" in low_opp or "lack of evidence" in low_opp:
+                rebuttal = "You say there is no evidence, but we have a universe that began 13.8 billion years ago, constants that are razor-tuned for life, minds that can do math that maps reality, and moral experience that feels objective. That is data that needs explaining, and theism explains it as one story rather than many brute facts. So there is evidence, you just weigh it differently. "
             else:
-                # THEIST: defend suffering
-                options = [
-                    "Suffering is the hardest part of this debate, and it should bother us. But calling it evil assumes a real standard for good, which ",
-                    "That point about pain cuts deep. What makes me think it doesn't settle it is that love requires freedom, and ",
-                    "If there were no real good, we couldn't recognize evil as evil. That's why I think ",
-                    "The reality of suffering matters, but a world where love is real has to allow freedom that can be misused, and ",
-                ]
-            rebuttal_prefix = _rp.choice(options)
-        elif "hidden" in tl_opp or "hide" in tl_opp:
-            if is_against_god_side:
-                options = [
-                    "Hiddenness is exactly the issue. If God wants relationship, why so hidden? ",
-                    "You mention hiddenness, and that's a problem for the God claim, because ",
-                    "The fact God is not more obvious is what you'd expect if there is no God, because ",
-                ]
-            else:
-                options = [
-                    "Hiddenness is a fair worry. What I've come to think is relationship requires freedom, and ",
-                    "If God wanted robots, clarity would be easy. But if love matters, ",
-                    "The fact we're asking about hiddenness shows we expect meaning, and ",
-                ]
-            rebuttal_prefix = _rp.choice(options)
-        elif "fine tuning" in tl_opp or "fine-tuning" in tl_opp or "tuned" in tl_opp:
-            if is_against_god_side:
-                options = [
-                    "Fine-tuning looks impressive at first, but it doesn't force God. Multiverse or deeper physics could explain it, and ",
-                    "You mention tuning, but that inference to design has gaps, because ",
-                    "The constants are striking, yet chance, necessity, or many universes could account for them without adding God, and ",
-                ]
-            else:
-                options = [
-                    "The fine-tuning numbers are wild. If gravity were slightly stronger, stars burn too fast. That points to ",
-                    "You mention tuning, and that's striking. The odds of this balance by chance alone are tiny, which is why ",
-                    "If the constants were even slightly different, life wouldn't exist. That makes me think mind behind matter, because ",
-                ]
-            rebuttal_prefix = _rp.choice(options)
-        elif "cosmological" in tl_opp or "cause" in tl_opp or "begin" in tl_opp:
-            if is_against_god_side:
-                options = [
-                    "Everything that begins may need a cause in our experience, but applying that to the universe itself is tricky, because ",
-                    "You go to a first cause, but that cause doesn't have to be God, it could be quantum vacuum or necessity, and ",
-                    "If the universe began, that doesn't automatically give you a personal God, because ",
-                ]
-            else:
-                options = [
-                    "Everything that begins needs a cause, that's our everyday experience. The universe began 13.8 billion years ago, so ",
-                    "You mention a first cause, and I think that intuition points somewhere. If the universe has a beginning, ",
-                    "If the universe began, it needs a cause beyond itself, timeless and powerful, which ",
-                ]
-            rebuttal_prefix = _rp.choice(options)
+                rebuttal = f"Your argument that {opponent_last[:90]} overlooks something crucial. "
         else:
-            options = [
-                "That's worth sitting with, because ",
-                "I've wrestled with that point, and where I land is ",
-                "What makes me see it differently is ",
-                "There's a piece that needs more context. ",
-            ]
-            rebuttal_prefix = _rp.choice(options)
+            if "fine tuning" in low_opp or "fine-tuning" in low_opp or "tuned" in low_opp:
+                rebuttal = "Fine-tuning is striking, but it does not force a designer. If there is a multiverse with many sets of constants, we would only find ourselves in one that allows observers, so observer selection explains why we see tuning. Or there could be a deeper physical necessity we do not yet understand that fixes those values. It shows the universe is special, not that a personal God made it. "
+            elif "cause" in low_opp or "cosmological" in low_opp or "began" in low_opp:
+                rebuttal = "Everything we see inside the universe needing a cause does not mean the universe itself needs a personal cause. Quantum events, or a necessary physical structure, could be the ground. And even if there is a cause, that cause does not have to be all-loving, all-knowing, personal. It could be impersonal. You need extra steps to get from cause to God, and those steps fail. "
+            elif "moral" in low_opp:
+                rebuttal = "Moral feelings are powerful, but evolution explains why social primates would develop strong norms about fairness and harm without needing objective moral law from God. And different cultures disagree deeply about what is moral, which looks like culture, not discovery. So morality does not prove God. "
+            elif "consciousness" in low_opp:
+                rebuttal = "Consciousness is mysterious, but mystery does not equal God. We do not understand it yet, but neuroscience is making progress linking mind to brain. Appealing to God now is God of the gaps, it was used for lightning and disease before, and failed. "
+            else:
+                rebuttal = f"You argue {opponent_last[:90]} but that does not get you to God. Here is why that inference fails. "
 
     if "does god exist" in tl or "does a god" in tl or "existence of god" in tl or "is there a god" in tl or ("god exist" in tl and "serpent" not in tl):
         if "GOD EXISTS" in sl or "AFFIRMATIVE" in sl or "THEIST" in sl or "FOR" in sl or sl=="GOD" or "GOD" in sl and "NOT" not in sl and "NO" not in sl:
@@ -1150,186 +1102,144 @@ def render_scorecard_video(image_path,audio_path,subs_path,output_path):
     r=subprocess.run(cmd,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
     if r.returncode!=0: print(r.stderr[-5000:]); raise RuntimeError("Scorecard render failed")
 
+
 def generate_turn(role_key, topic, round_num, turn_num, prev_history, model, role_label, role_desc, opponent_label, opponent_desc):
     global USED_ARGUMENTS, USED_PHRASES, USED_KEYWORDS
     opponent_last = ""
     if prev_history:
         parts = prev_history.split(f"{opponent_label}:")
         if len(parts) > 1:
-            opponent_last = parts[-1].strip()[-600:]
+            opponent_last = parts[-1].strip()[-800:]
         else:
             opponent_last = prev_history[-1000:]
     else:
-        opponent_last = "No opponent yet - this is opening"
+        opponent_last = "No opponent yet"
 
-    # Determine side identity for strict locking
-    is_for_god = False
-    is_against_god = False
-    is_for_god_truth = False
-    is_for_serpent_truth = False
     sl = role_label.upper()
-    if "GOD TOLD TRUTH" in sl:
-        is_for_god_truth = True
-    elif "SERPENT TOLD TRUTH" in sl or ("SERPENT" in sl and "TRUTH" in sl):
-        is_for_serpent_truth = True
-    elif "DOES NOT EXIST" in sl or "NO GOD" in sl or "GOD DOESN" in sl:
-        is_against_god = True
-    elif "GOD EXISTS" in sl:
-        is_for_god = True
+    is_for_god = "GOD EXISTS" in sl and "DOES NOT" not in sl and "NO GOD" not in sl and "TOLD TRUTH" not in sl
+    is_against_god = "DOES NOT EXIST" in sl or "NO GOD" in sl
+    is_for_god_truth = "GOD TOLD TRUTH" in sl
+    is_for_serpent = "SERPENT" in sl
 
     if is_for_god:
-        side_lock = """YOU ARE GOD EXISTS. YOUR JOB IS ALWAYS TO ARGUE GOD DOES EXIST.
-- When opponent raises evil/suffering, you DO NOT agree evil disproves God. You DEFEND: explain why evil does NOT disprove God (free will, soul-making, moral standard needs grounding).
-- When opponent raises hiddenness, you DEFEND: explain why hiddenness does NOT disprove God.
-- You must ALWAYS conclude God exists. NEVER argue God does not exist, even when rebutting."""
-        rebuttal_goal = "Rebut their argument against God and show why it fails, then give your argument FOR God."
+        side_lock = "YOU ARE GOD EXISTS. You must ALWAYS argue God exists. When opponent says evil disproves God, you must show why evil does NOT disprove God (free will, objective moral standard, soul-making). NEVER argue God does not exist."
+        side_examples = "FOR God: cosmological, fine-tuning, moral, consciousness"
     elif is_against_god:
-        side_lock = """YOU ARE GOD DOES NOT EXIST. YOUR JOB IS ALWAYS TO ARGUE GOD DOES NOT EXIST.
-- When opponent raises fine-tuning/cosmological/moral argument FOR God, you DO NOT defend God. You ATTACK that argument: show why fine-tuning does NOT prove God (multiverse, chance, etc.).
-- When opponent raises suffering, you AGREE suffering is evidence AGAINST God, you do NOT defend suffering as compatible with God. That defense is opponent's job.
-- You must ALWAYS conclude God does not exist. NEVER argue God exists, even when rebutting."""
-        rebuttal_goal = "Rebut their argument FOR God and show why it fails, then give your argument AGAINST God."
+        side_lock = "YOU ARE GOD DOES NOT EXIST. You must ALWAYS argue God does NOT exist. When opponent says fine-tuning proves God, you must show why fine-tuning does NOT prove God (multiverse, chance, physical necessity). NEVER defend suffering as compatible with God."
+        side_examples = "AGAINST God: problem of evil, hiddenness, lack of evidence, parsimony"
     elif is_for_god_truth:
-        side_lock = """YOU ARE GOD TOLD TRUTH in Genesis. Always argue God told truth, serpent lied."""
-        rebuttal_goal = "Rebut serpent's claim."
-    elif is_for_serpent_truth:
-        side_lock = """YOU ARE SERPENT TOLD TRUTH. Always argue serpent told truth, God did not tell truth that day."""
-        rebuttal_goal = "Rebut God's truth claim."
+        side_lock = "YOU ARE GOD TOLD TRUTH. Always argue God told truth."
+        side_examples = "God truth: moth tamuth, relational death, tree of life blocked"
+    elif is_for_serpent:
+        side_lock = "YOU ARE SERPENT TOLD TRUTH. Always argue serpent told truth."
+        side_examples = "Serpent truth: eyes opened, 930 years, God confirmed 3:22"
     else:
-        side_lock = f"YOU ARE {role_label} = {role_desc}. Always argue FOR your side. Never switch sides, even when rebutting."
-        rebuttal_goal = "Rebut opponent and show why their argument fails for their side."
+        side_lock = f"YOU ARE {role_label}. Stay locked to {role_desc}."
+        side_examples = "Stay on your side"
 
     if round_num==1 and turn_num==1:
-        round_focus="OPENING: Strong opening for your side, no opponent yet."
-        rebuttal_instruction="No rebuttal needed, just 2-3 strong reasons for YOUR side."
+        task = f"OPENING: Give 2-3 strong reasons FOR {role_label}. No opponent to answer yet. {side_lock}"
     else:
-        round_focus=f"ROUND {round_num} TURN {turn_num}: You must rebut opponent's last point BUT stay locked to your side."
-        rebuttal_instruction=f"""Opponent just said: {opponent_last[:300]}
-YOUR TASK: {rebuttal_goal}
+        task = f"""ROUND {round_num} TURN {turn_num} - DEEP REBUTTAL REQUIRED:
+
+Opponent's last argument (you must actually dismantle this, not just mention it):
+"{opponent_last[:500]}"
+
+YOUR JOB:
+1. Identify their core claim.
+2. Directly show why that claim is wrong, incomplete, or doesn't lead where they think. Use reasoning that TARGETS their claim.
+   - If they said evil disproves God and you are GOD EXISTS: explain why evil presupposes objective good which needs grounding, why free will makes love possible but allows misuse, why their inference fails.
+   - If they said fine-tuning proves God and you are GOD DOES NOT EXIST: explain why fine-tuning can be multiverse, physical necessity, observer selection, doesn't force personal God.
+   - Do NOT do generic: "You raise X, but here's Y" where Y is unrelated. Y must directly counter X.
+3. After 3-4 sentences dismantling their point FROM YOUR SIDE, add 1 fresh argument FOR YOUR SIDE ({side_examples}) that you haven't used.
+
 SIDE-LOCK:
 {side_lock}
-How to rebut without switching:
-- If opponent says 'evil proves no God' and you are GOD EXISTS, you say: 'Evil is real, but calling it evil assumes objective good which needs grounding...'
-- If opponent says 'fine-tuning proves God' and you are GOD DOES NOT EXIST, you say: 'Fine-tuning looks impressive, but multiverse explains it without God...'
-- Spend 50% directly countering their specific claim FROM YOUR SIDE'S PERSPECTIVE, then 50% your fresh argument FOR YOUR SIDE.
+
+BANNED GENERIC SEGUES (show you didn't answer):
+- "I hear you on the suffering point, it's powerful, but"
+- "You make a fair point about X, but"
+- "I see where you're coming from, but here's my point"
+
+Your transition must contain reasoning: "That would be compelling if..., but it overlooks that...", "The problem with that is...", "What that misses is..."
 """
 
-    prev_snip=prev_history[-1200:] if prev_history else "No previous"
-    used_str="; ".join(list(USED_ARGUMENTS)[-10:])[:500]
-    used_kw="; ".join(list(USED_KEYWORDS)[-10:])
-    tl = (topic or "").lower()
-    is_genesis = "god" in tl and "serpent" in tl
-    is_god_exist = "god" in tl and "exist" in tl
-    if is_genesis:
-        evidence_line = "Reference Genesis naturally: 2:17, 3:4, 3:7, 3:22, 5:5"
-        fresh_line = "Fresh angle not used before."
-    elif is_god_exist:
-        if is_against_god:
-            evidence_line = "Use arguments AGAINST God: problem of evil, divine hiddenness, lack of evidence, parsimony."
-            fresh_line = "If you used evil before, now try hiddenness or parsimony."
-        else:
-            evidence_line = "Use arguments FOR God: cosmological, fine-tuning, moral argument, consciousness."
-            fresh_line = "If you used cosmological before, now try fine-tuning or moral."
-    else:
-        evidence_line = f"Use real examples about {topic}"
-        fresh_line = "Fresh angle."
+    prev_snip = prev_history[-1000:] if prev_history else ""
+    used_str = "; ".join(list(USED_ARGUMENTS)[-8:])[:400]
 
-    prompt=f"""You are {role_label} debating LIVE about: {topic}
-Your view: {role_desc}
-Opponent: {opponent_label} = {opponent_desc}
+    tl = (topic or "").lower()
+    if "god" in tl and "serpent" in tl:
+        evidence_hint = "Use Genesis verses naturally"
+    elif is_against_god:
+        evidence_hint = "Use evil, hiddenness, parsimony, lack of evidence"
+    elif is_for_god:
+        evidence_hint = "Use cosmological, fine-tuning, moral, consciousness"
+    else:
+        evidence_hint = f"Use concrete evidence about {topic}"
+
+    prompt = f"""You are {role_label} = {role_desc} debating {topic} LIVE.
 
 {side_lock}
 
-{round_focus}
-{rebuttal_instruction}
+{task}
 
-Recent context: {prev_snip[-800:]}
+Recent: {prev_snip[-600:]}
 
 DO NOT REPEAT: {used_str}
 
-RULES - LOCKED SIDE, NATURAL:
-- You are {role_label}. NEVER argue for opponent.
-- {evidence_line}
-- {fresh_line}
-- Natural, polished, full sentences, contractions.
-- {MIN_TURN_WORDS}-{MAX_TURN_WORDS} words.
-- Never say "I hear you on the suffering point" - banned.
-- Must be versatile for topic: {topic}
+REQUIREMENTS:
+- {evidence_hint}
+- Stay 100% on YOUR side, never switch
+- Actually address opponent's last point with specific counter-reasoning, not generic segue
+- Natural, polished, thoughtful human voice, contractions, varied rhythm
+- {MIN_TURN_WORDS}-{MAX_TURN_WORDS} words
+- Versatile for topic: {topic}
 """
 
     for m in [model]+FALLBACK_MODELS[:4]:
-        temp=0.88 + (turn_num*0.03) + random.uniform(0,0.08)
-        resp=query_openrouter(prompt,m,max_tokens=900,temperature=temp)
+        resp = query_openrouter(prompt, m, max_tokens=950, temperature=0.85 + random.uniform(0,0.1))
         if resp and count_words(resp)>=90:
-            cleaned=strip_filler(resp)
-            cleaned=re.sub(r"\s+"," ",cleaned).strip()
+            cleaned = strip_filler(resp)
+            cleaned = re.sub(r"\s+", " ", cleaned).strip()
             if not cleaned.endswith(('.', '!', '?')): cleaned+="."
-            cleaned=re.sub(r"https?://\S+"," ",cleaned)
-            lower_cleaned=cleaned.lower()
-            if len(lower_cleaned.split())<20 and ("yes" in lower_cleaned or "no" in lower_cleaned):
-                continue
+            cleaned = re.sub(r"https?://\S+", " ", cleaned)
+            low = cleaned.lower()
 
-            # SIDE-LOCK VALIDATION
-            side_switched = False
-            if is_for_god:
-                bad_phrases = ["god does not exist", "there is no god", "no god exists", "evil proves there is no god"]
-                if any(bp in lower_cleaned for bp in bad_phrases):
-                    if "opponent says" not in lower_cleaned and "you say" not in lower_cleaned:
-                        side_switched = True
-            elif is_against_god:
-                if "suffering is compatible with god" in lower_cleaned or "free will defense" in lower_cleaned or "soul-making" in lower_cleaned:
-                    if "opponent says" not in lower_cleaned:
-                        side_switched = True
-                # Should not conclude god exists
-                if lower_cleaned.strip().endswith("god exists.") and "does not exist" not in lower_cleaned[-50:]:
-                    if "god exists" in lower_cleaned and "does not exist" not in lower_cleaned:
-                        # Check if it's affirming existence as own
-                        if lower_cleaned.count("god exists") > lower_cleaned.count("does not exist"):
-                            pass
+            switched = False
+            if is_for_god and ("god does not exist" in low and "opponent says" not in low and "there is no god" in low):
+                switched = True
+            if is_against_god and ("suffering is compatible with god" in low or "free will defense" in low or "soul-making" in low):
+                if "opponent says" not in low:
+                    switched = True
+            if switched:
+                retry_prompt = f"ERROR: Side-switch. You are {role_label}. You argued for opposite. {side_lock} Opponent: {opponent_last[:300]}. Rewrite: {cleaned[:400]}"
+                r2 = query_openrouter(retry_prompt, m, max_tokens=900, temperature=0.7)
+                if r2 and count_words(r2)>=80:
+                    cleaned = strip_filler(r2)
+                    low = cleaned.lower()
 
-            if side_switched:
-                print(f"Side switch detected for {role_label}, retrying")
-                strict_prompt = f"ERROR: You are {role_label} but argued for {opponent_label}. Fix: {side_lock} Opponent: '{opponent_last[:250]}'. Rewrite: {cleaned[:400]}"
-                retry = query_openrouter(strict_prompt, m, max_tokens=900, temperature=0.75)
-                if retry and count_words(retry)>=80:
-                    cleaned = strip_filler(retry)
-                    cleaned=re.sub(r"\s+"," ",cleaned).strip()
-
-            # Deep engagement check
             if not (round_num==1 and turn_num==1):
-                opp_keywords = [w for w in opponent_last.lower().split() if len(w)>4][:8]
-                semantic_overlap = sum(1 for w in opp_keywords if w in lower_cleaned)
-                has_shallow = lower_cleaned.startswith("i hear you on the suffering point")
-                if has_shallow or (semantic_overlap < 1 and "because" not in lower_cleaned):
-                    strict_prompt = f"Need deeper answer FROM YOUR SIDE. Opponent: '{opponent_last[:300]}'. You are {role_label}. Directly counter FROM YOUR SIDE, then add point. Rewrite: {cleaned[:500]}"
-                    retry = query_openrouter(strict_prompt, m, max_tokens=900, temperature=0.85)
-                    if retry and count_words(retry)>=80:
-                        cleaned = strip_filler(retry)
-                        cleaned=re.sub(r"\s+"," ",cleaned).strip()
+                opp_words = [w for w in opponent_last.lower().split() if len(w)>5][:6]
+                overlap = sum(1 for w in opp_words if w in low)
+                has_counter_reason = any(x in low for x in ["because", "why", "that misses", "overlooks", "fails", "doesn't follow", "does not prove", "doesn't prove", "actually", "problem with that"])
+                has_generic_segue = any(p in low for p in ["i hear you on the suffering point", "you make a fair point about", "i see where you're coming from on that, but here's where i differ"])
+                if has_generic_segue or (overlap < 1 and not has_counter_reason):
+                    deep_prompt = f"Your response did generic segue, not real rebuttal. Opponent said: '{opponent_last[:400]}'. You are {role_label}. You must: 1) State their claim in your own words 2) Explain specifically why it fails FROM YOUR SIDE with reasoning 3) Give counter-evidence that directly targets it. Not 'You raise X but here's unrelated Y'. Actually dismantle X. Rewrite: {cleaned[:500]}"
+                    r3 = query_openrouter(deep_prompt, m, max_tokens=950, temperature=0.82)
+                    if r3 and count_words(r3)>=90:
+                        cleaned = strip_filler(r3)
 
-            is_repeated=False
-            for used in USED_ARGUMENTS:
-                if len(used)>30 and used.lower() in lower_cleaned:
-                    is_repeated=True; break
-            if not is_repeated or turn_num>2:
-                sents=cleaned.split('. ')
-                for s in sents[:3]:
+            is_rep = any(len(u)>30 and u.lower() in low for u in USED_ARGUMENTS)
+            if not is_rep or turn_num>2:
+                for s in cleaned.split('. ')[:3]:
                     if len(s)>20:
                         USED_ARGUMENTS.add(s[:80])
                         USED_PHRASES.add(s[:50].lower())
-                        for kw in ["eyes opened","tree of life","cherubim","dust","shame","moth tamuth","beyom","pain","toil","exile","930 years","3:22","3:7","knowledge","wisdom","fine tuning","evil","hiddenness","cosmological","moral","consciousness"]:
-                            if kw in s.lower():
-                                USED_KEYWORDS.add(kw)
                 if count_words(cleaned)>=MIN_TURN_WORDS-15:
                     return cleaned[:1700]
-            extra=query_openrouter(f"Rewrite with fresh angle, avoid: {used_str}. Continue: "+cleaned[-200:],m,max_tokens=300,temperature=0.85)
-            if extra and count_words(extra)>40: cleaned+=" "+extra
             return cleaned[:1700]
-    fallback=generate_fallback_debate(role_label, topic, round_num, turn_num, opponent_last)
-    if fallback[:60].lower() not in USED_PHRASES:
-        USED_ARGUMENTS.add(fallback[:80]); USED_PHRASES.add(fallback[:50].lower())
-        return fallback
-    return generate_fallback_debate(role_label, topic, round_num, turn_num+10, opponent_last)
+
+    return generate_fallback_debate(role_label, topic, round_num, turn_num, opponent_last)
 
 
 def build_round_exchanges(topic, round_num, ap_model, sk_model, previous_history, roles):
@@ -1351,18 +1261,26 @@ def judge_round(model,topic,rn,ap,sk,roles):
     def detect_side_switch(txt, side_label):
         low = txt.lower()
         sl = side_label.upper()
-        if "GOD EXISTS" in sl and "DOES NOT" not in sl:
-            if "god does not exist" in low and "opponent says" not in low and "you say" not in low:
+        if "GOD EXISTS" in sl and "DOES NOT" not in sl and "TOLD TRUTH" not in sl:
+            if "god does not exist" in low and "opponent says" not in low and "there is no god" in low:
                 return True
         if "DOES NOT EXIST" in sl or "NO GOD" in sl:
             if "suffering is compatible with god" in low or "free will defense" in low or "soul-making" in low:
                 if "opponent says" not in low:
                     return True
         return False
+
+    def detect_generic_segue(txt):
+        low = txt.lower()
+        generic = ["i hear you on the suffering point", "you make a fair point about", "i see where you're coming from on that, but here's where i differ", "you raise hiddenness, why god isn't more obvious, and that's fair to ask, but"]
+        return any(g in low for g in generic)
+
     ap_switch = detect_side_switch(ap, roles['side_a_label'])
     sk_switch = detect_side_switch(sk, roles['side_b_label'])
-    prompt="You are expert debate judge. Topic: \""+topic+"\" Round "+str(rn)+"\nSIDE A is "+roles['side_a_label']+" = "+roles['side_a_desc']+". Their argument: "+ap_snip+"\nSIDE B is "+roles['side_b_label']+" = "+roles['side_b_desc']+". Their argument: "+sk_snip+"\nCRITICAL: Each side must stay locked. GOD EXISTS must argue God exists, GOD DOES NOT EXIST must argue God does not exist. If side argues opposite, penalize heavily.\nScore 0-100 on: argument strength, rebuttal quality (did they answer opponent FROM THEIR OWN SIDE?), clarity.\nReturn ONLY valid JSON: {\"A_argument\": 0-100, \"A_rebuttal\": 0-100, \"A_clarity\": 0-100, \"B_argument\": 0-100, \"B_rebuttal\": 0-100, \"B_clarity\": 0-100, \"winner\": \"A or B\", \"reason\": \"1-2 sentences specific to THIS round\"}"
+    ap_generic = detect_generic_segue(ap)
+    sk_generic = detect_generic_segue(sk)
 
+    prompt="You are expert debate judge. Topic: \""+topic+"\" Round "+str(rn)+"\nSIDE A is "+roles['side_a_label']+" = "+roles['side_a_desc']+". Their argument: "+ap_snip+"\nSIDE B is "+roles['side_b_label']+" = "+roles['side_b_desc']+". Their argument: "+sk_snip+"\nCRITICAL: Check 3 things: 1) Did each side stay locked to their position? GOD EXISTS must argue God exists, GOD DOES NOT EXIST must argue God does NOT exist. If they argue opposite, penalize heavily. 2) Did they actually address opponent's last point with specific counter-reasoning, or just do generic segue like 'You make a fair point about X, but here's unrelated Y'? Generic segue should be penalized. 3) Did rebuttal directly target opponent's claim?\nScore 0-100 on: argument strength, rebuttal quality (0 if generic segue, 100 if deep direct counter), clarity.\nReturn ONLY valid JSON: {\"A_argument\": 0-100, \"A_rebuttal\": 0-100, \"A_clarity\": 0-100, \"B_argument\": 0-100, \"B_rebuttal\": 0-100, \"B_clarity\": 0-100, \"winner\": \"A or B\", \"reason\": \"1-2 sentences specific to THIS round mentioning if rebuttal was generic or deep and who stayed on side\"}"
 
 
     for attempt_model in [model]+[m for m in ["openai/gpt-4o-mini:free","google/gemini-flash-1.5-8b:free"] if m!=model][:1]:
@@ -1376,14 +1294,22 @@ def judge_round(model,topic,rn,ap,sk,roles):
             aa=clamp_score(d.get("A_argument")); ar=clamp_score(d.get("A_rebuttal")); ac=clamp_score(d.get("A_clarity"))
             ba=clamp_score(d.get("B_argument")); br=clamp_score(d.get("B_rebuttal")); bc=clamp_score(d.get("B_clarity"))
             if ap_switch:
-                aa = max(0, aa-30); ar = max(0, ar-30); ac = max(0, ac-20)
+                aa = max(0, aa-30); ar = max(0, ar-30)
             if sk_switch:
-                ba = max(0, ba-30); br = max(0, br-30); bc = max(0, bc-20)
+                ba = max(0, ba-30); br = max(0, br-30)
+            if ap_generic:
+                ar = max(0, ar-20)
+            if sk_generic:
+                br = max(0, br-20)
             at=(aa+ar+ac)/3; bt=(ba+br+bc)/3
             if ap_switch and not sk_switch:
                 bt = max(bt, at+10)
             if sk_switch and not ap_switch:
                 at = max(at, bt+10)
+            if ap_generic and not sk_generic:
+                bt = max(bt, at+5)
+            if sk_generic and not ap_generic:
+                at = max(at, bt+5)
             if at==bt:
                 if aa+ar > ba+br: at+=2
                 else: bt+=2
@@ -1398,7 +1324,7 @@ def judge_round(model,topic,rn,ap,sk,roles):
             if abs(at-bt)<1.5:
                 if final_winner=="A": at+=2.5
                 else: bt+=2.5
-            return {"model":model,"provider":provider_from_model(model),"display_name":get_judge_short_name(model),"A_argument":round(aa,1),"A_rebuttal":round(ar,1),"A_clarity":round(ac,1),"A_total":round(at,2),"B_argument":round(ba,1),"B_rebuttal":round(br,1),"B_clarity":round(bc,1),"B_total":round(bt,2),"winner":final_winner,"reason":str(d.get("reason",""))[:200]}
+            return {"model":model,"provider":provider_from_model(model),"display_name":get_judge_short_name(model),"A_argument":round(aa,1),"A_rebuttal":round(ar,1),"A_clarity":round(ac,1),"A_total":round(at,2),"B_argument":round(ba,1),"B_rebuttal":round(br,1),"B_clarity":round(bc,1),"B_total":round(bt,2),"winner":final_winner,"reason":str(d.get("reason",""))[:250]}
         except:
             try:
                 nums=re.findall(r'"[AB]_(?:argument|rebuttal|clarity)"\s*:\s*(\d+(?:\.\d+)?)', resp, re.IGNORECASE)
@@ -1406,9 +1332,6 @@ def judge_round(model,topic,rn,ap,sk,roles):
                     vals=[float(n) for n in nums[:6]]
                     aa,ar,ac,ba,br,bc=vals
                     at=(aa+ar+ac)/3; bt=(ba+br+bc)/3
-                    if ap_switch: at=max(0, at-30)
-                    if sk_switch: bt=max(0, bt-30)
-                    if abs(at-bt)<1: bt+=3
                     return {"model":model,"provider":provider_from_model(model),"display_name":get_judge_short_name(model),"A_argument":round(aa,1),"A_rebuttal":round(ar,1),"A_clarity":round(ac,1),"A_total":round(at,2),"B_argument":round(ba,1),"B_rebuttal":round(br,1),"B_clarity":round(bc,1),"B_total":round(bt,2),"winner":"A" if at>bt else "B"}
             except: pass
             continue
