@@ -290,12 +290,31 @@ def generate_fallback_debate(side_label, topic, round_num, turn_num, opponent_la
     tl=(topic or "").lower()
     topic_short = topic[:130] if len(topic)>130 else topic
     sl=side_label.upper()
-    # Build rebuttal prefix if opponent_last exists and not first turn
+    # Build natural rebuttal prefix if opponent_last exists
     rebuttal_prefix = ""
     if opponent_last and not (round_num==1 and turn_num==1):
-        opp_snip = opponent_last[:150].strip()
-        if opp_snip:
-            rebuttal_prefix = f"You just argued that {opp_snip}, but that doesn't hold up. "
+        # Natural paraphrase, not mechanical quote
+        tl_opp = opponent_last.lower()
+        if "evil" in tl_opp or "suffer" in tl_opp or "cancer" in tl_opp or "pain" in tl_opp:
+            rebuttal_prefix = "I hear you on the suffering point, it's a powerful concern, but I don't think it settles it. "
+        elif "hidden" in tl_opp or "hide" in tl_opp:
+            rebuttal_prefix = "You raise hiddenness, why God isn't more obvious, and that's fair to ask, but "
+        elif "fine tuning" in tl_opp or "fine-tuning" in tl_opp or "tuned" in tl_opp:
+            rebuttal_prefix = "You make a fair point about fine-tuning, and I agree the numbers are striking, but "
+        elif "cosmological" in tl_opp or "cause" in tl_opp or "begin" in tl_opp:
+            rebuttal_prefix = "I get why you go to a first cause, that intuition makes sense, yet "
+        elif "moral" in tl_opp:
+            rebuttal_prefix = "That moral point is worth taking seriously, because "
+        elif "eyes opened" in tl_opp or "knowledge" in tl_opp:
+            rebuttal_prefix = "You point to their eyes being opened, and that's true, but "
+        elif "die" in tl_opp or "death" in tl_opp or "died" in tl_opp:
+            rebuttal_prefix = "You emphasize they didn't drop dead that day, which is a fair reading, but "
+        elif "tree of life" in tl_opp:
+            rebuttal_prefix = "You bring up the tree of life being blocked, and that's important, because "
+        else:
+            # Generic natural
+            rebuttal_prefix = "I see where you're coming from on that, but here's where I differ. "
+
     if "does god exist" in tl or "does a god" in tl or "existence of god" in tl or "is there a god" in tl or ("god exist" in tl and "serpent" not in tl):
         if "GOD EXISTS" in sl or "AFFIRMATIVE" in sl or "THEIST" in sl or "FOR" in sl or sl=="GOD" or "GOD" in sl and "NOT" not in sl and "NO" not in sl:
             if "NOT" in sl or "NO GOD" in sl or "NEGATIVE" in sl:
@@ -416,45 +435,71 @@ def generate_panel_commentary(model,side,topic,rn,ap,sk,prev,roles):
     pref_label = roles['side_a_label'] if side=="A" else roles['side_b_label']
     other_label = roles['side_b_label'] if side=="A" else roles['side_a_label']
     recent="\n".join(prev[-4:]); used_expl = "\n".join(list(USED_JUDGE_EXPLANATIONS)[-8:])
-    def trim(t,mw=220): 
-        # Keep more context and preserve specific phrases
-        wl=t.split()
-        if len(wl)<=mw:
+    def trim(t,mw=180):
+        # Summarize, not verbatim dump
+        t = t.strip()
+        if len(t.split()) <= mw:
             return t
-        # Keep first 80 and last 140 to preserve hook and conclusion
-        return " ".join(wl[:80]) + " ... " + " ".join(wl[-140:])
+        # Take key sentence
+        sentences = t.split('. ')
+        if len(sentences) >= 2:
+            return sentences[0][:150] + " ... " + sentences[-1][:150]
+        return " ".join(t.split()[:mw])
+    def extract_core_idea(text):
+        # Extract 3-4 keywords for natural paraphrase
+        low = text.lower()
+        ideas = []
+        if "evil" in low or "suffer" in low or "cancer" in low or "pain" in low: ideas.append("suffering/evil")
+        if "hidden" in low: ideas.append("divine hiddenness")
+        if "fine tuning" in low or "fine-tuning" in low or "tuned" in low: ideas.append("fine-tuning")
+        if "cosmological" in low or "cause" in low or "began" in low: ideas.append("cosmological/first cause")
+        if "moral" in low: ideas.append("moral argument")
+        if "consciousness" in low: ideas.append("consciousness")
+        if "eyes opened" in low: ideas.append("eyes opened")
+        if "tree of life" in low: ideas.append("tree of life")
+        if "cherubim" in low: ideas.append("cherubim")
+        if "930" in low or "dust" in low: ideas.append("death/mortality")
+        if "shame" in low or "naked" in low: ideas.append("shame")
+        return ", ".join(ideas[:2]) if ideas else "their main point"
+
     tl_topic = (topic or "").lower()
     is_genesis_topic = "god" in tl_topic and "serpent" in tl_topic
-    # Extract specific claims from this round for judge to reference
-    ap_claim = ap[:400]
-    sk_claim = sk[:400]
-    # Varied openers - avoid Look/Honestly
+    ap_core = extract_core_idea(ap)
+    sk_core = extract_core_idea(sk)
+
+    # Natural varied openers - not robotic "What decided round"
     openers = [
-        f"What decided round {rn} for me was",
-        f"The reason I went with {pref_label} in round {rn} comes down to",
-        f"Round {rn} came down to a specific exchange,",
-        f"When I look at what actually happened in round {rn},",
-        f"For me, round {rn} hinged on",
-        f"Two things made me score round {rn} for {pref_label},",
-        f"In round {rn}, {pref_label} did something {other_label} didn't,",
-        f"I'm scoring round {rn} for {pref_label} because",
+        f"I'm leaning toward {pref_label} in this one because",
+        f"For me this round goes to {pref_label}",
+        f"This one was close, but I have to give it to {pref_label}",
+        f"I found {pref_label} more convincing here",
+        f"Round {rn} is interesting because",
+        f"There's a moment in this round that tipped it for me",
     ]
     import random as _rop
     opener = _rop.choice(openers)
-    # Force specificity by requiring quotes
+
+    # Natural polished prompt - no verbatim quote injection, paraphrase naturally
     if side=="A":
-        prompt=f"You are {prov} from {comp}, YouTube debate judge for '{topic}' round {rn}. You just scored {pref_label} HIGHER than {other_label}. CRITICAL: Be ultra-specific to THIS round's actual arguments, not generic debate praise. You MUST quote or paraphrase a specific claim from each side in round {rn}. Start with: {opener}. Structure: Sentence 1: Quote what {pref_label} argued in round {rn}: '{trim(ap)[:200]}'. Sentence 2: Quote what {other_label} argued: '{trim(sk)[:200]}' and why that was weaker in THIS round. Sentence 3: Give 2nd specific reason {pref_label} won round {rn} referencing evidence. Sentence 4: Conclude why round {rn} goes to {pref_label}. Use contractions, conversational. Do NOT use Look or Honestly. Do NOT be generic like 'better evidence' or 'clearer argument' without saying what evidence. Mention actual points: for Genesis mention verses, Hebrew, tree of life, 930 years, etc. For God existence mention cosmological, evil, hiddenness, fine-tuning specifically. Avoid: {used_expl}. 3-4 sentences, specific to round {rn}."
+        prompt=f"You are {prov} from {comp}, a YouTube debate judge for '{topic}' round {rn}. You scored {pref_label} HIGHER than {other_label}. Talk like a real person on a panel, warm, conversational, natural, not robotic. Do NOT copy-paste long quotes like 'said ...'. Instead paraphrase core ideas naturally. You know this round covered: {pref_label} focused on {ap_core}, {other_label} focused on {sk_core}. Full context: {trim(ap)} vs {trim(sk)}. Start with: {opener}. In 3-4 sentences, explain in your own words why {pref_label} was stronger THIS round. Mention specific ideas from this round but paraphrased naturally, e.g. 'that point about hiddenness' not the whole sentence. Explain what {other_label} missed or didn't answer in this round. Be specific to round {rn}, not generic 'better evidence'. Avoid: {used_expl}. Natural, polished, like a thoughtful panelist, contractions okay, no bullet points."
     else:
-        prompt=f"You are {prov} from {comp}, YouTube debate judge for '{topic}' round {rn}. You just scored {pref_label} HIGHER than {other_label}. CRITICAL: Be ultra-specific to THIS round's actual arguments. You MUST quote or paraphrase specific claims from round {rn}. Start with: {opener}. Structure: Sentence 1: What {pref_label} said in round {rn}: '{trim(ap)[:200]}' that was strong. Sentence 2: What {other_label} said: '{trim(sk)[:200]}' that failed in THIS round. Sentence 3: Second specific reason {pref_label} won - reference actual evidence from round {rn}. Sentence 4: Conclude round {rn} winner. Use contractions, conversational. No Look/Honestly. No generic praise. Must reference actual round content, not general debate theory. Avoid: {used_expl}. 3-4 sentences, specific to round {rn}."
+        prompt=f"You are {prov} from {comp}, YouTube debate judge for '{topic}' round {rn}. You scored {pref_label} HIGHER than {other_label}. Talk like a real person, warm, natural, not a template. This round: {pref_label} argued around {ap_core}, {other_label} around {sk_core}. Context: {trim(ap)} vs {trim(sk)}. Start with: {opener}. In 3-4 sentences, explain naturally why {pref_label} won round {rn}. Paraphrase ideas, don't paste long quotes. Say what {other_label} didn't address in this round. Be specific to this round's exchange, not generic. Avoid: {used_expl}. Natural polished panel style."
+
     resp=query_openrouter(prompt,model,timeout=30,max_tokens=400,temperature=0.92)
     if resp and len(resp.split())>=12:
         low = resp.lower()
+        # Filter robotic patterns - simplified
+        # Allow some but not too many robotic markers
         if f"{other_label.lower()} won" in low or f"i scored {other_label.lower()} higher" in low:
             print(f"Judge {prov} mismatched, using fallback")
         else:
             resp=re.sub(r'As .*? to assess,','',resp,flags=re.IGNORECASE).strip()
             resp=re.sub(r'As an? .*? judge,','',resp,flags=re.IGNORECASE).strip()
             resp=re.sub(r'^I am .*? and I.*?[.]','',resp,flags=re.IGNORECASE).strip()
+            # Clean up mechanical quote artifacts
+            resp=re.sub(r"\s*\.\.\.\s*", " ", resp)
+            resp=re.sub(r"\bwhat decided round \d+ for me was\b", "What tipped it for me was", resp, flags=re.IGNORECASE)
+            resp=re.sub(r"\bthe reason i went with\b", "I went with", resp, flags=re.IGNORECASE)
             lower_resp=resp.lower()[:80]
             is_rep=False
             for used in USED_JUDGE_EXPLANATIONS:
@@ -463,55 +508,54 @@ def generate_panel_commentary(model,side,topic,rn,ap,sk,prev,roles):
                 USED_JUDGE_EXPLANATIONS.add(resp[:100]); return resp
     if is_genesis_topic:
         fallbacks_a=[
-            f"What stood out to me in round {rn} was how {pref_label} handled Genesis 3 verse 10, Adam was afraid and hid. That's not just an emotion, that's a break in fellowship, and in biblical language that counts as death. {other_label} kept pointing to no physical drop that day, but didn't address that relational rupture which happened immediately. That specificity is why I scored {pref_label} higher this round.",
-            f"The reason I leaned toward {pref_label} in round {rn} is the Hebrew phrase in the day. They showed Genesis 2 verse 4 uses the same construction to mean when, not a 24-hour timer, so moth tamuth is about certainty. Adam living 930 years actually fits that reading, while {other_label}'s literal deadline reading doesn't hold together with chapter 5 verse 5.",
-            f"I kept coming back to one detail in round {rn}, the omitted consequences. {pref_label} pointed out the serpent promised you'd be as gods in verse 5 but said nothing about pain, thorns, sweat, or losing the tree of life in verses 22 to 24. {other_label} didn't deal with that omission, and leaving out that cost matters when we're judging who told the fuller truth.",
-            f"For round {rn}, I found myself siding with {pref_label} because they tracked immortality loss that very day. Verse 22 says lest he take also of the tree of life and live forever, verse 24 says cherubim blocked the way. That's access to everlasting life lost on that day. {other_label} focused only on whether someone fell over dead, which missed this key point.",
-            f"Round {rn} was interesting because {pref_label} brought character into it, not just word studies. God in Genesis 2 verse 16 says you may freely eat of every tree, abundantly generous, while the serpent in 3 verse 1 says did God really say you shall not eat of every tree, making God sound stingy. That twist is relevant to who is being truthful, and {other_label} didn't address it.",
-            f"When I compare what was actually said in round {rn}, {pref_label} made the Hebrew contrast clear, moth tamuth surely die versus lo moth temuthun not surely die, a direct negation. What follows is to dust you shall return in verse 19, so the certainty God stressed does come true, even if not instant. {other_label} didn't engage that linguistic point.",
-            f"What tipped it for me in this round was Genesis 3 verse 7, they knew they were naked and sewed fig leaves. {pref_label} noted that's shame, not just neutral knowledge, and shame wasn't advertised as a positive by the serpent. {other_label} treated eyes opening as purely good, but the text pairs it with shame and hiding.",
-            f"Looking at round {rn} specifically, {pref_label} followed the narrative to exile, verses 23 and 24 says the Lord drove them out and placed cherubim to guard the way. That's losing home that day, not elevation. The serpent promised elevation in verse 5 but never mentioned losing Eden, and {other_label} didn't answer that gap.",
-            f"In round {rn}, I scored {pref_label} higher because they defined death as separation, not just breathing stopping, and Genesis 3 shows separation from garden, ease, and tree of life starting that day. That fits verses 23 and 24 and verse 10's hiding. {other_label}'s definition was narrower and didn't fit the whole chapter.",
-            f"The detail that stuck with me in round {rn} was the absolute nature of the serpent's claim, you shall not surely die in 3 verse 4, versus the story showing death entering through toil, pain, and return to dust in 3 verse 19. An absolute denial fails if any form of death begins, and {pref_label} showed that it did, while {other_label} defended the absolute.",
+            f"For me this round goes to {pref_label} because they sat with Genesis 3 verse 10, Adam was afraid and hid. That's not just fear, that's relationship breaking, and in biblical language that is death. {other_label} kept saying no one dropped dead physically, but didn't really engage that relational rupture that happened that day.",
+            f"I'm leaning toward {pref_label} here because they handled the Hebrew phrase in the day really thoughtfully. They showed Genesis 2 verse 4 uses the same construction to mean when, so surely die is about certainty. That makes sense of Adam living 930 years, while {other_label}'s deadline reading feels strained with chapter 5.",
+            f"This one was close, but I have to give it to {pref_label}. They pointed out the serpent promised you'd be as gods in verse 5 but didn't mention pain, thorns, sweat, or losing the tree of life in verses 22 to 24. If you're promising something that big, leaving out that cost matters for who told the fuller truth.",
+            f"I found {pref_label} more convincing here because they tracked what was lost that very day. Verse 22 says lest he take also of the tree of life and live forever, verse 24 says cherubim blocked the way. Losing access to everlasting life on that day is a form of dying, which {other_label} didn't really address.",
+            f"Round {rn} is interesting because {pref_label} brought character into it. God says you may freely eat of every tree in Genesis 2 verse 16, abundantly generous, while the serpent in 3 verse 1 says did God really say you shall not eat of every tree, twisting generosity into stinginess. That matters when judging truthfulness.",
+            f"There's a moment in this round that tipped it for me — {pref_label} laid out the Hebrew contrast, moth tamuth surely die versus lo moth temuthun not surely die. It's a direct negation, and what follows is to dust you shall return. {other_label} didn't engage that linguistic point.",
+            f"What I appreciated about {pref_label} this round was how they handled Genesis 3 verse 7, they knew they were naked and sewed fig leaves. That's shame, not just neutral knowledge, and shame wasn't advertised as positive by the serpent. {other_label} treated eyes opening as purely good.",
+            f"For me this round goes to {pref_label} because they followed the story to exile. Verses 23 and 24 say the Lord drove them out and placed cherubim to guard the way. That's losing home that day, not elevation like the serpent promised. {other_label} didn't answer that gap.",
+            f"I'm leaning toward {pref_label} here because they defined death as separation, not just breathing stopping. Genesis 3 shows separation from garden, ease, and tree of life starting that day, which fits verses 23 and 24. {other_label}'s definition was narrower.",
+            f"This one was close, but {pref_label} handled the absolute claim well. The serpent says you shall not surely die in 3 verse 4 as an absolute, but the story shows death entering through toil, pain, and return to dust. An absolute denial doesn't hold if any form of death begins.",
         ]
         fallbacks_b=[
-            f"What stood out to me in round {rn} was the plain sense of yom. Genesis 1 defines a day as evening and morning, and chapter 2 verse 17 says in the day you eat you shall die. Adam did not die that day, he lived 930 years per chapter 5 verse 5, while his eyes did open exactly as the serpent said in chapter 3 verse 7. That direct match to the serpent's prediction is why I gave this round to {pref_label}.",
-            f"The reason I leaned toward {pref_label} in round {rn} is God's own confirmation in chapter 3 verse 22, man has become like one of us knowing good and evil, word for word what the serpent promised in verse 5. If the serpent was entirely false, why does God affirm that part? {other_label} didn't address that confirmation.",
-            f"I kept coming back to the immediate outcome in round {rn}. God said you'd die that day, the serpent said you won't die but your eyes will be opened, and verse 7 says their eyes were opened. There's no verse that day saying they died. The reported outcome fits the serpent's description better, which is why {pref_label} was stronger here.",
-            f"For round {rn}, I found myself siding with {pref_label} because they centered the woman's experience. Chapter 3 verse 6 says she saw the tree was good for food, pleasant, desired to make wise, and ate, verse 13 says the serpent beguiled me. She got wisdom as promised, not death that day. {other_label} didn't engage that lived experience.",
-            f"Round {rn} was interesting because {pref_label} asked why God would need to block the tree of life in verses 22 to 24 if they were already dead that day. Cherubim placed to prevent living forever only makes sense if they're still alive. {other_label} didn't answer why that guard would be needed.",
-            f"When I compare the report in round {rn}, death that day is never actually reported. Chapter 3 verse 20 says Adam called his wife Eve mother of all living, chapter 4 verse 1 says they conceived Cain. They're building family, not lying dead. That narrative outcome aligns with the serpent's you shall not die claim for that day, which tipped it to {pref_label}.",
-            f"What tipped it for me in this round was threat versus report. Threat was in the day you die, report says eyes opened, knew naked, sewed leaves, heard God walking. No report of death that day. {pref_label} stuck to what the text reports happened, while {other_label} imported a later theological category not in Genesis 2-3.",
-            f"Looking at round {rn} specifically, {pref_label} highlighted that God affirms the serpent's second claim. Verse 5 says as gods knowing good and evil, verse 22 has God saying man has become as one of us to know good and evil. If that part was a lie, why would God echo it? {other_label} didn't resolve that.",
-            f"The detail that stuck with me in round {rn} was definitional consistency. {pref_label} noted if death means separation, the text should say spiritual death, but it never does. It says dust to dust in verse 19 as future, not that day. {other_label} redefined death mid-argument, which weakened their case this round.",
-            f"In round {rn}, I scored {pref_label} higher because there is an unresolved tension between warning and outcome. God warned death that day, serpent promised no death but enlightenment, enlightenment happens in verse 7 while death does not. {pref_label} stayed with the reported outcome, {other_label} didn't close that gap.",
+            f"For me this round goes to {pref_label} because they stayed close to the plain sense of day. Genesis 1 defines day as evening and morning, and 2 verse 17 says in the day you eat you shall die, yet Adam lives 930 years per chapter 5 verse 5 while his eyes do open as the serpent said in 3 verse 7. That plain match tipped it for me.",
+            f"I'm leaning toward {pref_label} here because of God's own confirmation in chapter 3 verse 22, man has become like one of us knowing good and evil, which is word for word what the serpent promised in verse 5. If the serpent was entirely false, why does God affirm that part? {other_label} didn't address that.",
+            f"This one was close, but I have to give it to {pref_label}. They focused on immediate outcome, God said you'd die that day, serpent said you won't die but your eyes will be opened, and verse 7 says eyes were opened with no verse that day saying they died. The reported outcome fits the serpent's description better.",
+            f"I found {pref_label} more convincing here because they centered the woman's experience. Chapter 3 verse 6 says she saw the tree was good, pleasant, desired to make wise, and ate, verse 13 says the serpent beguiled me. She got wisdom as promised, not death that day. {other_label} didn't engage that lived experience.",
+            f"Round {rn} is interesting because {pref_label} asked a thoughtful question, why would God need to block the tree of life in verses 22 to 24 if they were already dead that day? Cherubim to prevent living forever only makes sense if they're still alive. {other_label} didn't answer that.",
+            f"For me this round goes to {pref_label} because death that day is never reported. Chapter 3 verse 20 says Eve is mother of all living, chapter 4 verse 1 says they conceived Cain. They're building family, not lying dead. That outcome aligns with the serpent's no death that day claim.",
+            f"There's a moment in this round that tipped it for me — threat versus report. Threat was in the day you die, report says eyes opened, knew naked, sewed leaves, heard God walking. No report of death that day. {pref_label} stuck to what the text reports, while {other_label} imported a later category not in Genesis 2-3.",
+            f"I found {pref_label} more convincing here because they highlighted that God affirms the serpent's second claim. Verse 5 says as gods knowing good and evil, verse 22 has God saying man has become as one of us knowing good and evil. If that part was a lie, why would God echo it?",
+            f"What I appreciated about {pref_label} this round was consistency. They noted if death means separation, the text should say spiritual death, but it never does. It says dust to dust in verse 19 as future, not that day. {other_label} redefined death mid-argument.",
+            f"I'm leaning toward {pref_label} here because there's an unresolved tension. God warned death that day, serpent promised no death but enlightenment, enlightenment happens in verse 7 while death doesn't. {pref_label} stayed with the reported outcome, {other_label} didn't close that gap.",
         ]
     else:
-        # Versatile fallbacks - ULTRA SPECIFIC with actual round quotes
-        # Use ap_claim and sk_claim which contain actual round text
+        # Natural polished versatile fallbacks - tailored to discussion, not robotic quote injection
         fallbacks_a=[
-            f"What decided round {rn} for me was {pref_label} directly answering {other_label}'s point. {other_label} said '{sk_claim[:120]}...' and {pref_label} came back with '{ap_claim[:120]}...' which actually engaged that claim. {other_label} in round {rn} just moved to a new fact without answering, while {pref_label} stayed in conversation.",
-            f"The reason I went with {pref_label} in round {rn} comes down to rebuttal. In this round {pref_label} argued '{ap_claim[:100]}...' which directly counters what {other_label} claimed about '{sk_claim[:80]}...'. {other_label} didn't address {pref_label}'s previous point, they just added another argument. Real debate requires answering.",
-            f"Round {rn} came down to a specific exchange, {pref_label} said '{ap_claim[:110]}...' while {other_label} said '{sk_claim[:110]}...'. The difference is {pref_label} actually quoted and dismantled {other_label}'s last point, while {other_label} ignored what {pref_label} had just said in round {rn}. That's why {pref_label} won this round.",
-            f"When I look at what actually happened in round {rn}, {pref_label} did the debate work, they took {other_label}'s claim '{sk_claim[:100]}...' and showed why it fails because '{ap_claim[:100]}...'. {other_label} in round {rn} just stated '{sk_claim[:60]}...' without engaging {pref_label}'s prior argument. That lack of direct reply cost them.",
-            f"For me, round {rn} hinged on whether they were actually talking to each other. {pref_label} was, they said '{ap_claim[:120]}...' directly responding to {other_label}. {other_label} in round {rn} said '{sk_claim[:120]}...' but didn't address what {pref_label} had argued just before. In a debate, you have to answer.",
-            f"Two things made me score round {rn} for {pref_label}, first they quoted {other_label}'s point about '{sk_claim[:80]}...' and gave counter-evidence '{ap_claim[:80]}...', second they didn't just add a new topic. {other_label} in round {rn} moved to a new claim without finishing the previous exchange.",
-            f"In round {rn}, {pref_label} did something {other_label} didn't, they actually listened. When {other_label} argued '{sk_claim[:100]}...', {pref_label} replied '{ap_claim[:100]}...' showing why that point doesn't hold. {other_label} just pivoted to '{sk_claim[:60]}...' without rebuttal in round {rn}.",
-            f"I'm scoring round {rn} for {pref_label} because they answered the previous turn. {other_label} claimed '{sk_claim[:110]}...' and {pref_label} answered it with '{ap_claim[:110]}...' with specific evidence. {other_label} in round {rn} failed to return the favor and just introduced new material without addressing {pref_label}.",
-            f"What decided round {rn} for me was specificity. {pref_label} said '{ap_claim[:120]}...' which directly addresses {other_label}'s '{sk_claim[:60]}...' from this round. {other_label} spoke generally in round {rn} without anchoring to what {pref_label} had just said, so it felt like two monologues, not a debate, and {pref_label} broke that.",
-            f"The reason I went with {pref_label} in round {rn} comes down to this exchange: {other_label} argued '{sk_claim[:100]}...' and {pref_label} countered '{ap_claim[:100]}...'. That's direct engagement. {other_label} in round {rn} didn't provide that same direct counter to {pref_label}'s last point.",
+            f"I'm leaning toward {pref_label} in this one because they actually engaged with what {other_label} was saying about {sk_core or 'their main point'}. That point about {sk_core or 'that'} is worth taking seriously, but {pref_label} gave a thoughtful counter around {ap_core or 'their case'} that felt more grounded this round.",
+            f"For me this round goes to {pref_label}. They brought up {ap_core or 'their evidence'} in a way that felt connected to the conversation, while {other_label}'s focus on {sk_core or 'their argument'} didn't quite answer what {pref_label} had raised just before. That back-and-forth matters.",
+            f"This one was close, but I have to give it to {pref_label}. What stood out was how they handled {sk_core or 'the previous point'} — they didn't dismiss it, they actually addressed it and then added {ap_core or 'their own evidence'} which strengthened their case in this round.",
+            f"I found {pref_label} more convincing here. {other_label} kept coming back to {sk_core or 'their theme'}, which is a fair concern, but {pref_label}'s take on {ap_core or 'their point'} tied more directly to what was being debated in this round and felt more complete.",
+            f"Round {rn} is interesting because {pref_label} showed they were listening. When {other_label} raised {sk_core or 'that issue'}, {pref_label} didn't just pivot, they engaged with it and explained why {ap_core or 'their perspective'} still holds. That kind of exchange is what wins rounds for me.",
+            f"There's a moment in this round that tipped it for me — {pref_label} took the idea around {sk_core or 'the other side'} seriously and gave a nuanced reply involving {ap_core or 'their argument'}. {other_label} on the other hand moved to a new point without really closing the previous one, which left a gap.",
+            f"I found {pref_label} more persuasive this round because their argument about {ap_core or 'their case'} felt like a direct answer to {other_label}'s point on {sk_core or 'their claim'}. It wasn't just a separate fact, it was connected, and that connection makes a debate feel like a real conversation.",
+            f"For me this round goes to {pref_label} because they balanced acknowledgment and counter-argument well. They recognized the weight of {sk_core or 'the opposing point'} but showed why {ap_core or 'their own point'} still provides a better explanation for what we're discussing here.",
+            f"What I appreciated about {pref_label} in this round was specificity. Instead of speaking generally, they dug into {ap_core or 'their evidence'} in a way that directly related to {other_label}'s point about {sk_core or 'that theme'}. That tailored response felt more honest.",
+            f"I'm leaning toward {pref_label} here because {other_label}'s argument around {sk_core or 'their main idea'} left something unanswered that {pref_label} picked up on with {ap_core or 'their counter'}. It felt like {pref_label} was actually debating, not just presenting.",
         ]
         fallbacks_b=[
-            f"What decided round {rn} for me was direct rebuttal. {pref_label} took {other_label}'s claim '{sk_claim[:100]}...' and answered it with '{ap_claim[:100]}...' which directly addresses that point. {other_label} in round {rn} said '{sk_claim[:80]}...' but didn't actually answer what {pref_label} had argued right before. That's the difference.",
-            f"The reason I went with {pref_label} in round {rn} comes down to answering. {other_label} argued '{sk_claim[:110]}...' and {pref_label} countered '{ap_claim[:110]}...' with specific counter-evidence. {other_label} in round {rn} ignored {pref_label}'s previous point '{ap_claim[:60]}...' and just moved on, which is not how you win a round.",
-            f"Round {rn} came down to a specific exchange, {other_label} said '{sk_claim[:100]}...' and {pref_label} replied '{ap_claim[:100]}...' showing why that doesn't hold. In round {rn}, {other_label} didn't do that same work, they said '{sk_claim[:80]}...' without engaging {pref_label}'s last argument.",
-            f"When I look at what actually happened in round {rn}, {pref_label} was having a conversation, {other_label} was giving a speech. {pref_label} quoted '{sk_claim[:90]}...' and explained why it's wrong because '{ap_claim[:90]}...'. {other_label} in round {rn} didn't quote {pref_label} at all.",
-            f"For me, round {rn} hinged on whether they answered each other. {pref_label} did, they said '{ap_claim[:120]}...' in direct response to {other_label}'s '{sk_claim[:60]}...'. {other_label} in round {rn} introduced '{sk_claim[:100]}...' but left {pref_label}'s prior point unanswered.",
-            f"Two things made me score round {rn} for {pref_label}, first they actually addressed {other_label}'s point about '{sk_claim[:80]}...' with '{ap_claim[:80]}...', second {other_label} in round {rn} pivoted to a new topic '{sk_claim[:60]}...' without rebutting. You have to answer to win.",
-            f"In round {rn}, {pref_label} did something {other_label} didn't, they stayed on the same topic. When {other_label} argued '{sk_claim[:100]}...', {pref_label} stayed with it and said '{ap_claim[:100]}...'. {other_label} changed subject in round {rn} instead of finishing the exchange.",
-            f"I'm scoring round {rn} for {pref_label} because they showed they were listening. {other_label} claimed '{sk_claim[:110]}...' and {pref_label} answered '{ap_claim[:110]}...' point for point. {other_label} in round {rn} failed to answer {pref_label}'s previous argument about '{ap_claim[:60]}...'.",
-            f"What decided round {rn} for me was engagement. {pref_label} argued '{ap_claim[:120]}...' which is a direct reply to {other_label}'s '{sk_claim[:60]}...' in this round. {other_label} spoke generally in round {rn} about '{sk_claim[:60]}...' without anchoring to what {pref_label} had just said.",
-            f"The reason I went with {pref_label} in round {rn} comes down to this, {other_label} said '{sk_claim[:100]}...' and {pref_label} gave a specific counter '{ap_claim[:100]}...'. That's what rebuttal looks like. {other_label} in round {rn} didn't provide that counter to {pref_label}'s last point.",
+            f"I'm leaning toward {pref_label} in this one because they really sat with {other_label}'s point about {sk_core or 'that issue'} and gave a considered reply centered on {ap_core or 'their case'}. {other_label} had a strong moment around {sk_core or 'their argument'}, but didn't quite close the loop on what {pref_label} raised before.",
+            f"For me this round goes to {pref_label}. They engaged thoughtfully with {sk_core or 'the other side'} — not dismissively, but by explaining why {ap_core or 'their perspective'} still makes sense. {other_label}'s focus on {sk_core or 'their theme'} is important, but in this exchange it felt a bit disconnected from the prior point.",
+            f"This one was close, but I have to give it to {pref_label}. What helped was how they handled {other_label}'s idea around {sk_core or 'that concern'} with a clear counter involving {ap_core or 'their point'}. It wasn't just a new fact, it was a response, and that matters in a debate.",
+            f"I found {pref_label} more convincing here. They took {other_label}'s point about {sk_core or 'that argument'} seriously and showed why {ap_core or 'their evidence'} offers a better fit for what we actually see in this discussion. That direct engagement stood out.",
+            f"Round {rn} is interesting because {pref_label} didn't just add another argument, they answered. When {other_label} brought up {sk_core or 'their main point'}, {pref_label} replied with {ap_core or 'their counter'} that spoke directly to it. {other_label} missed a chance to do the same.",
+            f"There's a moment in this round that tipped it for me — {pref_label} acknowledged the weight of {sk_core or 'the opposing idea'} but explained why {ap_core or 'their view'} still holds up when you look closely. {other_label} moved to a fresh claim without resolving the previous exchange.",
+            f"I found {pref_label} more persuasive this round because they tied {ap_core or 'their argument'} back to the conversation about {sk_core or 'the other side'}. It felt tailored to this round, not a generic talking point, while {other_label}'s point about {sk_core or 'their theme'} felt more like a separate speech.",
+            f"For me this round goes to {pref_label} because they showed they were listening. {other_label} raised {sk_core or 'an important concern'} and {pref_label} didn't ignore it, they engaged with {ap_core or 'their response'} in a way that felt honest and specific to this round.",
+            f"What I appreciated about {pref_label} here was how they handled {sk_core or 'that topic'} — not by dismissing it, but by offering {ap_core or 'their perspective'} as a more complete picture. {other_label}'s argument in this round didn't quite answer what {pref_label} had just said.",
+            f"I'm leaning toward {pref_label} here because their take on {ap_core or 'their point'} felt like a direct reply to {other_label}'s point about {sk_core or 'that issue'}. {other_label} had a solid idea around {sk_core or 'their argument'}, but left {pref_label}'s previous point unaddressed, which cost them this round.",
         ]
     import random as _rnd
     pool = fallbacks_a if side=="A" else fallbacks_b
@@ -1054,16 +1098,31 @@ def generate_turn(role_key, topic, round_num, turn_num, prev_history, model, rol
 
     if round_num==1 and turn_num==1:
         round_focus="OPENING ROUND TURN 1: Set up your case naturally. Hook + strongest evidence. No opponent to rebut yet."
-        rebuttal_instruction="This is first turn, no rebuttal needed, just make strong opening case."
+        rebuttal_instruction="This is first turn, no rebuttal needed, just make strong opening case with 2-3 real reasons."
     elif round_num==1:
-        round_focus="OPENING ROUND: You MUST rebut opponent's last claim FIRST, then add new evidence."
-        rebuttal_instruction=f"MANDATORY REBUTTAL STRUCTURE - DO THIS: 1) Start with: 'My opponent just said {opponent_last[:120]}...' and explain why that misses context. 2) Then say 'Here's why...' and bring your new point. You MUST address opponent before new fact. Don't just list facts."
+        round_focus="OPENING ROUND: Natural conversation, address what opponent just raised."
+        rebuttal_instruction=f"""POLISHED REBUTTAL - Sound natural, not robotic:
+- Do NOT say 'You just argued that...' or repeat opponent's whole sentence verbatim.
+- Instead, paraphrase their core idea in your own words, like a real person would.
+- Example good: "I hear you on the suffering point, it's powerful, but..." or "You make a fair point about fine-tuning, yet..."
+- Example bad: "You just argued that children die of cancer therefore no God..."
+- Start by acknowledging their idea briefly (1 sentence), then explain why you see it differently, then bring your new point.
+Opponent's core idea to address: {opponent_last[:200]}"""
     elif round_num==2:
-        round_focus="REBUTTAL ROUND: This is core rebuttal round. You MUST dismantle opponent's last argument before adding anything."
-        rebuttal_instruction=f"MANDATORY: Quote opponent's last point: '{opponent_last[:150]}' and directly rebut it with counter-evidence. Show where they are wrong. THEN add new evidence you haven't used. Structure: 1) You claimed X, but 2) Actually Y because... 3) And here's another reason..."
+        round_focus="REBUTTAL ROUND: Core rebuttal, but polished and conversational."
+        rebuttal_instruction=f"""POLISHED REBUTTAL - This is the heart of debate:
+- Paraphrase opponent's last argument naturally, don't quote verbatim.
+- Show you listened: "That point about {opponent_last[:60]}... is worth taking seriously, because..." then counter.
+- Then add fresh evidence you haven't used.
+- Never start with "You just argued this" mechanically. Use varied natural openers: "I get why you'd say that," "That's a strong point about X, but," "I see where you're coming from on X, however..."
+- Structure: 1) Brief natural acknowledgement of their idea 2) Why it doesn't fully hold 3) Your stronger counter + new evidence
+Opponent's last idea: {opponent_last[:250]}"""
     else:
-        round_focus="CLOSING ROUND: Summarize but STILL rebut opponent's last round point first."
-        rebuttal_instruction=f"MANDATORY: Start by addressing opponent's last claim: '{opponent_last[:150]}'. Say why it fails, then bring it together. Don't ignore opponent. Debate is conversation, not two monologues."
+        round_focus="CLOSING ROUND: Bring it together, still address opponent's last point naturally."
+        rebuttal_instruction=f"""POLISHED CLOSING - Still engage opponent but elegantly:
+- Don't say "You just argued..." - instead weave it in: "My opponent has been pressing the idea that {opponent_last[:80]}... and I think that's where we fundamentally differ..."
+- Acknowledge, rebut briefly, then pull together your overall case with heart.
+Opponent's last push: {opponent_last[:200]}"""
 
     prev_snip=prev_history[-1200:] if prev_history else "No previous"
     used_str="; ".join(list(USED_ARGUMENTS)[-10:])[:500]
@@ -1089,27 +1148,29 @@ def generate_turn(role_key, topic, round_num, turn_num, prev_history, model, rol
 Your view: {role_desc}
 Opponent: {opponent_label} = {opponent_desc}
 {round_focus}
-Opponent's LAST argument you MUST rebut first: {opponent_last[:400]}
+Opponent's core idea to engage with (paraphrase naturally, don't repeat verbatim): {opponent_last[:350]}
 
-Full recent history: {prev_snip[-800:]}
+Recent context: {prev_snip[-800:]}
 
 DO NOT REPEAT: {used_str}
 Keywords already used: {used_kw}
 
-CRITICAL DEBATE RULES - MUST FOLLOW:
-- NEVER just say facts without addressing opponent. Real debate = conversation.
+CRITICAL DEBATE RULES - NATURAL POLISHED CONVERSATION:
+- Real debate = listening then responding, not two monologues. You MUST engage opponent's previous point.
+- BUT sound natural and polished, NOT robotic. Do NOT say "You just argued that [long quote]" verbatim.
 - {rebuttal_instruction}
-- For Does God exist, if GOD EXISTS: argue cosmological, fine-tuning, moral, consciousness BUT always respond to opponent's evil/hiddenness claim first.
-- If GOD DOES NOT EXIST: argue evil, hiddenness, lack of evidence, parsimony BUT always respond to opponent's cosmological/fine-tuning claim first.
-- You MUST start with rebuttal if not first turn. Structure: Opponent said X -> Actually Y because -> And here's my new point Z.
-- NEVER start with generic fact, always start by engaging opponent when there is opponent history.
-- Make sense, be substantive, be a real conversation.
+- Paraphrase their idea in 5-8 words in your own voice, then respond. Example: Instead of "You just argued that children die of cancer so no God", say "I hear you on suffering" or "That point about evil is strong"
+- For Does God exist, GOD EXISTS: address evil/hiddenness naturally then bring cosmological, fine-tuning, moral
+- If GOD DOES NOT EXIST: address cosmological/fine-tuning naturally then bring evil, hiddenness, parsimony
+- Structure should feel like: [brief natural acknowledgement] -> [why you see it differently] -> [your new evidence]
+- Make sense, be substantive, be a real conversation, not mechanical.
 
-Speak like a REAL HUMAN on stage:
+Speak like a REAL HUMAN on stage - POLISHED:
 - Use contractions: I'm, don't, can't, it's, we're, that's, you've
-- Speak in full natural sentences, not choppy phrases
+- Natural, varied openers: "I hear you...", "That's a fair point about X, but...", "I get why you'd point to X...", "You raise something important with X..."
+- NEVER start every turn with "You just argued". Vary it.
+- Speak in full natural sentences, flowing
 - Vary rhythm: short punchy, then longer thoughtful
-- Use transitions: "You said..., but...", "That's interesting, but when you actually look...", "I hear what you're saying about X, however..."
 - {evidence_line}
 - {fresh_line}
 - Be conversational, passionate, like talking to a friend who disagrees
@@ -1127,20 +1188,20 @@ Speak like a REAL HUMAN on stage:
             lower_cleaned=cleaned.lower()
             if len(lower_cleaned.split())<20 and ("yes" in lower_cleaned or "no" in lower_cleaned):
                 continue
-            # ENFORCE REBUTTAL - must address opponent if not first turn
+            # ENFORCE NATURAL REBUTTAL - must engage opponent if not first turn, but naturally
             if not (round_num==1 and turn_num==1):
-                has_rebuttal = any(phrase in lower_cleaned for phrase in ["you said", "you claimed", "you argued", "my opponent", "you just said", "you're saying", "your point", "you mention", "opponent says"])
-                # Also check if it quotes opponent_last words
-                opp_words = opponent_last.lower().split()[:8]
-                overlap = sum(1 for w in opp_words if len(w)>3 and w in lower_cleaned)
-                if not has_rebuttal and overlap < 1:
-                    # Retry with stricter rebuttal prompt
-                    strict_prompt = f"Your last response DID NOT rebut opponent. You just listed new facts. That's not a debate. You MUST start by directly quoting and rebutting opponent's last claim: '{opponent_last[:300]}'. Start with 'You said...' then explain why it's wrong, THEN add your new point. Rewrite this turn to actually answer opponent: {cleaned[:400]}"
+                # Check for natural engagement - paraphrase, not mechanical copy
+                has_engagement = any(phrase in lower_cleaned for phrase in ["i hear you", "you make a fair point", "you raise", "that's a fair point", "i get why", "i see where", "you point to", "you mention", "that point about", "my opponent", "i understand"])
+                # Also check semantic overlap - does it address opponent's topic?
+                opp_keywords = [w for w in opponent_last.lower().split() if len(w)>4][:6]
+                semantic_overlap = sum(1 for w in opp_keywords if w in lower_cleaned)
+                # If no engagement and no semantic overlap, retry with natural instruction
+                if not has_engagement and semantic_overlap < 1:
+                    strict_prompt = f"Your last response ignored opponent and just listed new facts. That's two monologues, not a debate. Opponent's idea: '{opponent_last[:300]}'. Rewrite to naturally engage it first. Paraphrase their core idea in your own words (don't copy verbatim), acknowledge it briefly, then explain why you see it differently, then bring your new point. Start naturally like 'I hear you on X...' not 'You just argued that...'. Turn to rewrite: {cleaned[:400]}"
                     retry = query_openrouter(strict_prompt, m, max_tokens=900, temperature=0.85)
                     if retry and count_words(retry)>=80:
-                        # Check retry has rebuttal
                         retry_low = retry.lower()
-                        if any(p in retry_low for p in ["you said", "you claimed", "you argued", "my opponent"]):
+                        if any(p in retry_low for p in ["i hear", "fair point", "you raise", "you point", "that point", "my opponent", "i get", "i see"]):
                             cleaned = strip_filler(retry)
                             cleaned=re.sub(r"\s+"," ",cleaned).strip()
                             if not cleaned.endswith(('.', '!', '?')): cleaned+="."
