@@ -404,26 +404,36 @@ def generate_panel_commentary(model,side,topic,rn,ap,sk,prev,roles):
     pref_label = roles['side_a_label'] if side=="A" else roles['side_b_label']
     other_label = roles['side_b_label'] if side=="A" else roles['side_a_label']
     recent="\n".join(prev[-4:]); used_expl = "\n".join(list(USED_JUDGE_EXPLANATIONS)[-8:])
-    def trim(t,mw=160): wl=t.split(); return t if len(wl)<=mw else " ".join(wl[-mw:])
+    def trim(t,mw=220): 
+        # Keep more context and preserve specific phrases
+        wl=t.split()
+        if len(wl)<=mw:
+            return t
+        # Keep first 80 and last 140 to preserve hook and conclusion
+        return " ".join(wl[:80]) + " ... " + " ".join(wl[-140:])
     tl_topic = (topic or "").lower()
     is_genesis_topic = "god" in tl_topic and "serpent" in tl_topic
-    # Varied openers to avoid Look/Honestly repetition
+    # Extract specific claims from this round for judge to reference
+    ap_claim = ap[:400]
+    sk_claim = sk[:400]
+    # Varied openers - avoid Look/Honestly
     openers = [
-        f"What stood out to me in round {rn} was",
-        f"The reason I leaned toward {pref_label} in round {rn} is",
-        f"I kept coming back to one detail in round {rn},",
-        f"For round {rn}, I found myself siding with {pref_label} because",
-        f"Round {rn} was interesting because",
-        f"When I compare what was actually said in round {rn},",
-        f"What tipped it for me in this round was",
-        f"Looking at round {rn} specifically,"
+        f"What decided round {rn} for me was",
+        f"The reason I went with {pref_label} in round {rn} comes down to",
+        f"Round {rn} came down to a specific exchange,",
+        f"When I look at what actually happened in round {rn},",
+        f"For me, round {rn} hinged on",
+        f"Two things made me score round {rn} for {pref_label},",
+        f"In round {rn}, {pref_label} did something {other_label} didn't,",
+        f"I'm scoring round {rn} for {pref_label} because",
     ]
     import random as _rop
     opener = _rop.choice(openers)
+    # Force specificity by requiring quotes
     if side=="A":
-        prompt=f"You are {prov} from {comp}, a judge on a live panel about {topic}. You are speaking to YouTube audience between rounds, explaining round {rn}. You scored {pref_label} HIGHER than {other_label}. Talk like real person, full conversational natural sentences, contractions, no bullet points, no point form, flowing 3-4 specific sentences that reference actual arguments from THIS round, not generic praise. Do NOT start with Look or Honestly. Start with: {opener}. Be specific and relevant: mention actual evidence, quotes, or reasoning from {pref_label}: {trim(ap)} vs {other_label}: {trim(sk)}. Explain 2 concrete reasons why {pref_label} was stronger in round {rn} and 1 specific weakness in {other_label} this round. MUST argue {pref_label} won round {rn}. Do NOT say {other_label} won. Avoid repeating: {used_expl}. Be warm, specific, relevant to round {rn}, not generic."
+        prompt=f"You are {prov} from {comp}, YouTube debate judge for '{topic}' round {rn}. You just scored {pref_label} HIGHER than {other_label}. CRITICAL: Be ultra-specific to THIS round's actual arguments, not generic debate praise. You MUST quote or paraphrase a specific claim from each side in round {rn}. Start with: {opener}. Structure: Sentence 1: Quote what {pref_label} argued in round {rn}: '{trim(ap)[:200]}'. Sentence 2: Quote what {other_label} argued: '{trim(sk)[:200]}' and why that was weaker in THIS round. Sentence 3: Give 2nd specific reason {pref_label} won round {rn} referencing evidence. Sentence 4: Conclude why round {rn} goes to {pref_label}. Use contractions, conversational. Do NOT use Look or Honestly. Do NOT be generic like 'better evidence' or 'clearer argument' without saying what evidence. Mention actual points: for Genesis mention verses, Hebrew, tree of life, 930 years, etc. For God existence mention cosmological, evil, hiddenness, fine-tuning specifically. Avoid: {used_expl}. 3-4 sentences, specific to round {rn}."
     else:
-        prompt=f"You are {prov} from {comp}, a judge on live panel about {topic}. Speaking to YouTube audience between rounds for round {rn}. You scored {pref_label} HIGHER than {other_label}. Talk like real person, full conversational natural sentences, contractions, no bullet points, no point form, flowing 3-4 specific sentences that reference actual arguments from THIS round. Do NOT start with Look or Honestly. Start with: {opener}. Be specific and relevant: reference {pref_label}: {trim(ap)} vs {other_label}: {trim(sk)}. Point out a concrete weakness in {other_label} in round {rn} and why {pref_label} handled it better. MUST argue {pref_label} won round {rn}. Avoid: {used_expl}. Be specific to this round, not generic."
+        prompt=f"You are {prov} from {comp}, YouTube debate judge for '{topic}' round {rn}. You just scored {pref_label} HIGHER than {other_label}. CRITICAL: Be ultra-specific to THIS round's actual arguments. You MUST quote or paraphrase specific claims from round {rn}. Start with: {opener}. Structure: Sentence 1: What {pref_label} said in round {rn}: '{trim(ap)[:200]}' that was strong. Sentence 2: What {other_label} said: '{trim(sk)[:200]}' that failed in THIS round. Sentence 3: Second specific reason {pref_label} won - reference actual evidence from round {rn}. Sentence 4: Conclude round {rn} winner. Use contractions, conversational. No Look/Honestly. No generic praise. Must reference actual round content, not general debate theory. Avoid: {used_expl}. 3-4 sentences, specific to round {rn}."
     resp=query_openrouter(prompt,model,timeout=30,max_tokens=400,temperature=0.92)
     if resp and len(resp.split())>=12:
         low = resp.lower()
@@ -1017,13 +1027,32 @@ def render_scorecard_video(image_path,audio_path,subs_path,output_path):
 
 def generate_turn(role_key, topic, round_num, turn_num, prev_history, model, role_label, role_desc, opponent_label, opponent_desc):
     global USED_ARGUMENTS, USED_PHRASES, USED_KEYWORDS
-    if round_num==1:
-        round_focus="OPENING ROUND: Set up your case naturally, like a real person talking on stage. Start with a hook, then your strongest evidence. Give REAL arguments, not just yes/no."
-    elif round_num==2:
-        round_focus="REBUTTAL ROUND: Respond directly to what opponent just said. Show where they missed context. Bring new evidence you haven't used before. Real points, examples, reasoning."
+    # Extract opponent's last actual turn for mandatory rebuttal
+    opponent_last = ""
+    if prev_history:
+        # Find last opponent block
+        parts = prev_history.split(f"{opponent_label}:")
+        if len(parts) > 1:
+            opponent_last = parts[-1].strip()[-600:]
+        else:
+            opponent_last = prev_history[-1000:]
     else:
-        round_focus="CLOSING ROUND: Bring it all together, speak from heart, summarize why your view fits all the evidence. End with a memorable question or challenge. Make sense for any topic."
-    prev_snip=prev_history[-800:] if prev_history else "No previous"
+        opponent_last = "No opponent yet - this is opening"
+
+    if round_num==1 and turn_num==1:
+        round_focus="OPENING ROUND TURN 1: Set up your case naturally. Hook + strongest evidence. No opponent to rebut yet."
+        rebuttal_instruction="This is first turn, no rebuttal needed, just make strong opening case."
+    elif round_num==1:
+        round_focus="OPENING ROUND: You MUST rebut opponent's last claim FIRST, then add new evidence."
+        rebuttal_instruction=f"MANDATORY REBUTTAL STRUCTURE - DO THIS: 1) Start with: 'My opponent just said {opponent_last[:120]}...' and explain why that misses context. 2) Then say 'Here's why...' and bring your new point. You MUST address opponent before new fact. Don't just list facts."
+    elif round_num==2:
+        round_focus="REBUTTAL ROUND: This is core rebuttal round. You MUST dismantle opponent's last argument before adding anything."
+        rebuttal_instruction=f"MANDATORY: Quote opponent's last point: '{opponent_last[:150]}' and directly rebut it with counter-evidence. Show where they are wrong. THEN add new evidence you haven't used. Structure: 1) You claimed X, but 2) Actually Y because... 3) And here's another reason..."
+    else:
+        round_focus="CLOSING ROUND: Summarize but STILL rebut opponent's last round point first."
+        rebuttal_instruction=f"MANDATORY: Start by addressing opponent's last claim: '{opponent_last[:150]}'. Say why it fails, then bring it together. Don't ignore opponent. Debate is conversation, not two monologues."
+
+    prev_snip=prev_history[-1200:] if prev_history else "No previous"
     used_str="; ".join(list(USED_ARGUMENTS)[-10:])[:500]
     used_kw="; ".join(list(USED_KEYWORDS)[-10:])
     tl = (topic or "").lower()
@@ -1042,34 +1071,37 @@ def generate_turn(role_key, topic, round_num, turn_num, prev_history, model, rol
     else:
         evidence_line = f"Use real examples, studies, lived experience, mechanisms, consequences about {topic} - make it concrete and human, not just yes/no"
         fresh_line = "CRITICAL: Fresh angle not used before. New mechanism, consequence, or example that makes sense for this topic"
+
     prompt=f"""You are {role_label} debating LIVE on YouTube about: {topic}
 Your view: {role_desc}
 Opponent: {opponent_label} = {opponent_desc}
 {round_focus}
-What opponent just said: {prev_snip}
+Opponent's LAST argument you MUST rebut first: {opponent_last[:400]}
+
+Full recent history: {prev_snip[-800:]}
 
 DO NOT REPEAT: {used_str}
 Keywords already used: {used_kw}
 
-CRITICAL VERSATILITY RULES - MUST FOLLOW FOR ANY TOPIC LIKE Does God exist:
-- NEVER just say yes or no. Always give 2-3 real points with reasoning.
-- For Does God exist, if you are GOD EXISTS, argue cosmological, fine-tuning, moral, consciousness.
-- If you are GOD DOES NOT EXIST, argue evil, hiddenness, lack of evidence, parsimony.
-- For any topic, give evidence, example, mechanism, not just position.
-- Make sense, be substantive.
+CRITICAL DEBATE RULES - MUST FOLLOW:
+- NEVER just say facts without addressing opponent. Real debate = conversation.
+- {rebuttal_instruction}
+- For Does God exist, if GOD EXISTS: argue cosmological, fine-tuning, moral, consciousness BUT always respond to opponent's evil/hiddenness claim first.
+- If GOD DOES NOT EXIST: argue evil, hiddenness, lack of evidence, parsimony BUT always respond to opponent's cosmological/fine-tuning claim first.
+- You MUST start with rebuttal if not first turn. Structure: Opponent said X -> Actually Y because -> And here's my new point Z.
+- NEVER start with generic fact, always start by engaging opponent when there is opponent history.
+- Make sense, be substantive, be a real conversation.
 
-Speak like a REAL HUMAN on stage, not a textbook:
+Speak like a REAL HUMAN on stage:
 - Use contractions: I'm, don't, can't, it's, we're, that's, you've
-- Speak in full natural sentences, not choppy phrases. Example bad: "God warned death. Serpent said no death." Good: "God warned that death would come that day, while the serpent said no, you won't die at all."
-- Vary your rhythm: some short punchy sentences, then a longer thoughtful one that builds
-- Use natural transitions: "Look,", "Think about it,", "Here's what struck me,", "And honestly,"
+- Speak in full natural sentences, not choppy phrases
+- Vary rhythm: short punchy, then longer thoughtful
+- Use transitions: "You said..., but...", "That's interesting, but when you actually look...", "I hear what you're saying about X, however..."
 - {evidence_line}
-- Direct rebuttal: "My opponent says X, but when you actually look at..."
-- Start immediately with your point, no formal greeting like "Ladies and gentlemen"
 - {fresh_line}
-- Be conversational, passionate, slightly informal, like you're talking to a friend who disagrees
-- {MIN_TURN_WORDS}-{MAX_TURN_WORDS} words, must sound like spoken English, not written essay
-- Must be versatile and make sense for topic: {topic}
+- Be conversational, passionate, like talking to a friend who disagrees
+- {MIN_TURN_WORDS}-{MAX_TURN_WORDS} words, spoken English
+- Must be versatile for topic: {topic}
 """
     for m in [model]+FALLBACK_MODELS[:4]:
         temp=0.92 + (turn_num*0.04) + random.uniform(0,0.12)
