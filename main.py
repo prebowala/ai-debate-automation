@@ -290,30 +290,48 @@ def generate_fallback_debate(side_label, topic, round_num, turn_num, opponent_la
     tl=(topic or "").lower()
     topic_short = topic[:130] if len(topic)>130 else topic
     sl=side_label.upper()
-    # Build natural rebuttal prefix if opponent_last exists
+    # Build natural varied rebuttal prefix - not same "I hear you" every time
     rebuttal_prefix = ""
     if opponent_last and not (round_num==1 and turn_num==1):
-        # Natural paraphrase, not mechanical quote
+        import random as _rp
         tl_opp = opponent_last.lower()
         if "evil" in tl_opp or "suffer" in tl_opp or "cancer" in tl_opp or "pain" in tl_opp:
-            rebuttal_prefix = "I hear you on the suffering point, it's a powerful concern, but I don't think it settles it. "
+            options = [
+                "Suffering is the hardest part of this debate for me, because it should bother us. But if we're calling something truly evil, ",
+                "That point about pain cuts deep, and I don't want to minimize it. What makes me think it doesn't settle it is ",
+                "If there were no real good, we couldn't recognize real evil as evil. That's why ",
+                "The reality of suffering matters, but a world where love is real has to allow freedom, and ",
+            ]
+            rebuttal_prefix = _rp.choice(options)
         elif "hidden" in tl_opp or "hide" in tl_opp:
-            rebuttal_prefix = "You raise hiddenness, why God isn't more obvious, and that's fair to ask, but "
+            options = [
+                "Hiddenness is a fair worry, why not make it obvious. What I've come to think is ",
+                "If God wanted robots, clarity would be easy. But if relationship matters, ",
+                "The fact we're even asking why God isn't more obvious suggests we expect meaning, and ",
+            ]
+            rebuttal_prefix = _rp.choice(options)
         elif "fine tuning" in tl_opp or "fine-tuning" in tl_opp or "tuned" in tl_opp:
-            rebuttal_prefix = "You make a fair point about fine-tuning, and I agree the numbers are striking, but "
+            options = [
+                "The fine-tuning numbers are wild, I agree, but they don't stand alone. ",
+                "You mention tuning, and that's striking, yet ",
+                "If the constants were even slightly different, life wouldn't exist. That makes me think ",
+            ]
+            rebuttal_prefix = _rp.choice(options)
         elif "cosmological" in tl_opp or "cause" in tl_opp or "begin" in tl_opp:
-            rebuttal_prefix = "I get why you go to a first cause, that intuition makes sense, yet "
-        elif "moral" in tl_opp:
-            rebuttal_prefix = "That moral point is worth taking seriously, because "
-        elif "eyes opened" in tl_opp or "knowledge" in tl_opp:
-            rebuttal_prefix = "You point to their eyes being opened, and that's true, but "
-        elif "die" in tl_opp or "death" in tl_opp or "died" in tl_opp:
-            rebuttal_prefix = "You emphasize they didn't drop dead that day, which is a fair reading, but "
-        elif "tree of life" in tl_opp:
-            rebuttal_prefix = "You bring up the tree of life being blocked, and that's important, because "
+            options = [
+                "Everything that begins needs a cause, that's our everyday experience. What makes me pause is ",
+                "You go to a first cause, and I get that intuition, but ",
+                "If the universe began, that begs the question of what grounds it, and ",
+            ]
+            rebuttal_prefix = _rp.choice(options)
         else:
-            # Generic natural
-            rebuttal_prefix = "I see where you're coming from on that, but here's where I differ. "
+            options = [
+                "That's worth sitting with for a second, because ",
+                "I've wrestled with that same point, and where I land is ",
+                "What makes me see it differently is ",
+                "There's a piece of that I think needs more context. ",
+            ]
+            rebuttal_prefix = _rp.choice(options)
 
     if "does god exist" in tl or "does a god" in tl or "existence of god" in tl or "is there a god" in tl or ("god exist" in tl and "serpent" not in tl):
         if "GOD EXISTS" in sl or "AFFIRMATIVE" in sl or "THEIST" in sl or "FOR" in sl or sl=="GOD" or "GOD" in sl and "NOT" not in sl and "NO" not in sl:
@@ -446,44 +464,61 @@ def generate_panel_commentary(model,side,topic,rn,ap,sk,prev,roles):
             return sentences[0][:150] + " ... " + sentences[-1][:150]
         return " ".join(t.split()[:mw])
     def extract_core_idea(text):
-        # Extract 3-4 keywords for natural paraphrase
+        # Extract specific, varied ideas to avoid parroting same words
         low = text.lower()
         ideas = []
-        if "evil" in low or "suffer" in low or "cancer" in low or "pain" in low: ideas.append("suffering/evil")
-        if "hidden" in low: ideas.append("divine hiddenness")
-        if "fine tuning" in low or "fine-tuning" in low or "tuned" in low: ideas.append("fine-tuning")
-        if "cosmological" in low or "cause" in low or "began" in low: ideas.append("cosmological/first cause")
-        if "moral" in low: ideas.append("moral argument")
-        if "consciousness" in low: ideas.append("consciousness")
-        if "eyes opened" in low: ideas.append("eyes opened")
-        if "tree of life" in low: ideas.append("tree of life")
-        if "cherubim" in low: ideas.append("cherubim")
-        if "930" in low or "dust" in low: ideas.append("death/mortality")
-        if "shame" in low or "naked" in low: ideas.append("shame")
-        return ", ".join(ideas[:2]) if ideas else "their main point"
+        # More specific detection
+        if "evil" in low and "moral" in low: ideas.append("evil presupposes moral standard")
+        elif "evil" in low or "suffer" in low: 
+            if "free will" in low or "freedom" in low: ideas.append("free will defense to suffering")
+            elif "love" in low: ideas.append("suffering vs love")
+            else: ideas.append("problem of suffering")
+        if "hidden" in low: 
+            if "relationship" in low: ideas.append("hiddenness and relationship")
+            else: ideas.append("why God isn't obvious")
+        if "fine tuning" in low or "fine-tuning" in low:
+            if "constants" in low: ideas.append("physical constants being precisely set")
+            else: ideas.append("fine-tuning of universe")
+        if "cosmological" in low or "first cause" in low or "began to exist" in low: ideas.append("everything that begins needs cause")
+        if "moral" in low and "objective" in low: ideas.append("objective moral values")
+        if "consciousness" in low: ideas.append("consciousness not explained by matter")
+        if "eyes opened" in low: ideas.append("eyes opened as knowledge vs shame")
+        if "tree of life" in low: ideas.append("losing tree of life that day")
+        if "cherubim" in low: ideas.append("cherubim blocking return")
+        if "dust" in low: ideas.append("return to dust")
+        if "shame" in low: ideas.append("shame and hiding")
+        return ", ".join(ideas[:2]) if ideas else "their case in this round"
 
     tl_topic = (topic or "").lower()
     is_genesis_topic = "god" in tl_topic and "serpent" in tl_topic
     ap_core = extract_core_idea(ap)
     sk_core = extract_core_idea(sk)
 
-    # Natural varied openers - not robotic "What decided round"
-    openers = [
-        f"I'm leaning toward {pref_label} in this one because",
-        f"For me this round goes to {pref_label}",
-        f"This one was close, but I have to give it to {pref_label}",
-        f"I found {pref_label} more convincing here",
-        f"Round {rn} is interesting because",
-        f"There's a moment in this round that tipped it for me",
+    # Natural varied openers - personal, not template
+    openers_personal = [
+        f"I'm giving this one to {pref_label}",
+        f"I've got {pref_label} ahead here",
+        f"This round I went with {pref_label}",
+        f"For me, {pref_label} edged it here",
+        f"I kept coming back to {pref_label} in this round",
+        f"My notes keep pointing to {pref_label} for this round",
     ]
+    # Add judge personality - each judge has different focus
+    judge_focus = ["rebuttal", "evidence", "clarity", "overall"]
     import random as _rop
-    opener = _rop.choice(openers)
-
-    # Natural polished prompt - no verbatim quote injection, paraphrase naturally
+    opener = _rop.choice(openers_personal)
+    focus = _rop.choice(judge_focus)
+    
+    # Make each judge sound different and truly tailored
     if side=="A":
-        prompt=f"You are {prov} from {comp}, a YouTube debate judge for '{topic}' round {rn}. You scored {pref_label} HIGHER than {other_label}. Talk like a real person on a panel, warm, conversational, natural, not robotic. Do NOT copy-paste long quotes like 'said ...'. Instead paraphrase core ideas naturally. You know this round covered: {pref_label} focused on {ap_core}, {other_label} focused on {sk_core}. Full context: {trim(ap)} vs {trim(sk)}. Start with: {opener}. In 3-4 sentences, explain in your own words why {pref_label} was stronger THIS round. Mention specific ideas from this round but paraphrased naturally, e.g. 'that point about hiddenness' not the whole sentence. Explain what {other_label} missed or didn't answer in this round. Be specific to round {rn}, not generic 'better evidence'. Avoid: {used_expl}. Natural, polished, like a thoughtful panelist, contractions okay, no bullet points."
+        if focus == "rebuttal":
+            prompt=f"You are {prov} from {comp}, YouTube debate judge for '{topic}' round {rn}. You scored {pref_label} higher. Be personal, not robotic. Don't parrot words like '{ap_core}' verbatim repeatedly. Instead react like you just watched: {pref_label} was talking about {ap_core} and actually responded to {other_label}'s point on {sk_core}. {other_label} talked about {sk_core} but didn't really answer {pref_label}'s previous push. What mattered to you as a judge who cares about rebuttal: did they actually listen? Start with '{opener}'. 2-3 sentences, specific to THIS round's back-and-forth, not generic. Mention one specific moment that tipped you. Natural, like 'I noticed...' or 'What struck me...'. Avoid: {used_expl}"
+        elif focus == "evidence":
+            prompt=f"You are {prov} from {comp}, judge for '{topic}' round {rn}. You scored {pref_label} higher. You care about evidence. This round: {pref_label} gave {ap_core}, {other_label} gave {sk_core}. Full: {trim(ap)[:180]} vs {trim(sk)[:180]}. Don't parrot, instead say why {ap_core} felt more grounded or specific than {sk_core} in THIS round. Start with '{opener}'. 2-3 sentences, tailored to what was actually argued here, not template. Avoid: {used_expl}"
+        else:
+            prompt=f"You are {prov} from {comp}, judge for '{topic}' round {rn}. You scored {pref_label} higher. Be conversational, personal. This round was about {ap_core} vs {sk_core}. Don't just repeat those words, explain in your own words what each side was getting at and why {pref_label}'s take was more convincing here. What did {other_label} leave unanswered? Start with '{opener}'. 2-3 sentences, specific, natural, like a real panelist who watched closely. Avoid: {used_expl}"
     else:
-        prompt=f"You are {prov} from {comp}, YouTube debate judge for '{topic}' round {rn}. You scored {pref_label} HIGHER than {other_label}. Talk like a real person, warm, natural, not a template. This round: {pref_label} argued around {ap_core}, {other_label} around {sk_core}. Context: {trim(ap)} vs {trim(sk)}. Start with: {opener}. In 3-4 sentences, explain naturally why {pref_label} won round {rn}. Paraphrase ideas, don't paste long quotes. Say what {other_label} didn't address in this round. Be specific to this round's exchange, not generic. Avoid: {used_expl}. Natural polished panel style."
+        prompt=f"You are {prov} from {comp}, judge for '{topic}' round {rn}. You scored {pref_label} higher than {other_label}. Be personal and specific. In this round, {pref_label} focused on {ap_core}, {other_label} on {sk_core}. Don't parrot those phrases mechanically. Instead describe in your own words what happened in the exchange and why {pref_label} won for you. Did {other_label} miss something? Did {pref_label} answer well? Start with '{opener}'. 2-3 sentences, natural, tailored to THIS round only. Avoid repeating other judges: {used_expl}"
 
     resp=query_openrouter(prompt,model,timeout=30,max_tokens=400,temperature=0.92)
     if resp and len(resp.split())>=12:
@@ -1098,31 +1133,30 @@ def generate_turn(role_key, topic, round_num, turn_num, prev_history, model, rol
 
     if round_num==1 and turn_num==1:
         round_focus="OPENING ROUND TURN 1: Set up your case naturally. Hook + strongest evidence. No opponent to rebut yet."
-        rebuttal_instruction="This is first turn, no rebuttal needed, just make strong opening case with 2-3 real reasons."
+        rebuttal_instruction="This is first turn, no rebuttal needed, just make strong opening case with 2-3 real reasons. Be personal, not textbook."
     elif round_num==1:
-        round_focus="OPENING ROUND: Natural conversation, address what opponent just raised."
-        rebuttal_instruction=f"""POLISHED REBUTTAL - Sound natural, not robotic:
-- Do NOT say 'You just argued that...' or repeat opponent's whole sentence verbatim.
-- Instead, paraphrase their core idea in your own words, like a real person would.
-- Example good: "I hear you on the suffering point, it's powerful, but..." or "You make a fair point about fine-tuning, yet..."
-- Example bad: "You just argued that children die of cancer therefore no God..."
-- Start by acknowledging their idea briefly (1 sentence), then explain why you see it differently, then bring your new point.
-Opponent's core idea to address: {opponent_last[:200]}"""
+        round_focus="OPENING ROUND: Real conversation, actually wrestle with opponent's point."
+        rebuttal_instruction=f"""REAL CONVERSATION - Not mention-then-pivot:
+- Opponent just said: {opponent_last[:220]}
+- You MUST do more than mention it. Actually engage: explain why you think that point is incomplete, what context it misses, or why evidence points differently. 2-3 sentences of direct response BEFORE new point.
+- Do NOT use the same opener as last turn. Never start with "I hear you on the suffering point" - that's overused. Vary: "Suffering is the hardest objection...", "That's the question that keeps people up at night...", "If we take that seriously...", "The hiddenness worry makes sense, but..."
+- Show you thought about their point, don't just label it. Give reasoning that directly undermines or reframes it.
+- Then add your fresh angle."""
     elif round_num==2:
-        round_focus="REBUTTAL ROUND: Core rebuttal, but polished and conversational."
-        rebuttal_instruction=f"""POLISHED REBUTTAL - This is the heart of debate:
-- Paraphrase opponent's last argument naturally, don't quote verbatim.
-- Show you listened: "That point about {opponent_last[:60]}... is worth taking seriously, because..." then counter.
-- Then add fresh evidence you haven't used.
-- Never start with "You just argued this" mechanically. Use varied natural openers: "I get why you'd say that," "That's a strong point about X, but," "I see where you're coming from on X, however..."
-- Structure: 1) Brief natural acknowledgement of their idea 2) Why it doesn't fully hold 3) Your stronger counter + new evidence
-Opponent's last idea: {opponent_last[:250]}"""
+        round_focus="REBUTTAL ROUND: This is where you prove you listened."
+        rebuttal_instruction=f"""DEEP REBUTTAL - Wrestle, don't just name-check:
+- Opponent's last push: {opponent_last[:300]}
+- You must spend first half of your turn actually answering it. Not "I hear you on X, but here's Y" - that's mention-then-pivot. Instead: explain why their evidence doesn't lead where they think, or what alternative explanation fits better, or what logical step fails. Give counter-evidence that directly targets their claim.
+- Example of deep engagement (don't copy): If they said evil disproves God, don't just say "I hear you on suffering but fine-tuning..." - instead say "The presence of suffering is real, but if we're calling it evil, we're already using a moral standard that needs grounding, and a world where love is possible requires freedom that can be misused..."
+- Vary your style, don't repeat "I hear you" or "fair point" every time. Be human, sometimes start with the counter itself.
+- Second half: bring fresh evidence you haven't used."""
     else:
-        round_focus="CLOSING ROUND: Bring it together, still address opponent's last point naturally."
-        rebuttal_instruction=f"""POLISHED CLOSING - Still engage opponent but elegantly:
-- Don't say "You just argued..." - instead weave it in: "My opponent has been pressing the idea that {opponent_last[:80]}... and I think that's where we fundamentally differ..."
-- Acknowledge, rebut briefly, then pull together your overall case with heart.
-Opponent's last push: {opponent_last[:200]}"""
+        round_focus="CLOSING ROUND: Tie it together, but show the through-line from opponent's last point."
+        rebuttal_instruction=f"""CLOSING WITH ENGAGEMENT:
+- Opponent just argued: {opponent_last[:220]}
+- Don't just mention it and move to summary. Show how their last point actually fits or fails within the bigger picture you've been building. 1-2 sentences of real engagement, then pull together.
+- Avoid robotic "My opponent has been pressing the idea that..." - instead naturally weave: "When you look at suffering alongside fine-tuning and moral law..." or "That hiddenness concern you raised earlier actually points back to..."
+- End with memorable, personal note, not template."""
 
     prev_snip=prev_history[-1200:] if prev_history else "No previous"
     used_str="; ".join(list(USED_ARGUMENTS)[-10:])[:500]
@@ -1148,29 +1182,27 @@ Opponent's last push: {opponent_last[:200]}"""
 Your view: {role_desc}
 Opponent: {opponent_label} = {opponent_desc}
 {round_focus}
-Opponent's core idea to engage with (paraphrase naturally, don't repeat verbatim): {opponent_last[:350]}
+Opponent just said: {opponent_last[:400]}
 
 Recent context: {prev_snip[-800:]}
 
 DO NOT REPEAT: {used_str}
 Keywords already used: {used_kw}
 
-CRITICAL DEBATE RULES - NATURAL POLISHED CONVERSATION:
-- Real debate = listening then responding, not two monologues. You MUST engage opponent's previous point.
-- BUT sound natural and polished, NOT robotic. Do NOT say "You just argued that [long quote]" verbatim.
+CRITICAL DEBATE RULES - TRUE CONVERSATION, NOT MENTION-THEN-PIVOT:
+- You MUST truly address opponent's last argument, not just name-check it and move on. The audience should feel you wrestled with it.
+- BAD (mention-then-pivot): "I hear you on suffering, but fine-tuning shows..."
+- GOOD (real engagement): "Suffering is the part that actually keeps me up at night, because if God is good, why... But here's why I don't think it ends the conversation — if we're calling something evil, we're saying there's a real standard for good that needs grounding, and a world where real love is possible has to include freedom that can be misused. That's not a dodge, that's why love matters..."
 - {rebuttal_instruction}
-- Paraphrase their idea in 5-8 words in your own voice, then respond. Example: Instead of "You just argued that children die of cancer so no God", say "I hear you on suffering" or "That point about evil is strong"
-- For Does God exist, GOD EXISTS: address evil/hiddenness naturally then bring cosmological, fine-tuning, moral
-- If GOD DOES NOT EXIST: address cosmological/fine-tuning naturally then bring evil, hiddenness, parsimony
-- Structure should feel like: [brief natural acknowledgement] -> [why you see it differently] -> [your new evidence]
-- Make sense, be substantive, be a real conversation, not mechanical.
+- Spend at least 40% of your words actually countering opponent's specific claim with reasoning and evidence that targets it directly, then add fresh angle.
+- For Does God exist, GOD EXISTS: if opponent raised evil/hiddenness, you must explain why that doesn't disprove God before adding cosmological/fine-tuning
+- If GOD DOES NOT EXIST: if opponent raised cosmological/fine-tuning, explain why that doesn't prove God before adding evil/hiddenness
+- Don't repeat same opener. Vary naturally. Don't use "I hear you on the suffering point" every time - it's banned now.
+- Must feel like two people actually listening, not two speeches.
 
-Speak like a REAL HUMAN on stage - POLISHED:
-- Use contractions: I'm, don't, can't, it's, we're, that's, you've
-- Natural, varied openers: "I hear you...", "That's a fair point about X, but...", "I get why you'd point to X...", "You raise something important with X..."
-- NEVER start every turn with "You just argued". Vary it.
-- Speak in full natural sentences, flowing
-- Vary rhythm: short punchy, then longer thoughtful
+Speak like a REAL HUMAN on stage - POLISHED, THOUGHTFUL:
+- Use contractions, natural rhythm, some longer thoughtful sentences that build
+- Show genuine thought: "That's the hardest part of this topic...", "I've wrestled with that too...", "What makes me pause on your point is..."
 - {evidence_line}
 - {fresh_line}
 - Be conversational, passionate, like talking to a friend who disagrees
@@ -1188,20 +1220,22 @@ Speak like a REAL HUMAN on stage - POLISHED:
             lower_cleaned=cleaned.lower()
             if len(lower_cleaned.split())<20 and ("yes" in lower_cleaned or "no" in lower_cleaned):
                 continue
-            # ENFORCE NATURAL REBUTTAL - must engage opponent if not first turn, but naturally
+            # ENFORCE DEEP ENGAGEMENT - must actually counter opponent, not just mention
             if not (round_num==1 and turn_num==1):
-                # Check for natural engagement - paraphrase, not mechanical copy
-                has_engagement = any(phrase in lower_cleaned for phrase in ["i hear you", "you make a fair point", "you raise", "that's a fair point", "i get why", "i see where", "you point to", "you mention", "that point about", "my opponent", "i understand"])
-                # Also check semantic overlap - does it address opponent's topic?
-                opp_keywords = [w for w in opponent_last.lower().split() if len(w)>4][:6]
+                # Check if response actually wrestles with opponent's idea, not just name-check
+                opp_keywords = [w for w in opponent_last.lower().split() if len(w)>4][:8]
                 semantic_overlap = sum(1 for w in opp_keywords if w in lower_cleaned)
-                # If no engagement and no semantic overlap, retry with natural instruction
-                if not has_engagement and semantic_overlap < 1:
-                    strict_prompt = f"Your last response ignored opponent and just listed new facts. That's two monologues, not a debate. Opponent's idea: '{opponent_last[:300]}'. Rewrite to naturally engage it first. Paraphrase their core idea in your own words (don't copy verbatim), acknowledge it briefly, then explain why you see it differently, then bring your new point. Start naturally like 'I hear you on X...' not 'You just argued that...'. Turn to rewrite: {cleaned[:400]}"
-                    retry = query_openrouter(strict_prompt, m, max_tokens=900, temperature=0.85)
+                # Also check if it has reasoning that targets opponent, not just "I hear you"
+                has_reasoning = any(word in lower_cleaned for word in ["because", "why", "if", "then", "actually", "really", "means", "requires", "implies"])
+                has_shallow_mention = lower_cleaned.startswith("i hear you on the suffering point") or lower_cleaned.startswith("i hear you on suffering")
+                # If shallow or no overlap, retry with deep engagement instruction
+                if (semantic_overlap < 2 or not has_reasoning or has_shallow_mention):
+                    strict_prompt = f"Your last response just mentioned opponent then pivoted to new point. That's not a conversation. Opponent said: '{opponent_last[:350]}'. You must spend first half directly answering it: explain why you think it's incomplete, what context it misses, or why evidence points differently. Give 2-3 sentences of actual counter-reasoning that targets their claim, not just 'I hear you'. Then add your new point. Rewrite: {cleaned[:500]}"
+                    retry = query_openrouter(strict_prompt, m, max_tokens=900, temperature=0.88)
                     if retry and count_words(retry)>=80:
                         retry_low = retry.lower()
-                        if any(p in retry_low for p in ["i hear", "fair point", "you raise", "you point", "that point", "my opponent", "i get", "i see"]):
+                        # Check retry actually has deep reasoning, not just shallow mention
+                        if len([w for w in opp_keywords if w in retry_low]) >= 2 and "because" in retry_low:
                             cleaned = strip_filler(retry)
                             cleaned=re.sub(r"\s+"," ",cleaned).strip()
                             if not cleaned.endswith(('.', '!', '?')): cleaned+="."
