@@ -71,22 +71,56 @@ VISUAL_H = 245
 # TTS VOICES
 # ============================================================
 
+# === UNIQUE VOICE CAST - UPGRADED FROM OLDER BUILD - NO DUPLICATES ===
+VOICE_POOL = [
+    "en-US-BrianMultilingualNeural",
+    "en-GB-SoniaNeural",
+    "en-AU-NatashaNeural",
+    "en-US-JennyNeural",
+    "en-GB-RyanNeural",
+    "en-US-GuyNeural",
+    "en-GB-LibbyNeural",
+    "en-US-DavisNeural",
+    "en-AU-WilliamNeural",
+    "en-CA-ClaraNeural",
+    "en-US-AriaNeural",
+    "en-US-AndrewMultilingualNeural",
+]
+
 VOICES = {
-    "Moderator": "en-US-AndrewMultilingualNeural",
+    "Moderator": "en-AU-NatashaNeural",
     "AI Christian Apologist": "en-US-BrianMultilingualNeural",
-    "AI Skeptic": "en-US-AvaMultilingualNeural",
-    "AI Judge 1": "en-US-ChristopherNeural",
-    "AI Judge 2": "en-US-EmmaMultilingualNeural",
+    "AI Skeptic": "en-GB-SoniaNeural",
+    "AI Judge 1": "en-US-JennyNeural",
+    "AI Judge 2": "en-GB-RyanNeural",
     "AI Judge 3": "en-US-GuyNeural",
-    "AI Judge 4": "en-US-JennyNeural",
+    "AI Judge 4": "en-GB-LibbyNeural",
 }
 
 JUDGE_VOICES = [
-    "en-US-ChristopherNeural",
-    "en-US-EmmaMultilingualNeural",
-    "en-US-GuyNeural",
     "en-US-JennyNeural",
+    "en-GB-RyanNeural",
+    "en-US-GuyNeural",
+    "en-GB-LibbyNeural",
+    "en-US-DavisNeural",
+    "en-AU-WilliamNeural",
+    "en-CA-ClaraNeural",
 ]
+
+CAST_VOICE_ASSIGNMENT = {}
+JUDGE_VOICE_MAP = {}
+
+def assign_unique_voices():
+    global CAST_VOICE_ASSIGNMENT, JUDGE_VOICE_MAP
+    CAST_VOICE_ASSIGNMENT = {
+        "AI Christian Apologist": VOICE_POOL[0],
+        "AI Skeptic": VOICE_POOL[1],
+        "Moderator": VOICE_POOL[2],
+    }
+    JUDGE_VOICE_MAP = {}
+    print(f"Voice cast: Apologist={VOICE_POOL[0]}, Skeptic={VOICE_POOL[1]}, Moderator={VOICE_POOL[2]}")
+    return CAST_VOICE_ASSIGNMENT
+
 
 
 # ============================================================
@@ -811,65 +845,40 @@ def fetch_topic_image(visual):
     return None
 
 def create_visual_asset(visual, index):
+    # CLEAN ARTWORK - IMAGE ONLY, NO DESCRIPTION TEXT (user request)
     filename = f"visual_{index}.gif"
     frames = []
     num_frames = 30
 
-    label_font = load_font(27, bold=True)
-    desc_font = load_font(17)
-
-    label = visual.get("label", "KEY IDEA").upper()
-    description = visual.get("description", "")
-
     real_img = fetch_topic_image(visual)
 
-    # word wrap for description
-    dummy_img = Image.new("RGBA", (1, 1))
-    dummy_draw = ImageDraw.Draw(dummy_img)
-    words = description.split()
-    lines = []
-    current = ""
-    for word in words:
-        candidate = (current + " " + word).strip()
-        box = dummy_draw.textbbox((0, 0), candidate, font=desc_font)
-        if box[2] - box[0] > 250:
-            if current:
-                lines.append(current)
-            current = word
-        else:
-            current = candidate
-    if current:
-        lines.append(current)
-
-    ILLUS_W, ILLUS_H = 180, 180
-    ILLUS_X, ILLUS_Y = 25, 32
+    # Larger image area - no text to compete with
+    ILLUS_W, ILLUS_H = 320, 240
+    ILLUS_X, ILLUS_Y = (VISUAL_W - ILLUS_W)//2, (VISUAL_H - ILLUS_H)//2
 
     for f in range(num_frames):
         image = Image.new("RGBA", (VISUAL_W, VISUAL_H), (0, 0, 0, 0))
         draw = ImageDraw.Draw(image)
-        draw.rounded_rectangle((4, 4, VISUAL_W - 4, VISUAL_H - 4), radius=28, fill=(12, 18, 35, 255), outline=(255, 215, 0, 255), width=4)
+        # Clean border - no label/description inside
+        draw.rounded_rectangle((4, 4, VISUAL_W - 4, VISUAL_H - 4), radius=22, fill=(12, 18, 35, 220), outline=(255, 215, 0, 200), width=3)
 
         progress = math.sin(math.pi * (f / num_frames))
-        bob_y = int(5 * math.sin(2 * math.pi * f / num_frames))
+        bob_y = int(4 * math.sin(2 * math.pi * f / num_frames))
 
         if real_img:
-            scale = 1.0 + 0.18 * progress
-            sz = int(ILLUS_W * scale)
-            scaled = real_img.resize((sz, sz), Image.LANCZOS)
-            left = (sz - ILLUS_W) // 2
-            top = (sz - ILLUS_H) // 2
+            scale = 1.0 + 0.15 * progress
+            sz_w = int(ILLUS_W * scale)
+            sz_h = int(ILLUS_H * scale)
+            scaled = real_img.resize((sz_w, sz_h), Image.LANCZOS)
+            left = (sz_w - ILLUS_W) // 2
+            top = (sz_h - ILLUS_H) // 2
             cropped = scaled.crop((left, top, left + ILLUS_W, top + ILLUS_H))
             mask = Image.new("L", (ILLUS_W, ILLUS_H), 0)
-            ImageDraw.Draw(mask).rounded_rectangle((0, 0, ILLUS_W, ILLUS_H), radius=18, fill=255)
+            ImageDraw.Draw(mask).rounded_rectangle((0, 0, ILLUS_W, ILLUS_H), radius=16, fill=255)
             image.paste(cropped, (ILLUS_X, ILLUS_Y + bob_y), mask)
         else:
-            # fallback simple icon if download fails
-            draw.ellipse((85, 35 + bob_y, 175, 125 + bob_y), fill=(235, 190, 150, 255))
-            draw.rectangle((55, 115, 205, 205), fill=(115, 80, 50, 255))
-
-        draw.text((230, 48), label, fill="white", font=label_font)
-        for line_index, line in enumerate(lines[:5]):
-            draw.text((230, 95 + line_index * 27), line, fill=(215, 220, 235, 255), font=desc_font)
+            draw.ellipse((ILLUS_X+40, ILLUS_Y+20 + bob_y, ILLUS_X+140, ILLUS_Y+120 + bob_y), fill=(235, 190, 150, 255))
+            draw.rectangle((ILLUS_X+10, ILLUS_Y+110, ILLUS_X+200, ILLUS_Y+200), fill=(115, 80, 50, 255))
 
         frames.append(image)
 
@@ -1156,68 +1165,67 @@ def create_segment(text, role, speaker_name, topic, segment_id, model_for_visual
 # PANEL COMMENTARY
 # ============================================================
 
+
 def generate_panel_commentary(model, side, topic, round_num, apologist, skeptic, previous_comments):
     provider = provider_from_model(model)
-    # Shorter spoken names - keep cards but speak naturally
     if side == "A":
         pref_spoken = "the case for"
         other_spoken = "the case against"
-        pref_label = "AI Christian Apologist"
     else:
         pref_spoken = "the case against"
         other_spoken = "the case for"
-        pref_label = "AI Skeptic"
-    
+
     recent = "\n".join(previous_comments[-6:])
-    def trim_for_prompt(text, max_words=200):
-        words_list = text.split()
-        if len(words_list) <= max_words:
-            return text
-        return " ".join(words_list[-max_words:])
-    
-    apologist_excerpt = trim_for_prompt(apologist)
-    skeptic_excerpt = trim_for_prompt(skeptic)
-    
-    # New prompt - summarise, not list
+    def trim_for_prompt(txt, max_words=200):
+        wl = txt.split()
+        return txt if len(wl) <= max_words else " ".join(wl[-max_words:])
+
+    def extract_core(txt):
+        low=txt.lower()
+        if "evil" in low or "suffer" in low:
+            return "suffering and whether it undercuts God"
+        if "hidden" in low:
+            return "why God isn't more obvious"
+        if "fine tuning" in low or "tuned" in low:
+            return "fine-tuning of constants"
+        if "cause" in low or "began" in low:
+            return "whether universe needs cause"
+        if "moral" in low:
+            return "objective moral values"
+        return "central disagreement this round"
+
+    ap_core = extract_core(apologist)
+    sk_core = extract_core(skeptic)
+
     prompt = f"""
-You are an independent AI debate judge ({provider}) judging round {round_num} on: {topic}
+You are {provider}, independent AI debate judge for round {round_num} on: {topic}
+FOR: {trim_for_prompt(apologist)}
+AGAINST: {trim_for_prompt(skeptic)}
+You leaned {pref_spoken} this round.
 
-Round arguments:
-FOR: {apologist_excerpt}
-AGAINST: {skeptic_excerpt}
+TASK - Summarise, don't list:
+- In ONE sentence, summarise central clash: {ap_core} vs {sk_core}
+- In ONE sentence, explain why {pref_spoken} handled that clash better - specific reasoning quality
+- Do NOT list "for said X, against said Y". Synthesise.
+- Do NOT use banned phrases: "raises an important point", "makes a fair point", "I hear you"
+- Use short names: "{pref_spoken}" and "{other_spoken}"
+- 2 sentences total, natural spoken, insightful.
 
-You leaned {pref_spoken} this round, but don't just say you prefer it.
-
-YOUR TASK - Summarise, don't list:
-- In ONE sentence, summarise the central clash of THIS round (what were they really disagreeing about?).
-- In ONE sentence, explain why {pref_spoken} handled that clash better - what was stronger about its reasoning (did it directly answer, give specific counter-evidence, avoid generic segue?).
-- Do NOT list what each side said like "Apologist said X, skeptic said Y". Instead synthesise.
-- Do NOT use banned phrases: "I hear you", "makes a fair point", "raises an important point".
-- Be specific to this round, not generic.
-- Sound like a human judge giving a quick ringside summary, not a transcript.
-- Use short spoken names: "for" and "against" or "the case for/against", not "AI Christian Apologist" verbally.
-
-Previous comments (avoid repeating):
+Previous (avoid repeat):
 {recent}
-
-Write exactly 2 natural spoken sentences, concise and insightful.
 """
     for attempt in range(2):
-        response = query_openrouter(prompt, model, timeout=40, max_tokens=220, temperature=0.85 if attempt==0 else 0.9)
-        if not response:
-            continue
-        low = response.lower()
-        # Check if it's just listing
-        is_listing = low.count("apologist said") + low.count("skeptic said") + low.count("for said") + low.count("against said") > 1
-        is_generic = any(p in low for p in ["raises an important point", "makes a fair point", "i hear you"])
-        if is_listing or is_generic:
-            # Retry with stricter
-            retry_prompt = f"""Your last judge comment just listed what was said, which is too general. You need to SUMMARISE the central clash and evaluate reasoning quality. Don't list. Topic: {topic}. Round {round_num}. FOR: {apologist_excerpt[:200]} AGAINST: {skeptic_excerpt[:200]}. You leaned {pref_spoken}. Summarise clash in 1 sentence, then why {pref_spoken} handled it better in 1 sentence. 2 sentences total. Rewrite: {response[:300]}"""
-            r2 = query_openrouter(retry_prompt, model, timeout=40, max_tokens=220, temperature=0.88)
-            if r2:
-                response = r2
-        return response
-    return f"Round {round_num} came down to whether suffering and hiddenness actually undercut the case for God, or whether grounding for objective value and free will still holds. For me, {pref_spoken} edged it because it directly answered the other side's strongest push instead of just adding a new point."
+        resp = query_openrouter(prompt, model, timeout=40, max_tokens=220, temperature=0.85 if attempt==0 else 0.9)
+        if resp and count_words(resp)>=12:
+            low=resp.lower()
+            is_listing = "for said" in low or "against said" in low or "apologist said" in low
+            if is_listing:
+                retry = f"Summarise clash, don't list. Round {round_num}: clash is {ap_core} vs {sk_core}. You leaned {pref_spoken}. Why did {pref_spoken} handle it better? 2 sentences: {resp[:300]}"
+                r2 = query_openrouter(retry, model, timeout=40, max_tokens=220, temperature=0.88)
+                if r2:
+                    resp=r2
+            return resp
+    return f"Round {round_num} came down to {ap_core} versus {sk_core}. For me, {pref_spoken} edged it because it directly answered the other side's strongest push instead of just adding a new point."
 
 
 
