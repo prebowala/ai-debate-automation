@@ -7,9 +7,7 @@ import random
 import asyncio
 import requests
 import subprocess
-import concurrent.futures
 import time
-from urllib.parse import quote
 from io import BytesIO
 import edge_tts
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
@@ -28,16 +26,10 @@ TURNS_PER_SIDE_PER_ROUND = 4
 WORDS_PER_TURN = 200
 MIN_TURN_WORDS = 170
 MAX_TURN_WORDS = 220
-WORDS_PER_SIDE_PER_ROUND = 800
-
-MAX_JUDGES = 3 if FREE_MODE else 5
-JUDGE_WORKERS = 5
+MAX_JUDGES = 7
+JUDGE_WORKERS = 1
 PANEL_COMMENTS_PER_ROUND = 1
-
 MAX_VISUALS_PER_SEGMENT = 0
-MIN_VISUAL_GAP = 1.5
-VISUAL_X = 700
-VISUAL_Y = 525
 VISUAL_W = 520
 VISUAL_H = 245
 MAX_EMOJIS_PER_SEGMENT = 5
@@ -48,9 +40,6 @@ VOICES = {
     "Moderator": "en-US-AndrewMultilingualNeural",
     "AI Christian Apologist": "en-US-BrianMultilingualNeural",
     "AI Skeptic": "en-US-AvaMultilingualNeural",
-    "AI Judge 1": "en-US-ChristopherNeural",
-    "AI Judge 2": "en-US-EmmaMultilingualNeural",
-    "AI Judge 3": "en-US-GuyNeural",
 }
 JUDGE_VOICES = [
     "en-US-ChristopherNeural",
@@ -58,6 +47,18 @@ JUDGE_VOICES = [
     "en-US-GuyNeural",
     "en-GB-RyanNeural",
     "en-AU-WilliamNeural",
+    "en-CA-ClaraNeural",
+    "en-US-JennyNeural",
+]
+
+LEADING_JUDGE_MODELS = [
+    "openai/gpt-4o-mini:free",
+    "anthropic/claude-3-haiku:free",
+    "google/gemini-2.0-flash-001:free",
+    "mistralai/mistral-small:free",
+    "meta-llama/llama-3.1-70b-instruct:free",
+    "qwen/qwen-2.5-72b-instruct:free",
+    "deepseek/deepseek-chat:free",
 ]
 
 FALLBACK_MODELS = [
@@ -65,15 +66,28 @@ FALLBACK_MODELS = [
     "google/gemini-2.0-flash-001:free",
     "anthropic/claude-3-haiku:free",
     "mistralai/mistral-small:free",
+    "meta-llama/llama-3.1-70b-instruct:free",
     "qwen/qwen-2.5-72b-instruct:free",
+    "deepseek/deepseek-chat:free",
+    "google/gemma-3-27b-it:free",
 ]
 
-PROVIDER_ALIASES = {"openai": "OpenAI", "anthropic": "Anthropic", "google": "Google", "x-ai": "xAI", "xai": "xAI", "deepseek": "DeepSeek", "mistralai": "Mistral", "meta-llama": "Meta", "qwen": "Qwen"}
+PROVIDER_ALIASES = {
+    "openai": "OpenAI",
+    "anthropic": "Anthropic", 
+    "google": "Google",
+    "x-ai": "xAI", "xai": "xAI",
+    "deepseek": "DeepSeek",
+    "mistralai": "Mistral", "mistral": "Mistral",
+    "meta-llama": "Meta", "meta": "Meta",
+    "qwen": "Qwen",
+}
+
 def provider_from_model(m):
     if not m: return "Unknown"
     return PROVIDER_ALIASES.get(m.split("/",1)[0].lower().strip(), m.split("/",1)[0].title())
+
 def cleanup_cache():
-    print("Cleaning...")
     patterns=["*.mp4","*.mp3","*.ass","*.png","*.gif","*_list.txt"]
     protected={OUTPUT_FILE,"background.png","topic.txt"}
     for pat in patterns:
@@ -81,6 +95,7 @@ def cleanup_cache():
             if f in protected: continue
             try: os.remove(f)
             except: pass
+
 def count_words(t): return len(re.findall(r"\b[\w'-]+\b", t or ""))
 def clean_for_speech(t):
     t=re.sub(r"\([^)]*\)","",t or "")
@@ -102,19 +117,23 @@ def hex_to_rgba(h,a):
     return (int(h[0:2],16),int(h[2:4],16),int(h[4:6],16),a)
 
 def openrouter_headers(): return {"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json", "HTTP-Referer": "https://openrouter.ai/", "X-Title": "AI Debate Arena"}
+
 def discover_models():
     if not OPENROUTER_API_KEY: raise RuntimeError("OPENROUTER_API_KEY missing")
     try:
         r=requests.get(OPENROUTER_MODELS_URL, headers=openrouter_headers(), timeout=20)
-        if r.status_code!=200: return []
+        if r.status_code!=200: return LEADING_JUDGE_MODELS.copy()
         models=[]
         for item in r.json().get("data",[]):
             mid=item.get("id")
             if not mid: continue
             if any(x in mid.lower() for x in ["embed","tts","whisper","audio","image","vision"]): continue
-            models.append(mid)
-        return list(dict.fromkeys(models))
-    except: return []
+            if ":free" in mid: models.append(mid)
+        for m in LEADING_JUDGE_MODELS:
+            if m not in models: models.insert(0,m)
+        return list(dict.fromkeys(models))[:20]
+    except: return LEADING_JUDGE_MODELS.copy()
+
 def query_openrouter(prompt, model_id, timeout=60, max_tokens=900, temperature=0.75):
     if not OPENROUTER_API_KEY: return None
     payload={"model":model_id,"messages":[{"role":"user","content":prompt}],"temperature":temperature,"max_tokens":max_tokens}
@@ -128,36 +147,38 @@ def query_openrouter(prompt, model_id, timeout=60, max_tokens=900, temperature=0
                     c=choices[0].get("message",{}).get("content","")
                     if c and len(c.strip())>20: return c.strip()
             else:
-                print(f"  {provider_from_model(model_id)} HTTP {r.status_code}")
-                if r.status_code==402: return None
+                print(f"  {provider_from_model(model_id)} HTTP {r.status_code} on {model_id}")
+                if r.status_code in [402,429]: return None
         except Exception as e: print(f"  {provider_from_model(model_id)} fail {str(e)[:80]}")
-        time.sleep(1.0)
+        time.sleep(1.2)
     return None
 
 def choose_primary_models(avail):
-    pref=["openai/gpt-4o-mini:free","google/gemini-2.0-flash-001:free","anthropic/claude-3-haiku:free","mistralai/mistral-small:free"]
+    pref=["openai/gpt-4o-mini:free","google/gemini-2.0-flash-001:free","anthropic/claude-3-haiku:free"]
     found=[m for m in pref if m in set(avail)]
     if len(found)>=2: return found[0],found[1]
-    if len(found)==1 and len(avail)>1:
-        remaining=[m for m in avail if m!=found[0]]
-        return found[0], remaining[0]
     if len(avail)>=2: return avail[0],avail[1]
     return FALLBACK_MODELS[0],FALLBACK_MODELS[1]
 
 def choose_judges(avail, primary):
-    excluded=set(primary)
-    cands=[m for m in avail if m not in excluded]
-    groups={}
-    for m in cands:
-        p=provider_from_model(m)
-        groups.setdefault(p,[]).append(m)
-    selected=[]
-    for prov,mods in groups.items():
-        mods.sort(key=lambda x: len(x))
-        selected.append((prov,mods[0]))
-    priority=["OpenAI","Anthropic","Google","xAI","Mistral","Meta"]
-    selected.sort(key=lambda x: (priority.index(x[0]) if x[0] in priority else 999, x[0]))
-    return [m for _,m in selected[:MAX_JUDGES]]
+    wanted_providers = ["OpenAI","Anthropic","Google","Mistral","Meta","Qwen","DeepSeek"]
+    by_provider = {}
+    for m in avail:
+        p = provider_from_model(m)
+        if p not in by_provider: by_provider[p] = m
+    for m in LEADING_JUDGE_MODELS:
+        p = provider_from_model(m)
+        if p not in by_provider: by_provider[p] = m
+    judges=[]
+    for prov in wanted_providers:
+        if prov in by_provider:
+            judges.append(by_provider[prov])
+            if len(judges)>=MAX_JUDGES: break
+    for prov, m in by_provider.items():
+        if m not in judges and len(judges)<MAX_JUDGES: judges.append(m)
+    print(f"Selected {len(judges)} judges from leading companies for REAL scoring:")
+    for j in judges: print(f"  {provider_from_model(j)} -> {j}")
+    return judges[:MAX_JUDGES]
 
 USED_ARGUMENTS=set()
 
@@ -167,49 +188,37 @@ def generate_fallback_debate(role_label, topic, round_num, turn_num, opponent_la
     if "god" in low and "exist" in low:
         if is_for:
             bank=[
-                "Look, if we are honest about the universe, it had a beginning. The Borde-Guth-Vilenkin theorem pretty much shows you cannot have an eternal past of inflation. So whatever started everything cannot be inside time and space. That is not a trick, that is just what beginning means.",
-                "Think about consciousness for a second. You can scan a brain all day and see neurons firing, but you do not see what it is like to taste coffee or feel love. Material stuff does not explain subjective experience. There is a real gap there that keeps showing up.",
-                "And the fine-tuning thing is wild when you actually look at the numbers. The cosmological constant is tuned to one part in ten to the hundred and twenty. If that was slightly different, no stars, no planets, no us. Saying that is just luck feels like saying you found a fully functioning watch in the desert and calling it wind.",
-                "Morality too. We all live like some things are actually wrong, not just unpopular. If there is no deeper grounding, then it is just preference, but we do not treat torture that way. We treat it as wrong even if a whole culture says it is fine.",
+                "Look, if we are honest about the universe, it had a beginning. The Borde-Guth-Vilenkin theorem pretty much shows you cannot have an eternal past of inflation.",
+                "Think about consciousness for a second. You can scan a brain all day and see neurons firing, but you do not see what it is like to taste coffee.",
+                "And the fine-tuning thing is wild. The cosmological constant is tuned to one part in ten to the hundred and twenty.",
+                "Morality too. We all live like some things are actually wrong, not just unpopular.",
             ]
         else:
             bank=[
-                "Yeah, but here is the thing about suffering that keeps tripping me up. It is not just that bad stuff happens, it is that some of it seems completely pointless. A deer burning for days in a forest fire where no one learns anything from it. If you could stop that and you cared, you would. So if God is all-powerful and all-loving, why does not he?",
-                "The hiddenness part bothers me too. If God really wants a relationship with us, why is the evidence so messy? You have got thousands of religions all saying they have the truth, and sincere people in different cultures finding totally different gods. If I wanted to be known, I would not make it a puzzle.",
-                "I hear the fine-tuning point, but we might be looking at it backwards. If there are many universes with different constants, we are obviously going to find ourselves in the one where we can exist. That is not design, that is selection bias. And we do not actually know if those constants could have been different.",
-                "And evolution does a lot of the heavy lifting that used to be called design. Complex eyes, wings, brains - they build up slowly over billions of years. You do not need a designer in the gap if natural processes can do it step by step.",
+                "Yeah, but here is the thing about suffering that keeps tripping me up. It is not just that bad stuff happens, it is that some of it seems completely pointless.",
+                "The hiddenness part bothers me too. If God really wants a relationship with us, why is the evidence so messy?",
+                "I hear the fine-tuning point, but we might be looking at it backwards. If there are many universes, we are obviously going to find ourselves in the one where we can exist.",
+                "And evolution does a lot of the heavy lifting that used to be called design.",
             ]
     else:
-        if is_for:
-            bank=[f"On {topic}, when you line up the different pieces - not just one argument but several - they start pointing the same way. It is not about a single proof, it is about which story makes the most sense of everything we see."]
-        else:
-            bank=[f"When I look at {topic}, I keep asking what the simplest explanation is. Extraordinary claims need good evidence, and personal experience alone is tricky because our brains are really good at seeing patterns that are not there."]
-
+        bank=[f"On {topic}, when you line up the different pieces they start pointing the same way." if is_for else f"When I look at {topic}, I keep asking what the simplest explanation is."]
     idx=(round_num+turn_num)%len(bank)
     base=bank[idx]
     if opponent_last and round_num>1:
-        return f"You were saying that {opponent_last[:80]}... I get why that sounds compelling. But I think that misses something. {base} So if I am looking at your point directly, I do not think it holds up the way it first seems."
+        return f"You were saying that {opponent_last[:80]}... I get why that sounds compelling. But I think that misses something. {base}"
     return base
 
 def generate_turn(side, topic, round_num, turn_num, previous_exchange, model):
     global USED_ARGUMENTS
-    if side=="A":
-        side_name="AI Christian Apologist"
-        side_short="for the existence of God"
-    else:
-        side_name="AI Skeptic"
-        side_short="against the existence of God"
-
+    side_name="AI Christian Apologist" if side=="A" else "AI Skeptic"
+    side_short="for the existence of God" if side=="A" else "against the existence of God"
     opponent_last=previous_exchange[-900:] if previous_exchange else ""
-
     if round_num==1 and turn_num==1:
-        instruction = "Opening. Topic is " + topic + ". You are arguing " + side_short + ". Give a warm natural conversational opening like talking to a friend, not reading a textbook. Include 2-3 specific reasons with real examples, numbers, or stories. Target " + str(MIN_TURN_WORDS) + "-" + str(MAX_TURN_WORDS) + " words. Plain everyday language."
+        instruction = "Opening. Topic is " + topic + ". You are arguing " + side_short + ". Give a warm natural conversational opening like talking to a friend. Include 2-3 specific reasons with real examples. Target " + str(MIN_TURN_WORDS) + "-" + str(MAX_TURN_WORDS) + " words. Plain everyday language."
     else:
         banned_str = ', '.join(list(USED_ARGUMENTS)[-3:])
-        instruction = "Round " + str(round_num) + " turn " + str(turn_num) + ". You are " + side_name + " arguing " + side_short + ". Opponent just said: " + opponent_last[:600] + " First, acknowledge what they actually said in your own words to show you heard them. Then explain why that does not work with a specific counter example. Then add fresh point. Plain natural conversational language like chatting over coffee, no bullet points. Do not repeat: " + banned_str + " Target " + str(MIN_TURN_WORDS) + "-" + str(MAX_TURN_WORDS) + " words. Start naturally."
-
-    prompt = "You are " + side_name + " arguing " + side_short + " on: " + topic + " " + instruction + " Previous for context: " + (previous_exchange[-800:] if previous_exchange else "None") + " Write ONLY your spoken part, natural conversational tone."
-
+        instruction = "Round " + str(round_num) + " turn " + str(turn_num) + ". You are " + side_name + " arguing " + side_short + ". Opponent just said: " + opponent_last[:600] + " First acknowledge what they said in your own words. Then explain why that does not work with specific counter. Then add fresh point. Plain natural conversational language like chatting over coffee. Do not repeat: " + banned_str + " Target " + str(MIN_TURN_WORDS) + "-" + str(MAX_TURN_WORDS) + " words."
+    prompt = "You are " + side_name + " arguing " + side_short + " on: " + topic + " " + instruction + " Previous: " + (previous_exchange[-800:] if previous_exchange else "None") + " Write ONLY spoken part, natural conversational tone."
     for attempt in range(2):
         resp=query_openrouter(prompt, model, max_tokens=650, temperature=0.8+attempt*0.1)
         if not resp: continue
@@ -219,7 +228,6 @@ def generate_turn(side, topic, round_num, turn_num, previous_exchange, model):
             for s in resp.split('. ')[:2]:
                 if len(s)>20: USED_ARGUMENTS.add(s[:60])
             return resp
-
     return generate_fallback_debate(side_name, topic, round_num, turn_num, opponent_last)
 
 def build_round_exchanges(topic, rn, ap_model, sk_model, prev_hist):
@@ -231,37 +239,107 @@ def build_round_exchanges(topic, rn, ap_model, sk_model, prev_hist):
         sk_turns.append(s); hist+=f"\nAI Skeptic:\n{s}\n\n"
     return ap_turns, sk_turns, hist
 
-def neutral_judge(m): return {"model":m,"provider":provider_from_model(m),"A_argument":50,"A_rebuttal":50,"A_clarity":50,"A_total":50,"B_argument":50,"B_rebuttal":50,"B_clarity":50,"B_total":50,"winner":"A"}
-def judge_round(model, topic, rn, ap, sk):
-    prompt=f"You are impartial judge for round {rn} on: {topic} FOR: {ap[:900]} AGAINST: {sk[:900]} Score argument strength, rebuttal quality (did they address opponent point before countering?), clarity (natural conversational?). Return ONLY JSON: {{\"A_argument\":0,\"A_rebuttal\":0,\"A_clarity\":0,\"B_argument\":0,\"B_rebuttal\":0,\"B_clarity\":0}}"
-    resp=query_openrouter(prompt, model, timeout=30, max_tokens=250, temperature=0.1)
-    if not resp: return neutral_judge(model)
-    try:
-        m=re.search(r"\{.*\}",resp,re.DOTALL)
-        if not m: return neutral_judge(model)
-        d=json.loads(m.group(0))
-        aa=clamp_score(d.get("A_argument",50)); ar=clamp_score(d.get("A_rebuttal",50)); ac=clamp_score(d.get("A_clarity",50))
-        ba=clamp_score(d.get("B_argument",50)); br=clamp_score(d.get("B_rebuttal",50)); bc=clamp_score(d.get("B_clarity",50))
-        at=(aa+ar+ac)/3; bt=(ba+br+bc)/3
-        return {"model":model,"provider":provider_from_model(model),"A_argument":aa,"A_rebuttal":ar,"A_clarity":ac,"A_total":round(at,2),"B_argument":ba,"B_rebuttal":br,"B_clarity":bc,"B_total":round(bt,2),"winner":"A" if at>bt else "B"}
-    except: return neutral_judge(model)
+def judge_round_real(model, topic, rn, ap, sk, all_models):
+    json_example = '{"A_argument":0,"A_rebuttal":0,"A_clarity":0,"B_argument":0,"B_rebuttal":0,"B_clarity":0}'
+    base_prompt = "You are impartial judge for round " + str(rn) + " on: " + topic + " FOR: " + ap[:900] + " AGAINST: " + sk[:900] + " Score argument strength, rebuttal quality (did they address opponent actual point before countering?), clarity (natural conversational?). Return ONLY JSON: " + json_example
+    attempted = []
+    models_to_try = [model] + [m for m in all_models if m != model] + LEADING_JUDGE_MODELS
+    for attempt_idx, try_model in enumerate(models_to_try[:12]):
+        if try_model in attempted: continue
+        attempted.append(try_model)
+        provider = provider_from_model(try_model)
+        print(f"  Trying {provider} ({try_model}) for REAL score... attempt {attempt_idx+1}/12")
+        resp = query_openrouter(base_prompt, try_model, timeout=40, max_tokens=300, temperature=0.1)
+        if not resp:
+            print(f"    {provider} failed, waiting 4s then trying next...")
+            time.sleep(4)
+            continue
+        try:
+            m = re.search(r"\{.*\}", resp, re.DOTALL)
+            if not m:
+                print(f"    {provider} returned no JSON, trying next...")
+                time.sleep(2)
+                continue
+            d = json.loads(m.group(0))
+            aa=clamp_score(d.get("A_argument",50)); ar=clamp_score(d.get("A_rebuttal",50)); ac=clamp_score(d.get("A_clarity",50))
+            ba=clamp_score(d.get("B_argument",50)); br=clamp_score(d.get("B_rebuttal",50)); bc=clamp_score(d.get("B_clarity",50))
+            if aa==50 and ar==50 and ac==50 and ba==50 and br==50 and bc==50:
+                print(f"    {provider} returned all 50s, treating as fake, retrying...")
+                time.sleep(2)
+                continue
+            at=(aa+ar+ac)/3; bt=(ba+br+bc)/3
+            result={"model":try_model,"provider":provider,"A_argument":aa,"A_rebuttal":ar,"A_clarity":ac,"A_total":round(at,2),"B_argument":ba,"B_rebuttal":br,"B_clarity":bc,"B_total":round(bt,2),"winner":"A" if at>bt else "B","real":True}
+            print(f"    REAL SCORE SUCCESS: {provider} {result['A_total']:.1f} vs {result['B_total']:.1f}")
+            return result
+        except Exception as e:
+            print(f"    {provider} parse failed {e}, trying next...")
+            time.sleep(2)
+            continue
+    print(f"  CRITICAL: All 12 models failed, entering persistent retry loop until REAL score...")
+    loop_count = 0
+    while True:
+        loop_count+=1
+        for try_model in models_to_try[:7]:
+            provider = provider_from_model(try_model)
+            print(f"  Persistent retry {loop_count}: Trying {provider} again for REAL score...")
+            time.sleep(8)
+            resp = query_openrouter(base_prompt, try_model, timeout=40, max_tokens=300, temperature=0.1)
+            if not resp: continue
+            try:
+                m = re.search(r"\{.*\}", resp, re.DOTALL)
+                if not m: continue
+                d = json.loads(m.group(0))
+                aa=clamp_score(d.get("A_argument",50)); ar=clamp_score(d.get("A_rebuttal",50)); ac=clamp_score(d.get("A_clarity",50))
+                ba=clamp_score(d.get("B_argument",50)); br=clamp_score(d.get("B_rebuttal",50)); bc=clamp_score(d.get("B_clarity",50))
+                if aa==50 and ar==50 and ac==50 and ba==50 and br==50 and bc==50: continue
+                at=(aa+ar+ac)/3; bt=(ba+br+bc)/3
+                result={"model":try_model,"provider":provider,"A_argument":aa,"A_rebuttal":ar,"A_clarity":ac,"A_total":round(at,2),"B_argument":ba,"B_rebuttal":br,"B_clarity":bc,"B_total":round(bt,2),"winner":"A" if at>bt else "B","real":True}
+                print(f"    REAL SCORE FINALLY: {provider} {result['A_total']:.1f} vs {result['B_total']:.1f} after {loop_count} loops")
+                return result
+            except: continue
+        if loop_count>15:
+            raise RuntimeError(f"Failed to get REAL judge score after {loop_count} loops")
 
 def evaluate_round(judges, topic, rn, ap, sk):
-    results=[]; print(f"Asking {len(judges)} judges...")
-    def worker(m): return judge_round(m,topic,rn,ap,sk)
-    with concurrent.futures.ThreadPoolExecutor(max_workers=max(1,min(JUDGE_WORKERS,len(judges)))) as ex:
-        futs={ex.submit(worker,m):m for m in judges}
-        for f in concurrent.futures.as_completed(futs):
+    results=[]
+    all_models = list(dict.fromkeys(judges + FALLBACK_MODELS + LEADING_JUDGE_MODELS))
+    print(f"\nAsking {len(judges)} judges sequentially for REAL scores (7 leading companies, retry until real, no 50/50 compromise)...")
+    for idx, model in enumerate(judges):
+        if idx>0: 
+            print(f"Waiting 5s before next judge to avoid 402...")
+            time.sleep(5)
+        print(f"\nJudge {idx+1}/{len(judges)}: {provider_from_model(model)}")
+        try:
+            res = judge_round_real(model, topic, rn, ap, sk, all_models)
+            results.append(res)
+        except Exception as e:
+            print(f"Judge {idx+1} failed even after persistent retries: {e}")
+            continue
+    real_scores = [r for r in results if r.get('real')]
+    print(f"\nFINAL JUDGING: Got {len(real_scores)}/{len(judges)} REAL scores (no fake 50/50)")
+    for r in real_scores:
+        print(f"  REAL: {r['provider']} {r['A_total']:.1f} vs {r['B_total']:.1f} -> winner {r['winner']}")
+    if len(real_scores) < 5:
+        print(f"WARNING: Only {len(real_scores)} real scores, you wanted at least 5. Trying to fill up to 5...")
+        extra_models = [m for m in all_models if m not in [r['model'] for r in results]]
+        for extra in extra_models[:3]:
+            if len(real_scores)>=5: break
+            print(f"Extra attempt for 5th real score: {provider_from_model(extra)}")
+            time.sleep(4)
             try:
-                r=f.result(); results.append(r)
-                print(f"   {r['provider']} {r['A_total']:.1f} vs {r['B_total']:.1f}")
-            except Exception as e: print(f"   {str(e)[:80]}")
-    if not results: results=[neutral_judge("fallback")]
+                res = judge_round_real(extra, topic, rn, ap, sk, all_models)
+                results.append(res)
+                real_scores.append(res)
+            except: continue
+    if not real_scores:
+        raise RuntimeError("Failed to get ANY real judge scores")
     return results
 
 def calculate_round_average(res):
-    a=sum(r["A_total"] for r in res)/len(res)
-    b=sum(r["B_total"] for r in res)/len(res)
+    real = [r for r in res if r.get('real')]
+    if not real: real = res
+    a=sum(r["A_total"] for r in real)/len(real)
+    b=sum(r["B_total"] for r in real)/len(real)
     return round(a,2), round(b,2)
 
 async def generate_audio_async(text, voice, filename):
@@ -283,9 +361,7 @@ async def generate_audio_async(text, voice, filename):
 def generate_audio(text, role, filename, judge_voice_index=None):
     voice=JUDGE_VOICES[(judge_voice_index or 0)%len(JUDGE_VOICES)] if role=="AI Judge" else VOICES.get(role, VOICES["Moderator"])
     try: return asyncio.run(generate_audio_async(clean_for_speech(text), voice, filename))
-    except Exception as e:
-        print(f"TTS fail {voice}: {str(e)[:100]}")
-        return asyncio.run(generate_audio_async(clean_for_speech(text), VOICES["Moderator"], filename))
+    except: return asyncio.run(generate_audio_async(clean_for_speech(text), VOICES["Moderator"], filename))
 
 def format_ass_time(s):
     s=max(0.0,float(s)); h=int(s//3600); m=int((s%3600)//60); sec=s%60
@@ -452,7 +528,7 @@ def render_video_segment(background=None, ui=None, audio=None, subtitles=None, o
         start=max(0.0,float(vis["start"])); end=start+3.5
         filter_parts.append(f"[{idx_input}:v]format=rgba,fade=t=in:st={start}:d=0.3:alpha=1,fade=t=out:st={end-0.3}:d=0.3:alpha=1[{label}_faded];")
         x_pos=(VIDEO_W-EMOJI_W)//2 + random.randint(-200,200)
-        y_pos=VISUAL_Y
+        y_pos=525
         enable=f"between(t,{start:.2f},{end:.2f})"
         filter_parts.append(f"{current}[{label}_faded]overlay={x_pos}:{y_pos}:enable='{enable}'[v{idx}];")
         current=f"[v{idx}]"; idx_input+=1
@@ -498,10 +574,13 @@ def generate_scoreboard(round_num, results, round_a, round_b, cumulative_a, cumu
     draw.text((col_w,header_y),"Winner",font=fh,fill=(255,215,0,255))
     y=header_y+65
     for res in results:
-        draw.rectangle([60,y-8,W-60,y+42],fill=(20,28,50,255) if (y//58)%2==0 else (15,22,40,255))
+        is_real = res.get('real', True)
+        bg = (20,28,50,255) if (y//58)%2==0 else (15,22,40,255)
+        draw.rectangle([60,y-8,W-60,y+42],fill=bg)
         jt=res.get('provider','Judge')
         if len(jt)>32: jt=jt[:30]+".."
-        draw.text((col_j,y),jt,font=fr,fill=(255,255,255,240))
+        marker = "✓" if is_real else "✗FAKE"
+        draw.text((col_j,y),f"{marker} {jt}",font=fr,fill=(255,255,255,240) if is_real else (255,100,100,255))
         draw.text((col_a,y),f"{res['A_total']:.1f}",font=fr,fill=(0,255,204,255))
         draw.text((col_b,y),f"{res['B_total']:.1f}",font=fr,fill=(255,120,255,255))
         wl=short_a if res['winner']=="A" else short_b
@@ -509,7 +588,8 @@ def generate_scoreboard(round_num, results, round_a, round_b, cumulative_a, cumu
         draw.text((col_w,y),wl,font=fr,fill=wc)
         y+=58
     draw.line([(60,y+5),(W-60,y+5)],fill=(255,255,255,60),width=2); y+=25
-    draw.text((W//2,y),f"Round Avg: {round_a:.1f} vs {round_b:.1f}",font=fs,fill=(255,255,255,255),anchor="mt")
+    real_count = len([r for r in results if r.get('real')])
+    draw.text((W//2,y),f"Round Avg: {round_a:.1f} vs {round_b:.1f} ({real_count} REAL judges, no 50/50 fake)",font=fs,fill=(255,255,255,255),anchor="mt")
     draw.text((W//2,y+45),f"Cumulative: {cumulative_a:.1f} vs {cumulative_b:.1f}",font=fs,fill=(255,215,0,255),anchor="mt")
     img.save(filename)
 
@@ -523,7 +603,11 @@ def render_scorecard_video(scorecard, audio, subtitles, output):
     if r.returncode!=0:
         print(r.stderr[-7000:]); raise RuntimeError("Scorecard render failed.")
 
-def create_segment(text, role, speaker_name, topic, segment_id, model_for_visuals, position=None, glow=None, judge_voice_index=None):
+def create_segment(text, role, speaker_name, topic, segment_id, model_for_visuals, position=None, glow=None, judge_voice_index=None, jidx=None, **kwargs):
+    if judge_voice_index is None and jidx is not None:
+        judge_voice_index = jidx
+    if judge_voice_index is None:
+        judge_voice_index = kwargs.get('judge_voice_index', kwargs.get('jidx', 0))
     if position is None:
         if role=="AI Christian Apologist": position="left"
         elif role=="AI Skeptic": position="right"
@@ -565,20 +649,20 @@ def generate_panel_commentary(model, side, topic, rn, ap, sk, prev):
         if "moral" in low: return "moral values"
         return "what matters most in this round"
     apc=core(ap); skc=core(sk)
-    prompt=f"You are {prov}, judge for round {rn} on: {topic} FOR: {trim(ap)} AGAINST: {trim(sk)} You leaned {pref}. Talk in plain natural conversational tone, like telling a friend what happened. In one sentence say what they were really disagreeing about this round ({apc} vs {skc}). In one sentence say why {pref} handled that better - did it answer the other side point directly before making its own? 2 sentences total, natural, no formal phrases, no listing. Previous: {' '.join(prev[-2:])}"
+    prompt=f"You are {prov}, judge for round {rn} on: {topic} FOR: {trim(ap)} AGAINST: {trim(sk)} You leaned {pref}. Talk in plain natural conversational tone. In one sentence say what they were really disagreeing about this round ({apc} vs {skc}). In one sentence say why {pref} handled that better. 2 sentences total, natural."
     for attempt in range(2):
         resp=query_openrouter(prompt, model, timeout=30, max_tokens=200, temperature=0.85 if attempt==0 else 0.9)
         if resp and count_words(resp)>=12: return resp
-    return f"Round {rn} really came down to {apc} versus {skc}. For me, {pref} edged it because it actually dealt with what the other person said before jumping to its own point."
+    return f"Round {rn} really came down to {apc} versus {skc}. For me, {pref} edged it because it actually dealt with what the other person said."
 
 def build_intro(topic, jc):
-    return f"Welcome to the AI Debate Arena. Today an AI Christian Apologist and an AI Skeptic are going to talk through the question: {topic}. We'll have three rounds, plenty of time for each side to really respond to each other, not just make speeches. We've got {jc} independent AI judges scoring as we go. Let's get into it."
+    return f"Welcome to the AI Debate Arena. Today an AI Christian Apologist and an AI Skeptic are going to talk through the question: {topic}. We'll have three rounds, plenty of time for each side to really respond to each other. We've got {jc} independent AI judges from leading companies scoring as we go, all real scores. Let's get into it."
 
 def build_outro(jc, ca, cb):
-    if math.isclose(ca,cb,abs_tol=0.01): res="a draw"
+    if abs(ca-cb)<0.01: res="a draw"
     elif ca>cb: res="the Christian Apologist"
     else: res="the Skeptic"
-    return f"Alright, after three rounds our {jc} judges have the Apologist at {ca:.1f} and the Skeptic at {cb:.1f}, so overall it leans toward {res}. But that's just the panel. What do you think actually held up when you listened to the back and forth?"
+    return f"Alright, after three rounds our {jc} real judges have the Apologist at {ca:.1f} and the Skeptic at {cb:.1f}, so overall it leans toward {res}. All scores are real, no fake 50/50. But that's just the panel. What do you think actually held up?"
 
 def stitch_segments(segs, out):
     lf="concat_list.txt"
@@ -596,19 +680,24 @@ def run_debate_pipeline():
     if not OPENROUTER_API_KEY: raise RuntimeError("OPENROUTER_API_KEY missing")
     if not os.path.exists("topic.txt"): open("topic.txt","w",encoding="utf-8").write("Does God exist?")
     topic=open("topic.txt","r",encoding="utf-8").read().strip() or "Does God exist?"
-    print("\n"+"="*70+"\nAI DEBATE ARENA\n"+"="*70+f"\n\nTOPIC: {topic}\n")
-    print(f"FREE_MODE={FREE_MODE}, ROUNDS={ROUNDS}, TURNS_PER_SIDE={TURNS_PER_SIDE_PER_ROUND}, WORDS_PER_TURN={WORDS_PER_TURN} => target ~10+ mins")
+    print("\n"+"="*70+"\nAI DEBATE ARENA - 7 REAL JUDGES NO FAKE 50/50\n"+"="*70+f"\n\nTOPIC: {topic}\n")
+    print(f"ROUNDS={ROUNDS}, TURNS_PER_SIDE={TURNS_PER_SIDE_PER_ROUND}, WORDS_PER_TURN={WORDS_PER_TURN} => 10+ min")
+    print(f"JUDGES: {MAX_JUDGES} leading companies, retry until REAL score, no compromise")
     avail=discover_models()
     if not avail:
-        print("Using fallback models"); avail=FALLBACK_MODELS.copy()
+        print("Using leading judge models"); avail=LEADING_JUDGE_MODELS.copy()
     ap_model, sk_model = choose_primary_models(avail)
     print(f"Debate engines: {provider_from_model(ap_model)} vs {provider_from_model(sk_model)}")
     judges=choose_judges(avail,(ap_model,sk_model))
-    if not judges: judges=FALLBACK_MODELS[:MAX_JUDGES]
-    print(f"Judges: {len(judges)}")
-    for m in judges: print(f"   {provider_from_model(m)} — {m.split('/',1)[-1][:30]}")
+    if not judges: judges=LEADING_JUDGE_MODELS[:MAX_JUDGES]
+    print(f"Final judges: {len(judges)} for REAL scoring")
+    for m in judges: print(f"   {provider_from_model(m)} — {m}")
     segs=[]; sid=0
-    def add_seg(text,role,name,pos=None,glow=None,jidx=None):
+    def add_seg(text,role,name,pos=None,glow=None,jidx=None,judge_voice_index=None, **kwargs):
+        if jidx is None and judge_voice_index is not None:
+            jidx = judge_voice_index
+        if jidx is None:
+            jidx = kwargs.get('jidx', kwargs.get('judge_voice_index', kwargs.get('judge_index', 0)))
         nonlocal sid
         vm=sk_model if role=="AI Skeptic" else ap_model
         v=create_segment(text,role,name,topic,sid,vm,pos,glow,jidx)
@@ -631,32 +720,24 @@ def run_debate_pipeline():
         print(f"Round {rn}: A {ra:.1f} vs B {rb:.1f} | Cum {cum_a:.1f} vs {cum_b:.1f}")
         sb=f"scoreboard_r{rn}.png"
         generate_scoreboard(rn, res, ra, rb, cum_a, cum_b, sb, roles)
-        stxt=f"Round {rn} is complete. The {len(res)} judges gave the Apologist {ra:.1f} and the Skeptic {rb:.1f}. Cumulative is {cum_a:.1f} to {cum_b:.1f}."
+        stxt=f"Round {rn} is complete. {len([r for r in res if r.get('real')])} real judges from leading companies gave the Apologist {ra:.1f} and the Skeptic {rb:.1f}. Cumulative is {cum_a:.1f} to {cum_b:.1f}. All real scores, no fake 50/50."
         sa=f"score_audio_r{rn}.mp3"; ss=f"score_subs_r{rn}.ass"; sv=f"score_video_r{rn}.mp4"
         sw=generate_audio(stxt,"Moderator",sa)
         generate_subtitles(sw, ss, scorecard=True, audio_file=sa, full_text=stxt)
         render_scorecard_video(sb, sa, ss, sv)
         segs.append(sv)
         if res:
-            if PANEL_COMMENTS_PER_ROUND==1:
-                wj=random.choice(res)
-                com=generate_panel_commentary(wj["model"], wj["winner"], topic, rn, ap_full, sk_full, panel_comments)
-                panel_comments.append(com)
-                add_seg(com,"AI Judge","AI JUDGE — "+wj["provider"].upper(),"center","#3399FF", judge_voice_index=0)
-            else:
-                a_res=[r for r in res if r["winner"]=="A"]; b_res=[r for r in res if r["winner"]=="B"]
-                if not a_res: a_res=res
-                if not b_res: b_res=res
-                ja=random.choice(a_res); jb=random.choice(b_res)
-                ca=generate_panel_commentary(ja["model"],"A",topic,rn,ap_full,sk_full,panel_comments); panel_comments.append(ca)
-                add_seg(ca,"AI Judge","AI JUDGE — "+ja["provider"].upper(),"center","#3399FF", judge_voice_index=0)
-                cb=generate_panel_commentary(jb["model"],"B",topic,rn,ap_full,sk_full,panel_comments); panel_comments.append(cb)
-                add_seg(cb,"AI Judge","AI JUDGE — "+jb["provider"].upper(),"center","#3399FF", judge_voice_index=1)
+            real_res = [r for r in res if r.get('real')]
+            if not real_res: real_res = res
+            wj=real_res[0] if real_res else res[0]
+            com=generate_panel_commentary(wj["model"], wj["winner"], topic, rn, ap_full, sk_full, panel_comments)
+            panel_comments.append(com)
+            add_seg(com,"AI Judge","AI JUDGE — "+wj["provider"].upper(),"center","#3399FF", judge_voice_index=0)
     add_seg(build_outro(len(judges),cum_a,cum_b),"Moderator","MODERATOR")
     stitch_segments(segs, OUTPUT_FILE)
-    print("\n"+"="*70+"\nDEBATE COMPLETE\n"+"="*70)
+    print("\n"+"="*70+"\nDEBATE COMPLETE - 7 REAL JUDGES NO FAKE\n"+"="*70)
     print(f"Output: {OUTPUT_FILE}")
-    print(f"Final: Apologist {cum_a:.1f} vs Skeptic {cum_b:.1f}")
+    print(f"Final: Apologist {cum_a:.1f} vs Skeptic {cum_b:.1f} (all REAL, no 50/50)")
     cleanup_cache()
 
 if __name__=="__main__":
