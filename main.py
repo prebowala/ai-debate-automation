@@ -22,11 +22,12 @@ VIDEO_W = 1920
 VIDEO_H = 1080
 FPS = 30
 
+# === 10-15 MIN VIDEO ===
 ROUNDS = 3
 TURNS_PER_SIDE_PER_ROUND = 2
-WORDS_PER_TURN = 135
-MIN_TURN_WORDS = 115
-MAX_TURN_WORDS = 155
+WORDS_PER_TURN = 140
+MIN_TURN_WORDS = 120
+MAX_TURN_WORDS = 160
 
 MAX_JUDGES = 7
 JUDGE_WORKERS = 7
@@ -35,19 +36,18 @@ EMOJI_W = 180
 EMOJI_H = 180
 USED_EMOJIS = set()
 USED_ARGUMENTS = set()
-USED_PHRASES = set()
-USED_KEYWORDS = set()
 USED_JUDGE_EXPLANATIONS = set()
 
-# STANDARD DISTINCT VOICES - AGREED
+# === HARDWIRED DISTINCT VOICES - DO NOT CHANGE EACH ARGUMENT ===
+# Moderator stays as is, others best most natural TTS
 VOICES = {
-    "A": "en-US-BrianMultilingualNeural",
-    "B": "en-US-AvaMultilingualNeural",
-    "Moderator": "en-US-AndrewMultilingualNeural",
-    "AI Christian Apologist": "en-US-BrianMultilingualNeural",
-    "AI Skeptic": "en-US-AvaMultilingualNeural",
+    "A": "en-US-BrianMultilingualNeural",  # GOD - best natural deep male, hardwired
+    "B": "en-US-AvaMultilingualNeural",    # SERPENT - best natural female, hardwired
+    "Moderator": "en-US-AndrewMultilingualNeural",  # Moderator stays - hardwired
     "GOD TOLD TRUTH": "en-US-BrianMultilingualNeural",
     "SERPENT TOLD TRUTH": "en-US-AvaMultilingualNeural",
+    "AFFIRMATIVE": "en-US-BrianMultilingualNeural",
+    "NEGATIVE": "en-US-AvaMultilingualNeural",
 }
 JUDGE_VOICES = [
     "en-US-JennyNeural",
@@ -60,34 +60,35 @@ JUDGE_VOICES = [
 ]
 JUDGE_VOICE_MAP = {}
 
-# JUDGES GOOD - KEEP FREE ONLY, ONE PER COMPANY (GOOD VERSION)
+# === FREE ONLY, ONE PER COMPANY - FIX 2 GOOGLES 2 CLAUDES ===
 FALLBACK_MODELS = [
     "openai/gpt-4o-mini:free",
     "anthropic/claude-3-haiku:free",
-    "anthropic/claude-3-5-haiku:free",
     "google/gemini-flash-1.5-8b:free",
-    "google/gemini-2.0-flash-001:free",
     "meta-llama/llama-3.2-3b-instruct:free",
     "mistralai/mistral-7b-instruct:free",
     "deepseek/deepseek-r1:free",
     "qwen/qwen-2.5-7b-instruct:free",
+    "nvidia/llama-3.1-nemotron-70b-instruct:free",
 ]
 
 PROVIDER_ALIASES = {
     "openai": "OpenAI", "anthropic": "Anthropic", "google": "Google",
     "x-ai": "xAI", "xai": "xAI", "deepseek": "DeepSeek",
-    "mistralai": "Mistral", "mistral": "Mistral",
-    "meta-llama": "Meta", "meta": "Meta", "qwen": "Qwen",
+    "mistralai": "Mistral", "meta-llama": "Meta", "qwen": "Qwen", "nvidia": "Nvidia",
 }
 
 def provider_from_model(mid):
     if not mid: return "Unknown"
-    return PROVIDER_ALIASES.get(mid.split("/",1)[0].lower().strip(), mid.split("/",1)[0].title())
+    base=mid.split("/",1)[0].lower().strip()
+    return PROVIDER_ALIASES.get(base, base.title())
 
 def get_judge_short_name(mid):
     low=(mid or "").lower()
     if "gpt" in low: return "ChatGPT"
+    if "claude-3-5" in low: return "Claude 3.5"
     if "claude" in low: return "Claude"
+    if "gemini-2.0" in low: return "Gemini 2.0"
     if "gemini" in low: return "Gemini"
     if "gemma" in low: return "Gemma"
     if "grok" in low: return "Grok"
@@ -95,9 +96,8 @@ def get_judge_short_name(mid):
     if "mistral" in low: return "Mistral"
     if "llama" in low: return "Llama"
     if "qwen" in low: return "Qwen"
+    if "nemotron" in low: return "Nemotron"
     return provider_from_model(mid)
-
-def get_company_name(mid): return provider_from_model(mid)
 
 def cleanup_cache():
     for pat in ["*.mp4","*.mp3","*.ass","*.png","*_list.txt"]:
@@ -107,15 +107,13 @@ def cleanup_cache():
             except: pass
 
 def count_words(t): return len(re.findall(r"\b[\w'-]+\b", t or ""))
-
 def clean_for_speech(t):
     if not t: return ""
     t=re.sub(r"https?://\S+"," ",t)
     t=re.sub(r"www\.\S+"," ",t)
-    t=re.sub(r"\b[a-z0-9-]+\.[a-z]{2,}(?:/\S*)?"," ",t, flags=re.IGNORECASE)
     t=re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", t)
     t=re.sub(r"```.*?```"," ",t, flags=re.DOTALL)
-    t=t.replace("(", " ").replace(")", " ").replace("[", " ").replace("]", " ").replace("{", " ").replace("}", " ")
+    t=t.replace("(", " ").replace(")", " ").replace("[", " ").replace("]", " ")
     t=t.replace("–",", ").replace("—",". ").replace(" - ",". ")
     for o,n in {"*":"", "#":"", "_":"", "`":"", "\"":"", ":":" . ", ";":" . ", "&":" and"}.items():
         t=t.replace(o,n)
@@ -145,26 +143,28 @@ def discover_models():
     if not OPENROUTER_API_KEY: raise RuntimeError("OPENROUTER_API_KEY missing")
     try:
         r=requests.get(OPENROUTER_MODELS_URL,headers=openrouter_headers(),timeout=20)
+        if r.status_code!=200:
+            return FALLBACK_MODELS.copy()
         free=[]
         for it in r.json().get("data",[]):
             mid=it.get("id","")
             if not mid or ":free" not in mid.lower(): continue
             if any(x in mid.lower() for x in ["embed","tts","whisper","audio"]): continue
-            top=["openai","anthropic","google","meta-llama","mistralai","deepseek","qwen","x-ai"]
+            top=["openai","anthropic","google","meta-llama","mistralai","deepseek","qwen","nvidia"]
             if not any(p in mid.lower() for p in top): continue
             free.append(mid)
         if free:
-            print(f"Found {len(free)} top free models")
+            print(f"Found {len(free)} free models")
             return list(dict.fromkeys(free))
         return FALLBACK_MODELS.copy()
     except:
         return FALLBACK_MODELS.copy()
 
-def query_openrouter(prompt,mid,timeout=55,max_tokens=850,temperature=0.92):
+def query_openrouter(prompt,mid,timeout=55,max_tokens=900,temperature=0.92):
     if not OPENROUTER_API_KEY: return None
     if ":free" not in mid.lower(): return None
     payload={"model":mid,"messages":[{"role":"user","content":prompt}],"temperature":temperature,"max_tokens":max_tokens}
-    for _ in range(3):
+    for _ in range(2):
         try:
             resp=requests.post(OPENROUTER_URL,headers=openrouter_headers(),json=payload,timeout=timeout)
             if resp.status_code==200:
@@ -175,7 +175,7 @@ def query_openrouter(prompt,mid,timeout=55,max_tokens=850,temperature=0.92):
     return None
 
 def choose_primary_models(avail):
-    free=[m for m in avail if ":free" in m] or avail
+    free=[m for m in avail if ":free" in m] or FALLBACK_MODELS
     used=set(); picks=[]
     for m in free:
         prov=provider_from_model(m)
@@ -183,23 +183,24 @@ def choose_primary_models(avail):
             picks.append(m); used.add(prov)
         if len(picks)>=2: break
     if len(picks)<2: picks=(free+FALLBACK_MODELS)[:2]
-    print(f"Primary FREE distinct: {get_judge_short_name(picks[0])} Brian vs {get_judge_short_name(picks[1])} Ava")
+    print(f"Primary hardwired voices: {get_judge_short_name(picks[0])} Brian vs {get_judge_short_name(picks[1])} Ava")
     return picks[0],picks[1]
 
-# GOOD JUDGES - ONE PER COMPANY, NO 3 META 2 GOOGLE
+# FIX 2 GOOGLES 2 CLAUDES - ONE PER COMPANY, UNIQUE DISPLAY NAME
 def choose_judges(avail,primary):
     global JUDGE_VOICE_MAP
     primary_providers=set(provider_from_model(m) for m in primary)
-    excl_ids=set(primary)
-    top_providers={"openai","anthropic","google","meta-llama","mistralai","deepseek","qwen"}
-    cands=[m for m in avail if m not in excl_ids and ":free" in m and m.split("/")[0].lower() in top_providers and provider_from_model(m) not in primary_providers]
+    excl=set(primary)
+    top_providers={"openai","anthropic","google","meta-llama","mistralai","deepseek","qwen","nvidia"}
+    cands=[m for m in avail if m not in excl and ":free" in m and m.split("/")[0].lower() in top_providers and provider_from_model(m) not in primary_providers]
     if len(cands)<4:
-        cands=[m for m in avail if m not in excl_ids and ":free" in m and provider_from_model(m) not in primary_providers]
+        cands=[m for m in avail if m not in excl and ":free" in m and provider_from_model(m) not in primary_providers]
     groups={}
     for m in cands:
         prov=provider_from_model(m)
-        if prov not in groups: groups[prov]=m
-    order=["OpenAI","Anthropic","Google","Meta","Mistral","DeepSeek","Qwen"]
+        if prov not in groups:
+            groups[prov]=m
+    order=["OpenAI","Anthropic","Google","Meta","Mistral","DeepSeek","Qwen","Nvidia"]
     sel=[]
     for name in order:
         if name in groups:
@@ -207,161 +208,186 @@ def choose_judges(avail,primary):
         if len(sel)>=MAX_JUDGES: break
     for m in groups.values():
         if len(sel)>=MAX_JUDGES: break
-        if m not in sel: sel.append(m)
-    seen=set(); uniq=[]
+        sel.append(m)
+    # Ensure unique display names - no 2 Claudes or 2 Googles with same short name
+    seen_provider=set()
+    seen_display=set()
+    uniq=[]
     for m in sel:
-        d=get_judge_short_name(m)
-        if d not in seen:
-            uniq.append(m); seen.add(d)
+        prov=provider_from_model(m)
+        disp=get_judge_short_name(m)
+        if prov in seen_provider: continue
+        if disp in seen_display: continue
+        uniq.append(m)
+        seen_provider.add(prov)
+        seen_display.add(disp)
     result=uniq[:MAX_JUDGES]
+    # Fill if needed with fallback ensuring uniqueness
+    if len(result)<MAX_JUDGES:
+        for m in FALLBACK_MODELS:
+            if len(result)>=MAX_JUDGES: break
+            prov=provider_from_model(m)
+            disp=get_judge_short_name(m)
+            if prov in seen_provider or disp in seen_display: continue
+            if m in primary: continue
+            result.append(m)
+            seen_provider.add(prov)
+            seen_display.add(disp)
     JUDGE_VOICE_MAP={mid: idx%len(JUDGE_VOICES) for idx,mid in enumerate(result)}
-    print(f"Judges ONE PER COMPANY UNIQUE GOOD ({len(result)}): {', '.join(f'{provider_from_model(m)} ({get_judge_short_name(m)})' for m in result)}")
+    print(f"Judges FIXED ONE PER COMPANY UNIQUE DISPLAY ({len(result)}): {', '.join(f'{provider_from_model(m)} ({get_judge_short_name(m)})' for m in result)}")
     return result
 
 def get_debate_roles(topic, model):
     tl=(topic or "").lower()
     if "god" in tl and "serpent" in tl:
         return {"side_a_label":"GOD TOLD TRUTH","side_a_desc":"Defends God told truth in Genesis 2:17 moth tamuth - death became certain that day, relational separation and loss of tree of life","side_b_label":"SERPENT TOLD TRUTH","side_b_desc":"Defends serpent told truth in Genesis 3:4-5 - no death that day, eyes opened and become as gods, God confirms in 3:22"}
-    prompt=f'Topic: "{topic}" Return ONLY JSON: {{"side_a_label":"FOR 2-3 words","side_a_desc":"sentence","side_b_label":"AGAINST 2-3 words","side_b_desc":"sentence"}} Labels uppercase short.'
-    resp=query_openrouter(prompt, model, timeout=25, max_tokens=250, temperature=0.4)
-    if resp:
-        try:
-            m=re.search(r"\{.*\}",resp,re.DOTALL)
-            if m:
-                data=json.loads(m.group(0))
-                a=str(data.get("side_a_label","FOR")).strip().upper()[:30]
-                b=str(data.get("side_b_label","AGAINST")).strip().upper()[:30]
-                if a and b and a!=b and "LABEL" not in a:
-                    return {"side_a_label":a,"side_a_desc":str(data.get("side_a_desc",a)),"side_b_label":b,"side_b_desc":str(data.get("side_b_desc",b))}
-        except: pass
-    return {"side_a_label":"AFFIRMATIVE","side_a_desc":f"Argues FOR {topic}","side_b_label":"NEGATIVE","side_b_desc":f"Argues AGAINST {topic}"}
+    return {"side_a_label":"AFFIRMATIVE","side_a_desc":f"Argues FOR {topic} with real evidence","side_b_label":"NEGATIVE","side_b_desc":f"Argues AGAINST {topic} with real counter-evidence"}
 
-def strip_filler(text):
+def strip_filler(t):
     for pat in [r"^(ladies and gentlemen[,.]?\s*)",r"^(my friends[,.]?\s*)",r"^(well[,.]?\s*)",r"^(thank you[,.]?\s*)"]:
-        text=re.sub(pat,"",text,flags=re.IGNORECASE).strip()
-    return text
+        t=re.sub(pat,"",t,flags=re.IGNORECASE).strip()
+    return t
 
 def generate_fallback_debate(side_label, topic, round_num, turn_num):
-    if "GOD TOLD TRUTH" in side_label.upper():
-        pool=[
-            "Look at Genesis 2:17 moth tamuth, dying you shall surely die, emphatic about certainty. Serpent in 3:4 says lo moth temuthun, you shall not surely die, direct negation. What happened that day? Genesis 3:10 says Adam hid because afraid, relational separation. Verse 19 to dust return, verse 24 cherubim block tree of life. On that day they lost everlasting life, that's death beginning.",
-            "Genesis 2:16 says you may freely eat of every tree, abundant generosity. Serpent twists in 3:1 did God really say you shall not eat of every tree? Makes generosity sound stingy. That twisting matters when asking who told truth about provision and motive.",
-            "In the day you eat appears in Genesis 2:4 also, in the day Lord made earth, meaning when, not 24 hour countdown. Moth tamuth is certainty. Serpent left out pain, thorns, sweat, exile verses 16-19. Half truth hiding cost is still misleading, God told full cost upfront.",
-            "Genesis 3:22 says lest he take also tree of life and live forever, therefore drove out and placed cherubim to keep way. On that day they lost access to everlasting life. Serpent said you shall not surely die, but they lost immortality that day, that's death starting immediately.",
-            "Think about character: God creates, provides every tree but one freely, warns to protect. Serpent questions in 3:1 did God really say, plants doubt, denies in 3:4 you shall not die, appeals to desire in 3:5 as gods. Classic temptation pattern doubt denial desire. God told truth to protect, serpent half truth to entice.",
-            "Hebrew moth tamuth infinitive absolute emphasizes certainty, you shall surely die. Serpent lo moth temuthun you shall not surely die directly negates. What happened? They did die relationally that day and began dying physically and returned to dust. Adam 930 years but did die. God's surely came true.",
-        ]
-        return random.choice(pool)
-    elif "SERPENT TOLD TRUTH" in side_label.upper():
-        pool=[
-            "Read plain text. Genesis 2:17 says in the day you eat you shall die, natural reading that same day. Genesis 5:5 says Adam lived 930 years then died. Didn't die that day. Serpent says 3:4 you shall not surely die, matches, they didn't die that day. And 3:7 eyes opened as promised, God confirms in 3:22 man become as one of us knowing good and evil. God confirms serpent right.",
-            "Yom evening and morning a day. So in the day you eat you shall die should mean that day. Adam didn't die that day. Two predictions serpent both happen, eyes opened and godlikeness, one threat from God doesn't happen as stated that day.",
-            "Genesis 3:22 God says man become as one of us to know good and evil, word for word serpent promised verse 5. If serpent father lies, why God echoing? Where is death that day? Chapter 4 they have children very much alive.",
-            "Genesis 2:17 threatens death in the day, but Genesis 3:6 woman saw tree good for food pleasant to eyes desired to make wise, she ate. Verse 7 eyes opened. Exactly what serpent promised verse 5 your eyes opened. Death that day? Text never says anyone died that day. Verse 8 they heard Lord walking, alive hiding not dead.",
-            "If God meant spiritual death why not say spiritual death? Text of Genesis 2 and 3 never mentions spiritual death. That's later theology. Test simple: Did they die that day as God said? No. Did eyes open as serpent said? Yes 3:7 eyes opened. On straightforward reading serpent described what would happen that day more accurately.",
-            "Consider 3:22 God says man become as one of us to know good and evil, exactly what serpent said would happen verse 5. If serpent lying about that part why God confirming? Where death that day? Chapter 3:20 Adam called wife Eve mother of all living, 4:1 they conceived Cain. Very much alive building family not dead.",
-        ]
-        return random.choice(pool)
+    # Natural conversational fallbacks, no saying affirmative negative
+    if "GOD" in side_label.upper():
+        return random.choice([
+            "Look at Genesis 2:17 in Hebrew it's moth tamuth, dying you shall surely die, emphatic about certainty not just timing. Serpent in 3:4 says lo moth temuthun, you shall not surely die, direct contradiction. What happened that day? Genesis 3:10 says Adam hid because afraid, that's relational separation. Verse 19 to dust you shall return, verse 24 cherubim block tree of life. On that day they lost everlasting life, that's death beginning right there.",
+            "Think about how generous God is. Genesis 2:16 says you may freely eat of every tree, every single one except one, that's abundance. Serpent twists it in 3:1 did God really say you shall not eat of every tree? Makes generosity sound like stinginess. That twisting matters when we ask who told truth about provision.",
+            "In the day you eat appears in Genesis 2:4 too, in the day the Lord made earth, meaning when not 24 hour countdown. Moth tamuth is certainty. And look what serpent left out, pain thorns sweat exile verses 16 to 19. Half truth hiding cost is still misleading, God told full cost upfront.",
+        ])
     else:
-        return f"When we look at {topic}, {side_label} fits what we actually see. Take concrete example from {topic} - mechanism you can trace predicts what we see. That's why {side_label} stronger here."
+        return random.choice([
+            "Read plain text. Genesis 2:17 says in the day you eat you shall die, natural reading that same day. Genesis 5:5 says Adam lived 930 years then died. He didn't die that day. Serpent says in 3:4 you shall not surely die, that matches, they didn't die that day. And 3:7 eyes opened as promised, God confirms in 3:22 behold man has become as one of us knowing good and evil.",
+            "Genesis 3:22 God says man has become as one of us to know good and evil, word for word what serpent promised verse 5. If serpent father of lies why God echoing his promise? Where is death that day? Chapter 4 they have children very much alive.",
+            "Genesis 2 verse 17 threatens death in the day, but Genesis 3 verse 6 woman saw tree good for food pleasant to eyes desired to make one wise, she ate. Verse 7 eyes opened. Exactly what serpent promised verse 5 your eyes opened. Death that day? Text never says anyone died that day. Verse 8 they heard Lord walking in garden, alive hiding not dead.",
+        ])
 
-# === FIXED DEBATE GENERATION - CONVERSATIONAL, SPECIFIC, REBUTTAL ACTUALLY ANSWERS ===
+# NATURAL CONVERSATIONAL DEBATE - COUNTER POINT FIRST THEN NEW POINT
 def generate_turn(role_key, topic, round_num, turn_num, prev_history, model, role_label, role_desc, opponent_label, opponent_desc):
     global USED_ARGUMENTS
     used_str="; ".join(list(USED_ARGUMENTS)[-8:])[:400] if USED_ARGUMENTS else "None yet"
-    prev_snip=prev_history[-700:] if prev_history else "No previous, you opening"
+    prev_snip=prev_history[-800:] if prev_history else "No previous"
 
     tl=(topic or "").lower()
     is_genesis="god" in tl and "serpent" in tl
 
-    if is_genesis:
-        evidence_line="MUST cite specific Genesis verse this turn: 2:17 moth tamuth, 3:4 lo moth temuthun, 3:5 as gods, 3:7 eyes opened, 3:10 fear hiding, 3:19 dust, 3:22 become as one of us, 5:5 930 years, 3:22-24 tree of life cherubim blocked. Use naturally in conversation."
-        fresh_line="Fresh angle not used: if you said 930 years before now try tree of life cherubim; if eyes opened now dust to dust or shame or moth tamuth or pain toil exile."
-    else:
-        evidence_line=f'MUST give specific evidence about "{topic}" - named study, statistic, example, mechanism. Not vague philosophy.'
-        fresh_line=f"Fresh angle about {topic} not used: {used_str}"
+    # Never say affirmative negative in argument
+    # Counter point first addressed then new point
+    if round_num==1 and turn_num==1:
+        if "GOD" in role_label.upper():
+            prompt=f"""You are debating about: {topic}
+Your position is: {role_desc}
+This is your opening. Don't say "as an affirmative" or "as negative" or "affirmative" or "negative" - just speak as yourself.
 
-    if role_key=="A" and round_num==1 and turn_num==1:
-        # Affirmative opening - should be good as user said
-        prompt=f"""You are {role_label} debating live about: {topic}
-You believe: {role_desc}
-This is your OPENING statement. Speak like real person on stage, warm conversational passionate about {topic}. Start with hook about {topic}, then strongest SPECIFIC evidence.
-{evidence_line}
+Speak like a real person having a natural conversation on stage about {topic}. Not weird formal start. Start with something like "I want to start with what God actually said" or "When you read Genesis 2:17..."
+
+Give one specific piece of evidence about {topic}. If Genesis, cite a specific verse: 2:17 moth tamuth, 3:4 lo moth temuthun, 3:7 eyes opened, 3:10 fear hiding, 3:19 dust, 3:22 become as one of us, 5:5 930 years, 3:22-24 tree of life cherubim.
+
 Don't repeat: {used_str}
-{MIN_TURN_WORDS}-{MAX_TURN_WORDS} words. Natural contractions. No bullet points. Just say your argument about {topic}.
-Topic: "{topic}" - address exact question.
+{MIN_TURN_WORDS}-{MAX_TURN_WORDS} words. Natural contractions, full sentences, warm, like talking to a friend. No bullet points. No saying what you should be doing. Just make your point about {topic} naturally.
 """
-    elif role_key=="B":
-        # Negative must REBUT previous, not generic, must answer
-        prompt=f"""You are {role_label} debating {topic}. You believe {role_desc}. Opponent {opponent_label} just said about {topic}: {prev_snip[:650]}
+        else:
+            prompt=f"""You are debating about: {topic}
+Your position is: {role_desc}
+This is your opening. Don't say "as an affirmative" or "as negative" - just speak as yourself.
 
-You MUST directly answer them about {topic}. Don't be generic, don't be short. Steps:
-1. Quote one specific thing they just said about {topic} - like "My opponent said..." 
-2. Explain why that specific claim doesn't hold up, using specific counter-evidence about {topic}
-3. Then add one NEW specific piece of evidence not used: {used_str}
+Speak like a real person having a natural conversation on stage about {topic}. Start natural like "I want us to read what text actually says" or "Look at what Genesis 2:17 actually says..."
 
-{evidence_line}
-{fresh_line}
-Speak like real person in conversation, conversational warm, {MIN_TURN_WORDS}-{MAX_TURN_WORDS} words MINIMUM {MIN_TURN_WORDS}. Must be at least {MIN_TURN_WORDS} words, not short. Must be specific to {topic}, not generic. No saying you need to do anything, just do it.
+Give one specific piece of evidence about {topic}. If Genesis, cite specific verse: 2:17 in the day you shall die, 5:5 Adam lived 930 years, 3:4 you shall not die, 3:7 eyes opened, 3:22 man become as one of us.
+
+Don't repeat: {used_str}
+{MIN_TURN_WORDS}-{MAX_TURN_WORDS} words. Natural contractions, full sentences, warm. No bullet points. Just make your point about {topic} naturally.
 """
     else:
-        prompt=f"""You are {role_label} debating {topic}. You believe {role_desc}. Opponent just said: {prev_snip[:600]}
-Respond like real person about {topic}. Quote one specific thing they claimed, show why doesn't hold with specific counter-evidence about {topic}.
-Add NEW specific point: {fresh_line}
-{evidence_line}
-Speak naturally, {MIN_TURN_WORDS}-{MAX_TURN_WORDS} words. Specific to {topic}, not generic. No meta talk.
+        # Counter point first then new point - natural
+        if "GOD" in role_label.upper():
+            prompt=f"""You are debating about: {topic}
+Your position: {role_desc}
+Opponent just said about {topic}: {prev_snip[:700]}
+
+This is round {round_num} turn {turn_num}. You must do counter-point first, then new point, naturally:
+
+First, address what opponent just said about {topic}. Quote one specific thing they claimed, like "You said Adam didn't die that day so God lied" - then explain why that doesn't hold, with specific counter-evidence about {topic}.
+
+Then add one NEW specific piece of evidence you haven't used: {used_str}
+Fresh angle: if you said 930 years before now try tree of life cherubim blocked; if eyes opened now dust to dust or shame or moth tamuth or pain toil exile.
+
+MUST cite specific Genesis verse: 2:17 moth tamuth, 3:4 lo moth temuthun, 3:7 eyes opened, 3:10 fear hiding, 3:19 dust, 3:22 become as one of us, 5:5 930 years, 3:22-24 tree of life.
+
+Don't say "as affirmative" or "negative" or "I need to" or "what I should be doing". Just speak naturally like real person in conversation about {topic}.
+
+{MIN_TURN_WORDS}-{MAX_TURN_WORDS} words, at least {MIN_TURN_WORDS}. Natural contractions, full sentences. Topic is "{topic}" - be specific about it.
+"""
+        else:
+            prompt=f"""You are debating about: {topic}
+Your position: {role_desc}
+Opponent just said about {topic}: {prev_snip[:700]}
+
+This is round {round_num} turn {turn_num}. You must do counter-point first, then new point, naturally:
+
+First, address what opponent just said about {topic}. Quote one specific thing they claimed about {topic}, like "You said they experienced spiritual death that day" - then show why that reading doesn't fit what text actually reports.
+
+Then add one NEW specific piece of evidence you haven't used: {used_str}
+Fresh angle: if you said eyes opened before now try 930 years or tree of life cherubim or dust to dust or shame.
+
+MUST cite specific Genesis verse: 2:17 in the day you shall die, 5:5 Adam lived 930 years, 3:4 you shall not die, 3:7 eyes opened, 3:22 man become as one of us, 3:22-24 tree of life blocked, 3:10 fear hiding.
+
+Don't say "as affirmative" or "negative" or "I need to" or "what I should be doing". Just speak naturally like real person in conversation about {topic}.
+
+{MIN_TURN_WORDS}-{MAX_TURN_WORDS} words, at least {MIN_TURN_WORDS}. Natural contractions, full sentences. Topic is "{topic}" - be specific about it.
 """
 
     for m in [model]+FALLBACK_MODELS[:4]:
-        temp=0.92+turn_num*0.05+random.random()*0.1
-        resp=query_openrouter(prompt,m,max_tokens=900,temperature=temp)
-        if resp and count_words(resp)>=95:
+        resp=query_openrouter(prompt,m,max_tokens=900,temperature=0.92+random.random()*0.08)
+        if resp and count_words(resp)>=100:
             cleaned=strip_filler(resp)
             cleaned=re.sub(r"\s+"," ",cleaned).strip()
-            # Remove leaked task phrases
+            # Remove weird affirmative negative mentions and task phrases
+            cleaned=re.sub(r"(?i)\bAs (an? )?(affirmative|negative) debater.*?[.]", "", cleaned)
+            cleaned=re.sub(r"(?i)\bI am (the )?(affirmative|negative).*?[.]", "", cleaned)
+            cleaned=re.sub(r"(?i)\bThe (affirmative|negative) (argument|position|side).*? is.*?[.]", "", cleaned)
             cleaned=re.sub(r"(?i)\bI need to (do|show|quote|explain|address|provide).*?\.", "", cleaned)
-            cleaned=re.sub(r"(?i)\bI should (do|show).*?\.", "", cleaned)
             cleaned=re.sub(r"(?i)\bWhat I should be doing.*?[.]", "", cleaned)
             cleaned=re.sub(r"(?i)\bIn this (turn|round|phrase|response).*?[,\.]", "", cleaned)
             cleaned=re.sub(r"(?i)\bAs (an AI|per instructions).*?[.]", "", cleaned)
             cleaned=re.sub(r"\s+"," ",cleaned).strip()
             if not cleaned.endswith(('.', '!', '?')): cleaned+="."
             low=cleaned.lower()
-            # Ensure not too short for negative rebuttal
-            if role_key=="B" and count_words(cleaned)<MIN_TURN_WORDS-10:
-                # Ask model to expand
-                extra=query_openrouter(prompt+"\nExpand to at least 120 words with specific evidence about "+topic,m,max_tokens=400,temperature=0.95)
-                if extra and count_words(extra)>60:
-                    cleaned+=" "+extra
-            # Avoid repeat
-            is_rep=False
-            for used in USED_ARGUMENTS:
-                if len(used)>30 and used.lower() in low:
-                    is_rep=True; break
-            if not is_rep:
-                for s in cleaned.split('. ')[:3]:
-                    if len(s)>25: USED_ARGUMENTS.add(s[:80])
-                if count_words(cleaned)>=MIN_TURN_WORDS-15:
+            # Avoid saying affirmative negative
+            if "affirmative" in low or "negative" in low:
+                # Try to remove those sentences
+                sents=cleaned.split(". ")
+                cleaned=". ".join([s for s in sents if "affirmative" not in s.lower() and "negative" not in s.lower()])
+            if count_words(cleaned)>=MIN_TURN_WORDS-10:
+                # Check repeat
+                is_rep=False
+                for used in USED_ARGUMENTS:
+                    if len(used)>30 and used.lower() in low:
+                        is_rep=True; break
+                if not is_rep:
+                    for s in cleaned.split('. ')[:2]:
+                        if len(s)>30: USED_ARGUMENTS.add(s[:80])
                     return cleaned[:1800]
     fb=generate_fallback_debate(role_label, topic, round_num, turn_num)
     USED_ARGUMENTS.add(fb[:80])
     return fb
 
 def build_round_exchanges(topic, rn, ap_model, sk_model, prev, roles):
-    ap_turns=[]; sk_turns=[]; hist=prev
+    a_turns=[]; s_turns=[]; hist=prev
     for tn in range(1,TURNS_PER_SIDE_PER_ROUND+1):
         a=generate_turn("A", topic, rn, tn, hist, ap_model, roles['side_a_label'], roles['side_a_desc'], roles['side_b_label'], roles['side_b_desc'])
-        ap_turns.append(a); hist+=f"\n{roles['side_a_label']}: {a}\n"
+        a_turns.append(a); hist+=f"\n{roles['side_a_label']}: {a}\n"
         s=generate_turn("B", topic, rn, tn, hist, sk_model, roles['side_b_label'], roles['side_b_desc'], roles['side_a_label'], roles['side_a_desc'])
-        sk_turns.append(s); hist+=f"\n{roles['side_b_label']}: {s}\n"
-    return ap_turns,sk_turns,hist
+        s_turns.append(s); hist+=f"\n{roles['side_b_label']}: {s}\n"
+    return a_turns,s_turns,hist
 
 def neutral_judge(model):
     a=random.uniform(53,68); b=random.uniform(53,68)
     if abs(a-b)<4:
         if random.random()>0.5: a+=7
         else: b+=7
-    return {"model":model,"provider":provider_from_model(model),"display_name":get_judge_short_name(model),"A_total":round(a,1),"B_total":round(b,1),"winner":"A" if a>b else "B","reason":"varied to avoid 50/50"}
+    return {"model":model,"provider":provider_from_model(model),"display_name":get_judge_short_name(model),"A_total":round(a,1),"B_total":round(b,1),"winner":"A" if a>b else "B"}
 
 def judge_round(model,topic,rn,ap,sk,roles):
     prompt=f'Judge Round {rn} about "{topic}". {roles["side_a_label"]}: {ap[:800]} vs {roles["side_b_label"]}: {sk[:800]}. Score 0-100. Return ONLY JSON: {{"A_total":0-100,"B_total":0-100,"winner":"A or B","reason":"one sentence why"}}. Must NOT be equal. Be decisive.'
@@ -401,7 +427,7 @@ def evaluate_round(judges,topic,rn,ap,sk,roles):
 def calculate_round_average(res):
     return round(sum(r["A_total"] for r in res)/len(res),2), round(sum(r["B_total"] for r in res)/len(res),2)
 
-# === EMOJI CODE - FIXED TO SHOW MORE THAN JUST GOD EMOJI ===
+# EMOJI CODE - TWEMOJI DOWNLOAD, FIX WHITE BOXES, VARIED
 def emoji_to_codepoint(ec):
     codes=[]
     for ch in ec:
@@ -421,7 +447,6 @@ def create_emoji_asset(ec, idx):
         urls=[
             f"https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/{code}.png",
             f"https://cdn.jsdelivr.net/gh/twitter/twemoji@latest/assets/72x72/{code}.png",
-            f"https://raw.githubusercontent.com/twitter/twemoji/master/assets/72x72/{code}.png",
         ]
         if "-" in code:
             first=code.split("-")[0]
@@ -562,10 +587,13 @@ def generate_subtitles(words,fn,scorecard=False,audio_file=None,full_text=None):
 
 async def generate_audio_async(text,voice,fn):
     ct=clean_for_speech(text)
-    if "Brian" in voice or "Andrew" in voice:
+    # HARDWIRED DISTINCT - best natural prosody per voice, never change
+    if "Brian" in voice:
         ssml=f"<speak version='1.0' xml:lang='en-US'><voice name='{voice}'><prosody rate='-1%' pitch='-2%'>{ct}</prosody></voice></speak>"
     elif "Ava" in voice:
         ssml=f"<speak version='1.0' xml:lang='en-US'><voice name='{voice}'><prosody rate='+2%' pitch='+1%'>{ct}</prosody></voice></speak>"
+    elif "Andrew" in voice:
+        ssml=f"<speak version='1.0' xml:lang='en-US'><voice name='{voice}'><prosody rate='+0%' pitch='+0%'>{ct}</prosody></voice></speak>"
     else:
         ssml=f"<speak version='1.0' xml:lang='en-US'><voice name='{voice}'><prosody rate='+1%'>{ct}</prosody></voice></speak>"
     try:
@@ -594,16 +622,25 @@ async def generate_audio_async(text,voice,fn):
         return words
 
 def generate_audio(text,role,fn,judge_voice_index=None):
+    # HARDWIRED - MODERATOR STAYS, OTHERS BEST NATURAL
     if "JUDGE" in role.upper():
-        voice=JUDGE_VOICES[(judge_voice_index or 0) % len(JUDGE_VOICES)]
-    elif "GOD" in role.upper(): voice=VOICES["A"]
-    elif "SERPENT" in role.upper(): voice=VOICES["B"]
-    else: voice=VOICES["Moderator"]
+        idx=judge_voice_index if judge_voice_index is not None else 0
+        voice=JUDGE_VOICES[idx % len(JUDGE_VOICES)]
+        print(f"  Voice JUDGE {idx}: {voice}")
+    elif "GOD TOLD TRUTH" in role.upper() or role.strip().upper()=="A" or "AFFIRMATIVE" in role.upper():
+        voice=VOICES["A"]  # Brian hardwired
+        print(f"  Voice GOD/AFFIRMATIVE hardwired: {voice}")
+    elif "SERPENT TOLD TRUTH" in role.upper() or role.strip().upper()=="B" or "NEGATIVE" in role.upper():
+        voice=VOICES["B"]  # Ava hardwired
+        print(f"  Voice SERPENT/NEGATIVE hardwired: {voice}")
+    else:
+        voice=VOICES["Moderator"]  # Andrew stays
+        print(f"  Voice MODERATOR hardwired: {voice}")
     try: return asyncio.run(generate_audio_async(text,voice,fn))
     except: 
         return asyncio.run(generate_audio_async(text,VOICES["Moderator"],fn))
 
-# SOUNDBAR BELOW NAMES INSIDE NAMECARDS - PERFECT PLACEMENT
+# SOUNDBAR BELOW NAMES INSIDE NAMECARDS - HARDWIRED PERFECT
 def render_video_segment(bg_path,ui_path,audio_path,subs_path,output_path,position,glow,cx,cy,visual_plan):
     duration=get_audio_duration(audio_path) or 10.0
     cmd=["ffmpeg","-y","-loop","1","-i",bg_path,"-loop","1","-i",ui_path,"-i",audio_path]
@@ -613,7 +650,6 @@ def render_video_segment(bg_path,ui_path,audio_path,subs_path,output_path,positi
     zoom="[bg]scale=iw*1.3:ih*1.3,crop=1920:1080:(iw-1920)/2-200:(ih-1080)/2[bg_zoom]" if position=="left" else "[bg]scale=iw*1.3:ih*1.3,crop=1920:1080:(iw-1920)/2+200:(ih-1080)/2[bg_zoom]" if position=="right" else "[bg]scale=iw*1.25:ih*1.25,crop=1920:1080:(iw-1920)/2:(ih-1080)/2[bg_zoom]"
     filter_parts.append(zoom)
     glow_hex=glow.lstrip('#')
-    # PERFECT SOUNDBAR INSIDE NAMECARDS BELOW NAMES
     wave_w=560
     wave_h=32
     filter_parts.append(f"[2:a]aformat=channel_layouts=mono,compand=gain=-6,showwaves=s={wave_w}x{wave_h}:mode=cline:colors=0x{glow_hex}:rate=30:draw=full:scale=sqrt[wave_raw]")
@@ -697,24 +733,21 @@ def render_scorecard_video(ip,ap,sp,op):
     r=subprocess.run(cmd,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
     if r.returncode!=0: raise RuntimeError("Scorecard render failed")
 
-# MORE EMOJIS - NOT JUST GOD
 def create_emoji_plan(text, words):
     if not words: return []
-    # Expanded map - more than just god
     word_emoji_map={
         "adam":"🧑","man":"🧑","human":"🧑","person":"👤","people":"👥","eve":"🧑","woman":"🧑",
         "garden":"🌿","eden":"🌿","plant":"🌱","ground":"🪨",
-        "apple":"🍎","fruit":"🍎","eat":"🍎","ate":"🍎","eating":"🍎",
-        "tree":"🌳","trees":"🌳","branch":"🌲",
-        "serpent":"🐍","snake":"🐍","serpent's":"🐍",
-        "eyes":"👀","eye":"👀","opened":"👀","saw":"👁️","see":"👁️","naked":"🙈","shame":"🙈",
-        "afraid":"😨","fear":"😨","hide":"😨","hid":"😨","hiding":"😨",
-        "death":"💀","die":"💀","died":"💀","dying":"💀","dust":"💀",
+        "apple":"🍎","fruit":"🍎","eat":"🍎","ate":"🍎",
+        "tree":"🌳","trees":"🌳",
+        "serpent":"🐍","snake":"🐍",
+        "eyes":"👀","eye":"👀","opened":"👀","naked":"🙈","shame":"🙈",
+        "afraid":"😨","fear":"😨","hide":"😨","hid":"😨",
+        "death":"💀","die":"💀","died":"💀","dust":"💀",
         "sword":"⚔️","cherubim":"👼","angel":"👼",
-        "knowledge":"🧠","wise":"🧠","wisdom":"💡","know":"🧠","knowing":"🧠",
-        "god":"✨","lord":"✨","creator":"✨",
-        "pain":"😣","sorrow":"😣","toil":"😓","sweat":"😓","work":"😓",
-        "exile":"🚪","driven":"🚪","gate":"🚪","life":"🌟","live":"🌟","forever":"♾️",
+        "knowledge":"🧠","wise":"🧠","wisdom":"💡","know":"🧠",
+        "god":"✨","lord":"✨",
+        "pain":"😣","toil":"😓","exile":"🚪","life":"🌟",
     }
     plan=[]; used=[]
     for w in words:
@@ -724,21 +757,10 @@ def create_emoji_plan(text, words):
             if any(not (e < us or s > ue) for us,ue in used): continue
             if used and s-used[-1][1]<0.9: continue
             ec=word_emoji_map[cw]
-            # Avoid repeating same emoji back-to-back, but allow varied
             if len(plan)>=1 and ec==plan[-1]["emoji"]: continue
             plan.append({"emoji":ec,"start":max(0,s),"end":e,"word":w["text"]})
             used.append((s,e))
             if len(plan)>=6: break
-    # If still only 1 emoji, add second from topic keywords
-    if len(plan)<=1 and len(words)>10:
-        extra_words=["serpent","tree","eyes","death","knowledge","garden"]
-        for ew in extra_words:
-            if len(plan)>=5: break
-            if ew not in [p["word"].lower() for p in plan]:
-                if ew in word_emoji_map and word_emoji_map[ew] not in [p["emoji"] for p in plan]:
-                    # Add at middle
-                    mid_t=len(words)//2
-                    plan.append({"emoji":word_emoji_map[ew],"start":words[mid_t]["start"],"end":words[mid_t]["start"]+1.3,"word":ew})
     return plan
 
 def create_segment(text,role,name,topic,sid,model_for_visuals,pos=None,glow=None,judge_voice_index=None):
@@ -765,31 +787,23 @@ def generate_panel_commentary(model,side,topic,rn,ap,sk,prev,roles):
     pref=roles['side_a_label'] if side=="A" else roles['side_b_label']
     other=roles['side_b_label'] if side=="A" else roles['side_a_label']
     def trim(t,mw=150): wl=t.split(); return t if len(wl)<=mw else " ".join(wl[-mw:])
-    # Varied starters, not just Look over and over - natural conversational
-    starters=["Honestly,","For me,","What stood out to me in round {rn} was","I kept coming back to","The thing that decided round {rn} for me","Round {rn} really came down to","If I'm being honest about round {rn},","What convinced me in round {rn}","When I weighed both sides in round {rn},","The moment that tipped round {rn}"]
+    starters=["Honestly,","For me,","What stood out to me in round {rn} was","I kept coming back to","The thing that decided round {rn}","Round {rn} really came down to","If I'm being honest about round {rn},","What convinced me in round {rn}","When I weighed both sides in round {rn},"]
     starter=random.choice(starters).format(rn=rn)
-    prompt=f"You are {prov}, judge on live debate panel about {topic}. You scored {pref} higher than {other} in round {rn}. Speak like real person on YouTube, warm conversational, natural sentences with contractions, 3-4 sentences. DO NOT start with Look. Start with {starter}. Give 2 specific reasons why {pref} won this round about {topic} woven naturally, not robotic. {pref}: {trim(ap)} vs {other}: {trim(sk)}. MUST argue {pref} won round {rn}. Avoid repeating previous. Be warm human panel style, varied vocab."
+    prompt=f"You are {prov}, judge on live panel about {topic}. You scored {pref} higher than {other} in round {rn}. Speak like real person on YouTube, warm conversational, natural sentences with contractions, 3-4 sentences. DO NOT start with Look. Start with {starter}. Give 2 specific reasons why {pref} won this round about {topic} woven naturally, not robotic. {pref}: {trim(ap)} vs {other}: {trim(sk)}. MUST argue {pref} won round {rn}. Be warm human panel style."
     resp=query_openrouter(prompt,model,timeout=35,max_tokens=400,temperature=0.93)
-    if resp and len(resp.split())>=12 and "error" not in resp.lower()[:120]:
+    if resp and len(resp.split())>=12:
         resp=re.sub(r"(?i)\bI need to.*?[.]", "", resp)
-        resp=re.sub(r"(?i)\bIn this (phrase|round).*?[,\.]", "", resp)
-        resp=re.sub(r"\s+"," ",resp).strip()
-        # Remove Look if model still starts with Look despite instruction
         resp=re.sub(r"^Look,?\s*", "", resp, flags=re.IGNORECASE)
-        resp=re.sub(r"^Look over and over,?\s*", "", resp, flags=re.IGNORECASE)
-        # Ensure it doesn't start with Look
         if resp.lower().startswith("look"):
             resp=starter+" "+resp[4:].lstrip()
+        resp=re.sub(r"\s+"," ",resp).strip()
         low=resp.lower()[:80]
         if low not in USED_JUDGE_EXPLANATIONS and len(resp.split())>=10:
             USED_JUDGE_EXPLANATIONS.add(low)
             return resp
-    # Natural varied fallback, not robotic Look over and over
     fallbacks=[
-        f"{starter} {pref} brought a specific verse about {topic} you can actually check, not just ideas. They laid out how it fits what happened that day, while {other} kept repeating same point without answering counter-evidence about {topic}.",
-        f"{starter} I thought {pref} answered the strongest objection head on about {topic}. When {other} said that thing about {topic}, {pref} showed why that reading misses context, and added second piece about {topic} that {other} didn't address.",
-        f"{starter} {pref} was consistent and concrete about {topic}. They talked about what actually happened that day, like fear hiding exile, while {other} stayed abstract about {topic} without specific verses.",
-        f"For me personally in round {rn}, {pref} felt more honest about costs. They didn't just promise benefits about {topic}, they mentioned consequences like pain toil losing tree of life, while {other} left that out.",
+        f"{starter} {pref} brought specific verse about {topic} you can check, not just ideas. They laid out how it fits what happened that day, while {other} kept repeating same point without answering counter-evidence about {topic}.",
+        f"{starter} I thought {pref} answered strongest objection head on about {topic}. When {other} said that thing about {topic}, {pref} showed why that reading misses context, and added second piece about {topic} that {other} didn't address.",
     ]
     chosen=random.choice(fallbacks)
     USED_JUDGE_EXPLANATIONS.add(chosen[:60])
@@ -812,17 +826,16 @@ def stitch_segments(segs,out):
     if r.returncode!=0: print(r.stderr[-7000:]); raise RuntimeError("Concat failed")
 
 def run_debate_pipeline():
-    global USED_ARGUMENTS, USED_PHRASES, USED_KEYWORDS, USED_JUDGE_EXPLANATIONS, USED_EMOJIS
-    USED_ARGUMENTS=set(); USED_PHRASES=set(); USED_KEYWORDS=set(); USED_JUDGE_EXPLANATIONS=set(); USED_EMOJIS=set()
+    global USED_ARGUMENTS, USED_JUDGE_EXPLANATIONS, USED_EMOJIS
+    USED_ARGUMENTS=set(); USED_JUDGE_EXPLANATIONS=set(); USED_EMOJIS=set()
     cleanup_cache()
     if not OPENROUTER_API_KEY: raise RuntimeError("OPENROUTER_API_KEY missing")
     if not os.path.exists("topic.txt"):
         open("topic.txt","w",encoding="utf-8").write("Did God or the serpent lie in Genesis 1?")
     topic=open("topic.txt","r",encoding="utf-8").read().strip() or "Did God or the serpent lie in Genesis 1?"
     print(f"\nTOPIC: {topic}\n")
-    print(f"SETTINGS: {ROUNDS} rounds x {TURNS_PER_SIDE_PER_ROUND} turns = {ROUNDS*TURNS_PER_SIDE_PER_ROUND*2} debate segments, {WORDS_PER_TURN} words")
-    print(f"VOICES DISTINCT: GOD/Brian, SERPENT/Ava, MODERATOR/Andrew + 7 judges distinct")
-    print(f"EMOJIS: Varied not just God - serpent, tree, eyes, death, knowledge etc, word-synced")
+    print(f"SETTINGS 10-15 MIN: {ROUNDS} rounds x {TURNS_PER_SIDE_PER_ROUND} turns = {ROUNDS*TURNS_PER_SIDE_PER_ROUND*2} debate segments, ~140 words each")
+    print(f"VOICES HARDWIRED DISTINCT: GOD/Brian={VOICES['A']}, SERPENT/Ava={VOICES['B']}, MODERATOR/Andrew={VOICES['Moderator']} - never same")
     avail=discover_models()
     if not avail: avail=FALLBACK_MODELS.copy()
     ap_model,sk_model=choose_primary_models(avail)
@@ -831,7 +844,7 @@ def run_debate_pipeline():
     judges=choose_judges(avail,(ap_model,sk_model))
     if len(judges)<5:
         judges=[m for m in FALLBACK_MODELS][:7]
-    print(f"Judges GOOD KEEP ({len(judges)} FREE one per company): {', '.join(get_judge_short_name(j) for j in judges)}")
+    print(f"Judges FIXED ({len(judges)}): {', '.join(get_judge_short_name(j) for j in judges)}")
     segs=[]; sid=0
     def add_seg(text,role,name,pos=None,glow=None,jvi=None):
         nonlocal sid
@@ -840,10 +853,10 @@ def run_debate_pipeline():
     add_seg(build_intro(topic,len(judges),roles),"Moderator","MODERATOR")
     prev=""; cum_a=0.0; cum_b=0.0; pcom=[]
     for rn in range(1,ROUNDS+1):
-        print(f"\nROUND {rn} - SPECIFIC CONVERSATIONAL REBUTTAL ANSWERS")
+        print(f"\nROUND {rn} - NATURAL CONVERSATIONAL COUNTER-POINT FIRST THEN NEW POINT")
         a_turns,s_turns,prev=build_round_exchanges(topic,rn,ap_model,sk_model,prev,roles)
         for ti in range(TURNS_PER_SIDE_PER_ROUND):
-            print(f"  Turn {ti+1}: A={count_words(a_turns[ti])} words B={count_words(s_turns[ti])} words used:{len(USED_ARGUMENTS)}")
+            print(f"  Turn {ti+1}: A={count_words(a_turns[ti])} B={count_words(s_turns[ti])} used:{len(USED_ARGUMENTS)}")
             add_seg(a_turns[ti],roles['side_a_label'],roles['side_a_label'],"left","#00FFCC")
             add_seg(s_turns[ti],roles['side_b_label'],roles['side_b_label'],"right","#FF00FF")
         a_full="\n".join(a_turns); s_full="\n".join(s_turns)
@@ -872,7 +885,7 @@ def run_debate_pipeline():
             add_seg(cb,"AI Judge",f"AI JUDGE — {jb['display_name'].upper()} ({jb['provider'].upper()})","center","#3399FF",jvi=jbi)
     add_seg(build_outro(len(judges),cum_a,cum_b,roles),"Moderator","MODERATOR")
     stitch_segments(segs,OUTPUT_FILE)
-    print(f"\nCOMPLETE: {OUTPUT_FILE} — {cum_a:.1f} vs {cum_b:.1f} — Judges good keep, emojis varied not just God, negative rebuttal answers and full length, affirmative specific not general, judges natural not Look over and over, soundbar inside cards below names 560x32 cx+65 cy+62")
+    print(f"\nCOMPLETE: {OUTPUT_FILE} — {cum_a:.1f} vs {cum_b:.1f} — 10-15 min, hardwired distinct voices Brian/Ava/Andrew, natural conversational counter-point first then new point, no affirmative/negative weird talk, judges one per company unique")
     cleanup_cache()
 
 if __name__=="__main__":
