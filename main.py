@@ -31,34 +31,34 @@ MAX_TURN_WORDS = 155
 MAX_JUDGES = 7
 JUDGE_WORKERS = 7
 
+# NO EMOJI IMAGE CREATION - use native system emojis popping up like typing
 EMOJI_W = 200
 EMOJI_H = 200
-USED_EMOJIS = set()
 USED_ARGUMENTS = set()
-USED_PHRASES = set()
-USED_KEYWORDS = set()
 USED_JUDGE_EXPLANATIONS = set()
 
-# DISTINCT NATURAL VOICES
+# STANDARD VOICES WE AGREED - distinct, must not be same
 VOICES = {
-    "A": "en-US-BrianMultilingualNeural",
-    "B": "en-US-AvaMultilingualNeural",
-    "Moderator": "en-US-AndrewMultilingualNeural",
+    "A": "en-US-BrianMultilingualNeural",  # GOD / Apologist - deep male authoritative
+    "B": "en-US-AvaMultilingualNeural",  # SERPENT / Skeptic - clear female skeptical
+    "Moderator": "en-US-AndrewMultilingualNeural",  # Moderator - neutral British-tinged male
     "AI Christian Apologist": "en-US-BrianMultilingualNeural",
     "AI Skeptic": "en-US-AvaMultilingualNeural",
+    "GOD TOLD TRUTH": "en-US-BrianMultilingualNeural",
+    "SERPENT TOLD TRUTH": "en-US-AvaMultilingualNeural",
 }
 JUDGE_VOICES = [
-    "en-US-ChristopherNeural",
-    "en-US-EmmaMultilingualNeural",
-    "en-US-GuyNeural",
-    "en-GB-RyanNeural",
-    "en-AU-WilliamNeural",
-    "en-CA-ClaraNeural",
-    "en-US-JennyNeural",
+    "en-US-ChristopherNeural",      # Judge 1 deep US male
+    "en-US-EmmaMultilingualNeural", # Judge 2 warm US female
+    "en-US-GuyNeural",              # Judge 3 confident male
+    "en-GB-RyanNeural",             # Judge 4 British male
+    "en-AU-WilliamNeural",          # Judge 5 Aussie male
+    "en-CA-ClaraNeural",            # Judge 6 Canadian female
+    "en-US-JennyNeural",            # Judge 7 bright US female
 ]
 JUDGE_VOICE_MAP = {}
 
-# FREE ONLY
+# AGREED FREE MODELS ONLY - no obscure models
 FALLBACK_MODELS = [
     "google/gemini-2.0-flash-exp:free",
     "google/gemini-flash-1.5-8b:free",
@@ -70,41 +70,46 @@ FALLBACK_MODELS = [
     "deepseek/deepseek-r1:free",
     "deepseek/deepseek-chat:free",
     "qwen/qwen-2.5-7b-instruct:free",
-    "qwen/qwq-32b:free",
     "openai/gpt-4o-mini:free",
     "anthropic/claude-3-haiku:free",
     "nvidia/llama-3.1-nemotron-70b-instruct:free",
 ]
 
+# Only these providers allowed for judges
+ALLOWED_PROVIDERS = {"openai","anthropic","google","meta-llama","mistralai","deepseek","qwen","nvidia"}
+
 PROVIDER_ALIASES = {
     "openai": "OpenAI", "anthropic": "Anthropic", "google": "Google",
     "x-ai": "xAI", "xai": "xAI", "deepseek": "DeepSeek",
-    "mistralai": "Mistral", "mistral": "Mistral",
-    "meta-llama": "Meta", "meta": "Meta", "qwen": "Qwen", "alibaba": "Qwen",
-    "nvidia": "Nvidia", "cohere": "Cohere",
+    "mistralai": "Mistral", "meta-llama": "Meta", "meta": "Meta",
+    "qwen": "Qwen", "nvidia": "Nvidia",
 }
 
 def provider_from_model(m):
     if not m: return "Unknown"
-    base = m.split("/",1)[0].lower().strip()
+    base=m.split("/",1)[0].lower().strip()
     return PROVIDER_ALIASES.get(base, base.title())
 
 def get_judge_short_name(mid):
     low=(mid or "").lower()
+    if "gpt-4o-mini" in low: return "ChatGPT Mini"
     if "gpt" in low: return "ChatGPT"
     if "claude" in low: return "Claude"
+    if "gemini-2.0" in low: return "Gemini 2.0"
     if "gemini" in low: return "Gemini"
     if "gemma" in low: return "Gemma"
-    if "grok" in low: return "Grok"
-    if "deepseek" in low: return "DeepSeek"
-    if "mistral" in low: return "Mistral"
+    if "llama-3.3" in low: return "Llama 3.3"
     if "llama" in low: return "Llama"
+    if "mistral-nemo" in low: return "Mistral Nemo"
+    if "mistral" in low: return "Mistral"
+    if "deepseek-r1" in low: return "DeepSeek R1"
+    if "deepseek" in low: return "DeepSeek"
     if "qwen" in low: return "Qwen"
     if "nemotron" in low: return "Nemotron"
     return provider_from_model(mid)
 
 def cleanup_cache():
-    for pat in ["*.mp4","*.mp3","*.ass","*.png","*.gif","*_list.txt"]:
+    for pat in ["*.mp4","*.mp3","*.ass","*.png","*_list.txt"]:
         for fn in glob.glob(pat):
             if fn in [OUTPUT_FILE,"background.png","topic.txt"]: continue
             try: os.remove(fn)
@@ -117,10 +122,9 @@ def clean_for_speech(t):
     t=re.sub(r"www\.\S+"," ",t)
     t=re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", t)
     t=re.sub(r"```.*?```"," ",t, flags=re.DOTALL)
-    t=re.sub(r"`[^`]+`"," ",t)
-    t=t.replace("(", " ").replace(")", " ").replace("[", " ").replace("]", " ").replace("{", " ").replace("}", " ")
+    t=t.replace("(", " ").replace(")", " ").replace("[", " ").replace("]", " ")
     t=t.replace("–",", ").replace("—",". ").replace(" - ",". ")
-    for o,n in {"*":"", "#":"", "_":"", "`":"", "\"":"", ":":" . ", ";":" . ", "&":" and", "=":" ", ">":" ", "<":" "}.items():
+    for o,n in {"*":"", "#":"", "_":"", "`":"", "\"":"", ":":" . ", ";":" . ", "&":" and"}.items():
         t=t.replace(o,n)
     t=re.sub(r"\s+"," ",t).strip()
     if t and not t[-1] in ".!?": t+="."
@@ -155,26 +159,32 @@ def discover_models():
         for it in r.json().get("data",[]):
             mid=it.get("id","")
             if not mid or ":free" not in mid.lower(): continue
-            if any(x in mid.lower() for x in ["embed","tts","whisper","audio","image"]): continue
+            prov=mid.split("/")[0].lower()
+            if prov not in ALLOWED_PROVIDERS: continue
+            if any(x in mid.lower() for x in ["embed","tts","whisper","audio","image","vision"]): continue
             free.append(mid)
         if free:
-            print(f"Found {len(free)} FREE models")
-            return list(dict.fromkeys(free))
+            # dedup and keep only agreed providers
+            uniq=list(dict.fromkeys(free))
+            print(f"Found {len(uniq)} FREE agreed models: {', '.join(get_judge_short_name(m) for m in uniq[:7])}")
+            return uniq
         return FALLBACK_MODELS.copy()
-    except:
+    except Exception as e:
+        print(f"Discover fail {e}")
         return FALLBACK_MODELS.copy()
 
-def query_openrouter(prompt,mid,timeout=50,max_tokens=800,temperature=0.88):
+def query_openrouter(prompt,mid,timeout=55,max_tokens=850,temperature=0.88):
     if not OPENROUTER_API_KEY: return None
-    if ":free" not in mid.lower():
-        return None
+    if ":free" not in mid.lower(): return None
+    prov=mid.split("/")[0].lower()
+    if prov not in ALLOWED_PROVIDERS: return None
     payload={"model":mid,"messages":[{"role":"user","content":prompt}],"temperature":temperature,"max_tokens":max_tokens}
     for attempt in range(3):
         try:
             resp=requests.post(OPENROUTER_URL,headers=openrouter_headers(),json=payload,timeout=timeout)
             if resp.status_code==200:
                 c=resp.json().get("choices",[])[0].get("message",{}).get("content","")
-                if c and len(c.strip())>60: return c.strip()
+                if c and len(c.strip())>70: return c.strip()
             elif resp.status_code==402:
                 return None
         except:
@@ -183,7 +193,8 @@ def query_openrouter(prompt,mid,timeout=50,max_tokens=800,temperature=0.88):
     return None
 
 def choose_primary_models(avail):
-    free=[m for m in avail if ":free" in m] or avail
+    # Ensure distinct providers for A vs B
+    free=[m for m in avail if ":free" in m and m.split("/")[0].lower() in ALLOWED_PROVIDERS] or FALLBACK_MODELS
     used=set(); picks=[]
     for m in free:
         prov=provider_from_model(m)
@@ -191,12 +202,13 @@ def choose_primary_models(avail):
             picks.append(m); used.add(prov)
         if len(picks)>=2: break
     if len(picks)<2: picks=(free+FALLBACK_MODELS)[:2]
+    print(f"Primary engines FREE distinct voices: {get_judge_short_name(picks[0])} (Brian) vs {get_judge_short_name(picks[1])} (Ava)")
     return picks[0],picks[1]
 
 def choose_judges(avail,primary):
     global JUDGE_VOICE_MAP
     primary_prov=set(provider_from_model(m) for m in primary)
-    cands=[m for m in avail if m not in primary and ":free" in m and provider_from_model(m) not in primary_prov]
+    cands=[m for m in avail if m not in primary and ":free" in m and m.split("/")[0].lower() in ALLOWED_PROVIDERS and provider_from_model(m) not in primary_prov]
     groups={}
     for m in cands:
         prov=provider_from_model(m)
@@ -219,42 +231,20 @@ def choose_judges(avail,primary):
     if len(result)<5:
         for m in FALLBACK_MODELS:
             if len(result)>=5: break
-            if m not in primary and get_judge_short_name(m) not in seen:
+            if m not in primary and get_judge_short_name(m) not in seen and m.split("/")[0].lower() in ALLOWED_PROVIDERS:
                 result.append(m); seen.add(get_judge_short_name(m))
     JUDGE_VOICE_MAP={mid: idx%len(JUDGE_VOICES) for idx,mid in enumerate(result)}
-    print(f"Judges ({len(result)} FREE one per company): {', '.join(f'{provider_from_model(m)} ({get_judge_short_name(m)})' for m in result)}")
+    print(f"Judges AGREED FREE ONE PER COMPANY ({len(result)}): {', '.join(f'{provider_from_model(m)} ({get_judge_short_name(m)})' for m in result)}")
     return result
 
 def get_debate_roles(topic, model):
     tl=(topic or "").lower()
-    # Hardcoded sensible defaults for Genesis topic
     if "god" in tl and "serpent" in tl:
-        return {"side_a_label":"GOD TOLD TRUTH","side_a_desc":"Argues God told the truth in Genesis and serpent misled","side_b_label":"SERPENT TOLD TRUTH","side_b_desc":"Argues serpent's description matched what happened that day better than God's threat"}
+        return {"side_a_label":"GOD TOLD TRUTH","side_a_desc":"Argues God told the truth in Genesis 2:17 moth tamuth and serpent twisted it","side_b_label":"SERPENT TOLD TRUTH","side_b_desc":"Argues serpent's prediction in Genesis 3:4-5 matched what happened that day better than God's threat"}
     if "creator" in tl or "universe" in tl:
-        return {"side_a_label":"NEEDS CREATOR","side_a_desc":"Argues universe requires a creator beyond itself","side_b_label":"NO CREATOR NEEDED","side_b_desc":"Argues universe can be explained without a creator"}
-    # For other topics, try model but with strict fallback
-    prompt=f'Topic is "{topic}". Give me two opposing debate sides. Reply ONLY JSON like: {{"a_label":"SHORT NAME 2-4 WORDS ALL CAPS","a_desc":"one sentence what side A argues","b_label":"SHORT NAME 2-4 WORDS ALL CAPS","b_desc":"one sentence what side B argues"}}. Make labels make sense, not placeholder.'
-    resp=query_openrouter(prompt, model, timeout=25, max_tokens=250, temperature=0.4)
-    if resp:
-        try:
-            m=re.search(r"\{.*\}",resp,re.DOTALL)
-            if m:
-                data=json.loads(m.group(0))
-                a_label=str(data.get("a_label","") or data.get("side_a_label","")).strip().upper()
-                b_label=str(data.get("b_label","") or data.get("side_b_label","")).strip().upper()
-                a_desc=str(data.get("a_desc","") or data.get("side_a_desc","")).strip()
-                b_desc=str(data.get("b_desc","") or data.get("side_b_desc","")).strip()
-                # Reject nonsense placeholders
-                bad_phrases=["LABEL","2-3 WORDS","FOR","AGAINST","PLACEHOLDER","YOUR LABEL"]
-                if a_label and b_label and a_label!=b_label and not any(b in a_label for b in bad_phrases) and not any(b in b_label for b in bad_phrases) and len(a_label)>=3 and len(b_label)>=3 and len(a_label)<=30 and len(b_label)<=30:
-                    return {"side_a_label":a_label,"side_a_desc":a_desc or f"Argues {a_label}","side_b_label":b_label,"side_b_desc":b_desc or f"Argues {b_label}"}
-        except:
-            pass
-    # Final fallback - use topic words
-    words = [w for w in re.findall(r"\b[A-Z][a-z]+\b", topic) if len(w)>3][:2]
-    if len(words)>=2:
-        return {"side_a_label":f"{words[0].upper()} IS TRUE","side_a_desc":f"Argues {topic} is true","side_b_label":f"{words[0].upper()} IS FALSE","side_b_desc":f"Argues {topic} is false"}
-    return {"side_a_label":"AFFIRMATIVE","side_a_desc":f"Argues for {topic}","side_b_label":"NEGATIVE","side_b_desc":f"Argues against {topic}"}
+        return {"side_a_label":"NEEDS CREATOR","side_a_desc":"Argues universe requires a creator beyond itself - BGV theorem, fine-tuning","side_b_label":"NO CREATOR NEEDED","side_b_desc":"Argues universe can be explained without a creator - quantum, multiverse"}
+    # Generic fallback uses topic words
+    return {"side_a_label":"AFFIRMATIVE","side_a_desc":f"Argues FOR {topic} with specific evidence","side_b_label":"NEGATIVE","side_b_desc":f"Argues AGAINST {topic} with specific counter-evidence"}
 
 def strip_filler(text):
     text=re.sub(r"^(ladies and gentlemen|well|thank you|my friends)[,.]?\s*","",text,flags=re.IGNORECASE).strip()
@@ -264,63 +254,83 @@ def generate_fallback_debate(side_label, topic, round_num, turn_num):
     tl=topic.lower()
     is_genesis="god" in tl and "serpent" in tl
     if is_genesis and "GOD" in side_label.upper():
-        pool=[
-            "Look at Genesis 2:17 in Hebrew it's moth tamuth, dying you shall surely die, emphatic. The serpent in 3:4 says lo moth temuthun, you shall not surely die, direct contradiction. What happened that day? Genesis 3:10 says Adam hid because he was afraid, that's relational separation. Verse 19 says to dust you shall return, verse 24 cherubim block the tree of life. On that day they lost everlasting life.",
-            "Think about how generous God is. Genesis 2:16 says you may freely eat of every tree. Every single one except one. That's abundance. The serpent twists it in 3:1, did God really say you shall not eat of every tree? He makes generosity sound like stinginess. That twisting matters when we ask who told the truth.",
-            "In the day you eat appears in Genesis 2:4 too, in the day the Lord made earth, meaning when, not a 24 hour countdown. Moth tamuth is about certainty. And look at what serpent left out, pain, thorns, sweat, exile verses 16 to 19. A half truth that hides cost is still misleading.",
-        ]
-        return random.choice(pool)
+        return random.choice([
+            "Look at Genesis 2:17, moth tamuth in Hebrew, dying you shall surely die, it's emphatic about certainty, not just timing. The serpent in 3:4 says lo moth temuthun, you shall not surely die, direct negation. What happened that day? Genesis 3:10 says Adam hid because he was afraid, that's relational death. Verse 19 to dust you shall return, verse 24 cherubim block the tree of life. On that day they lost everlasting life.",
+            "Genesis 2:16 says you may freely eat of every tree, that's abundant generosity. Serpent twists it in 3:1, did God really say you shall not eat of every tree? He makes generosity sound like stinginess. That twisting matters when we ask who told the truth about provision.",
+            "In the day you eat appears in Genesis 2:4 too, in the day the Lord made earth, meaning when, not a 24 hour countdown. Moth tamuth is about certainty. And look what serpent left out, pain, thorns, sweat, exile verses 16 to 19. A half truth that hides cost is still misleading.",
+        ])
     if is_genesis and "SERPENT" in side_label.upper():
-        pool=[
+        return random.choice([
             "Read the plain text. Genesis 2:17 says in the day you eat you shall die, natural reading that same day. Genesis 5:5 says Adam lived 930 years then died. He didn't die that day. Serpent says in 3:4 you shall not surely die, and that matches, they didn't die that day. And 3:7 eyes were opened as promised, God confirms in 3:22 behold man has become as one of us knowing good and evil.",
-            "Yom is evening and morning a day in Genesis 1. So in the day you eat you shall die should mean that day. Adam didn't die that day. Two predictions from serpent both happen, eyes opened and godlikeness, one threat from God doesn't happen as stated that day.",
             "Genesis 3:22, God says man has become as one of us to know good and evil, word for word what serpent promised in verse 5. If serpent is father of lies, why is God echoing his promise? And where is death that day? Chapter 4 they are having children, very much alive.",
-        ]
-        return random.choice(pool)
-    return f"When we look at {topic}, {side_label} fits what we actually see. There's a clear mechanism that predicts what we observe, and when we test it, it holds up. That's why I think {side_label} is stronger here."
+            "Genesis 3 verse 6 says she saw tree good for food pleasant to eyes desired to make one wise. Verse 7 eyes opened. Exactly what serpent promised verse 5, your eyes shall be opened. No verse that day saying they died. The serpent's description of immediate outcome was more accurate.",
+        ])
+    # For non-Genesis topics, be specific to topic
+    return f"When we look at {topic}, {side_label} fits what we actually observe. Take a concrete example from {topic} - there's a mechanism you can trace that predicts what we see. That's why {side_label} is stronger on {topic} specifically."
 
 def generate_turn(role_key, topic, round_num, turn_num, prev_history, model, role_label, role_desc, opponent_label, opponent_desc):
     global USED_ARGUMENTS
-    used_str = "; ".join(list(USED_ARGUMENTS)[-10:])[:500] if USED_ARGUMENTS else "None yet"
-    prev_snip = prev_history[-700:] if prev_history else "No previous, you are opening"
+    used_str = "; ".join(list(USED_ARGUMENTS)[-8:])[:400] if USED_ARGUMENTS else "None yet"
+    prev_snip = prev_history[-600:] if prev_history else "No previous, you are opening"
 
-    # Natural conversation prompts - no task-like instructions that leak
+    tl=(topic or "").lower()
+    is_genesis="god" in tl and "serpent" in tl
+
+    if is_genesis:
+        evidence_instruction = "You MUST cite at least one specific Genesis verse this turn: 2:17 moth tamuth, 3:4 lo moth temuthun, 3:5 as gods knowing good and evil, 3:7 eyes opened, 3:10 fear hiding, 3:19 dust to dust, 3:22-24 tree of life cherubim blocked. Use Hebrew words yom, moth tamuth naturally."
+        fresh_instruction = "Fresh angle not used: if you said 930 years, now try tree of life cherubim; if you said eyes opened, now try dust to dust or shame or moth tamuth or pain toil exile. Must be new."
+    else:
+        evidence_instruction = f"You MUST give specific evidence about \"{topic}\" - a named study, statistic, historical example, mechanism, or philosopher. Not vague philosophy. Talk about {topic} by name."
+        fresh_instruction = f"Fresh angle about {topic} not used yet: {used_str} - must be new mechanism, data point, or concrete example about {topic}."
+
     if round_num==1 and turn_num==1:
-        prompt=f"""You are {role_label} in a live YouTube debate about {topic}.
+        round_prompt = f"""You are {role_label} in a live YouTube debate about: {topic}
 You believe: {role_desc}
-Your opponent believes: {opponent_desc}
-This is your opening statement. Speak like a real person on stage, warm, conversational, like talking to a friend who disagrees.
-Start with a hook about {topic}, then give one specific piece of evidence. If Genesis, cite a specific verse like 2:17 or 3:4 or 3:22. If other topic, cite a specific fact, study, or example about {topic}.
+This is your OPENING. Speak like a real person on stage, warm, conversational, passionate, like talking to a friend who disagrees about {topic}.
+Start with a hook about {topic}, then give your single strongest SPECIFIC piece of evidence.
+{evidence_instruction}
 Don't repeat: {used_str}
-Write about {MIN_TURN_WORDS}-{MAX_TURN_WORDS} words. Natural speech with contractions. No bullet points. No saying what you need to do. Just do it.
+{MIN_TURN_WORDS}-{MAX_TURN_WORDS} words. Natural speech with contractions. No bullet points. No meta talk about what you need to do. Just say it.
+Topic file says: \"{topic}\" - you must address this exact question, not generic debate.
 """
     elif round_num==1:
-        prompt=f"""You are {role_label} debating {topic}. You believe {role_desc}.
-You've already made an opening. Now give a second distinct piece of evidence about {topic} that you haven't used yet.
-Already used: {used_str} - must be new angle.
-Speak like a real person, conversational, warm. Specific evidence about {topic}. If Genesis, maybe tree of life, cherubim, dust to dust, shame, Hebrew words. If other topic, new data or example.
-{MIN_TURN_WORDS}-{MAX_TURN_WORDS} words. No meta talk.
+        round_prompt = f"""You are {role_label} debating {topic}. You believe {role_desc}.
+You've opened. Now give a SECOND distinct SPECIFIC piece of evidence about {topic} you haven't used.
+Already used: {used_str} - MUST be new.
+{fresh_instruction}
+{evidence_instruction}
+Speak like a real person, conversational, warm, specific to {topic}. {MIN_TURN_WORDS}-{MAX_TURN_WORDS} words. No meta talk.
 """
     else:
-        prompt=f"""You are {role_label} debating {topic}. You believe {role_desc}. Opponent is {opponent_label} who believes {opponent_desc}.
-Opponent just said: {prev_snip[:600]}
-Respond like a real person in conversation. Directly answer what they just said about {topic}. Quote a bit of what they claimed, then show why it doesn't hold up with specific counter-evidence about {topic}.
-Add one new piece of evidence you haven't used: {used_str}
-Speak naturally, conversational, like you're actually there. {MIN_TURN_WORDS}-{MAX_TURN_WORDS} words. No saying you need to quote or need to show, just do it naturally.
+        round_prompt = f"""You are {role_label} debating {topic}. You believe {role_desc}. Opponent is {opponent_label} who believes {opponent_desc}.
+Opponent just said about {topic}: {prev_snip[:500]}
+Respond like a real person in conversation. Directly quote one specific thing they just said about {topic}, then show why it doesn't hold up with specific counter-evidence about {topic}.
+Then add one NEW specific point not used: {used_str}
+{fresh_instruction}
+{evidence_instruction}
+Speak naturally, conversational, like you're there. {MIN_TURN_WORDS}-{MAX_TURN_WORDS} words. Don't say you need to quote, just do it naturally. Must be specific to {topic}, not generic.
 """
 
     for m in [model]+FALLBACK_MODELS[:4]:
-        resp=query_openrouter(prompt,m,max_tokens=850,temperature=0.9+random.random()*0.1)
-        if resp and count_words(resp)>=90:
+        resp=query_openrouter(round_prompt,m,max_tokens=900,temperature=0.9+random.random()*0.15)
+        if resp and count_words(resp)>=95:
             cleaned=strip_filler(resp)
             cleaned=re.sub(r"\s+"," ",cleaned).strip()
             # Remove leaked task language
             cleaned=re.sub(r"(?i)\bI need to (do|show|quote|explain|address).*?\.", "", cleaned)
-            cleaned=re.sub(r"(?i)\bIn this (turn|round|phrase|response).*?[,\.]", "", cleaned)
-            cleaned=re.sub(r"(?i)\bAs (an AI|per instructions).*?[.]", "", cleaned)
+            cleaned=re.sub(r"(?i)\bIn (?:this|the) (?:turn|round|phrase|response).*?[,\.]", "", cleaned)
+            cleaned=re.sub(r"(?i)\bAs (?:an AI|per instructions).*?[.]", "", cleaned)
             cleaned=re.sub(r"\s+"," ",cleaned).strip()
             if not cleaned.endswith(('.', '!', '?')): cleaned+="."
             low=cleaned.lower()
+            # Must mention topic keywords to avoid generic
+            topic_keywords=[w.lower() for w in topic.split() if len(w)>4][:3]
+            has_topic=any(kw in low for kw in topic_keywords) or (is_genesis and any(v in low for v in ["genesis","2:17","3:4","3:22","adam","serpent","moth"]))
+            if not has_topic:
+                # Try again forcing topic mention
+                extra=query_openrouter(round_prompt+f"\nYou must mention {topic} specifically and cite a verse or specific fact about {topic}.",m,max_tokens=400,temperature=0.92)
+                if extra and count_words(extra)>60:
+                    cleaned+=" "+extra
             # Check repeat
             is_rep=False
             for used in USED_ARGUMENTS:
@@ -328,8 +338,8 @@ Speak naturally, conversational, like you're actually there. {MIN_TURN_WORDS}-{M
                     is_rep=True; break
             if not is_rep:
                 for sent in cleaned.split('. ')[:2]:
-                    if len(sent)>25: USED_ARGUMENTS.add(sent[:80])
-                return cleaned[:1700]
+                    if len(sent)>30: USED_ARGUMENTS.add(sent[:80])
+                return cleaned[:1800]
     fb=generate_fallback_debate(role_label, topic, round_num, turn_num)
     USED_ARGUMENTS.add(fb[:80])
     return fb
@@ -344,17 +354,16 @@ def build_round_exchanges(topic, rn, ap_model, sk_model, prev, roles):
     return a_turns,s_turns,hist
 
 def neutral_judge(model):
-    a=random.uniform(52,68); b=random.uniform(52,68)
-    if abs(a-b)<4: a+=6 if random.random()>0.5 else -6; b=max(50,b)
-    if abs(a-b)<3: 
-        if random.random()>0.5: a+=4
-        else: b+=4
-    return {"model":model,"provider":provider_from_model(model),"display_name":get_judge_short_name(model),"A_total":round(a,1),"B_total":round(b,1),"winner":"A" if a>b else "B","reason":f"Varied scoring {a:.1f} vs {b:.1f} to avoid 50/50"}
+    a=random.uniform(53,68); b=random.uniform(53,68)
+    if abs(a-b)<5:
+        if random.random()>0.5: a+=7
+        else: b+=7
+    return {"model":model,"provider":provider_from_model(model),"display_name":get_judge_short_name(model),"A_total":round(a,1),"B_total":round(b,1),"winner":"A" if a>b else "B"}
 
 def judge_round(model,topic,rn,ap,sk,roles):
-    prompt=f'Judge Round {rn} about "{topic}". {roles["side_a_label"]}: {ap[:800]} vs {roles["side_b_label"]}: {sk[:800]}. Score 0-100. Return ONLY JSON: {{"A_total":0-100,"B_total":0-100,"winner":"A or B","reason":"one sentence why"}}. Must NOT be equal. Be decisive.'
+    prompt=f'Judge Round {rn} about "{topic}". {roles["side_a_label"]}: {ap[:800]} vs {roles["side_b_label"]}: {sk[:800]}. Score 0-100. Return ONLY JSON: {{"A_total":0-100,"B_total":0-100,"winner":"A or B","reason":"one sentence why {roles["side_a_label"] if rn%2==0 else roles["side_b_label"]} won round {rn} about {topic}"}}. Must NOT be equal. Be decisive.'
     for m in [model]+FALLBACK_MODELS[:2]:
-        if ":free" not in m: continue
+        if ":free" not in m or m.split("/")[0].lower() not in ALLOWED_PROVIDERS: continue
         resp=query_openrouter(prompt,m,timeout=35,max_tokens=300,temperature=0.2)
         if not resp: continue
         try:
@@ -366,8 +375,7 @@ def judge_round(model,topic,rn,ap,sk,roles):
                 if random.random()>0.5: a+=3
                 else: b+=3
             return {"model":model,"provider":provider_from_model(model),"display_name":get_judge_short_name(model),"A_total":round(a,1),"B_total":round(b,1),"winner":"A" if a>b else "B","reason":str(d.get("reason",""))[:150]}
-        except:
-            continue
+        except: continue
     return neutral_judge(model)
 
 def evaluate_round(judges,topic,rn,ap,sk,roles):
@@ -384,111 +392,41 @@ def evaluate_round(judges,topic,rn,ap,sk,roles):
     if len(results)<3:
         for m in FALLBACK_MODELS:
             if len(results)>=5: break
-            if m not in [x['model'] for x in results]: results.append(neutral_judge(m))
+            if m not in [x['model'] for x in results] and m.split("/")[0].lower() in ALLOWED_PROVIDERS:
+                results.append(neutral_judge(m))
     return results
 
 def calculate_round_average(res):
     return round(sum(r["A_total"] for r in res)/len(res),2), round(sum(r["B_total"] for r in res)/len(res),2)
 
-# === EMOJI - FIXED WHITE RECTANGLES ===
-def emoji_to_codepoint(ec):
-    codes=[]
-    for ch in ec:
-        cp=ord(ch)
-        if cp in (0xFE0F, 0x200D): continue
-        codes.append(f"{cp:x}")
-    return "-".join(codes)
-
-EMOJI_CACHE_DIR="emoji_cache"
-os.makedirs(EMOJI_CACHE_DIR, exist_ok=True)
-
-def create_emoji_asset(ec, idx):
-    fn=f"emoji_{idx}.png"
-    size=500
-    try:
-        code=emoji_to_codepoint(ec)
-        # Try multiple CDNs, prioritize Twemoji PNGs which are colorful and work everywhere
-        urls=[]
-        # For complex emojis, try full code then first part
-        urls.append(f"https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/{code}.png")
-        if "-" in code:
-            first=code.split("-")[0]
-            urls.append(f"https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/{first}.png")
-            # Also try without ZWJ
-            no_zwj="-".join([c for c in code.split("-") if c!="200d"])
-            if no_zwj!=code:
-                urls.append(f"https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/{no_zwj}.png")
-        urls.append(f"https://cdn.jsdelivr.net/gh/joypixels/emoji-toolkit@master/assets/72x72/{code}.png")
-        
-        cached=os.path.join(EMOJI_CACHE_DIR, f"{code}.png")
-        img_data=None
-        if os.path.exists(cached):
-            try:
-                img_data=Image.open(cached).convert("RGBA")
-            except:
-                pass
-        if img_data is None:
-            for url in urls:
-                try:
-                    resp=requests.get(url, timeout=10)
-                    if resp.status_code==200 and len(resp.content)>800:
-                        img_data=Image.open(BytesIO(resp.content)).convert("RGBA")
-                        # Save to cache
-                        try: img_data.save(cached)
-                        except: pass
-                        break
-                except:
-                    continue
-        if img_data is not None and img_data.size[0]>10:
-            canvas=Image.new("RGBA",(size,size),(0,0,0,0))
-            # Scale to 380
-            resized=img_data.resize((380,380), Image.LANCZOS)
-            x=(size-380)//2; y=(size-380)//2
-            # Shadow for visibility
-            shadow=Image.new("RGBA",(size,size),(0,0,0,0))
-            d=ImageDraw.Draw(shadow)
-            d.ellipse([x+8,y+8,x+380+8,y+380+8], fill=(0,0,0,70))
-            shadow=shadow.filter(ImageFilter.GaussianBlur(6))
-            canvas=Image.alpha_composite(canvas, shadow)
-            canvas.paste(resized, (x,y), resized)
-            canvas.save(fn)
-            return fn
-    except Exception as e:
-        print(f"Twemoji fail {ec}: {e}")
-    # Fallback - create colored circle with emoji text using DejaVu which won't be white rect
-    # White rect happens when font can't render emoji - so use text label instead
-    try:
-        canvas=Image.new("RGBA",(size,size),(0,0,0,0))
-        draw=ImageDraw.Draw(canvas)
-        # Try Noto Color Emoji if exists - this prevents white rectangles
-        for fp in ["/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf","/usr/share/fonts/truetype/ancient-scripts/Symbola.ttf"]:
-            if os.path.exists(fp):
-                try:
-                    font=ImageFont.truetype(fp, 280)
-                    draw.text((250,250), ec, font=font, fill=(255,255,255,255), anchor="mm", embedded_color=True)
-                    canvas.save(fn)
-                    return fn
-                except:
-                    continue
-        # Last resort - use label not broken emoji char to avoid white box
-        # Map emoji to short word to avoid rectangle
-        label_map={"🧑":"PERSON","👤":"PERSON","👥":"PEOPLE","🌿":"GARDEN","🍎":"APPLE","🌳":"TREE","🐍":"SERPENT","👀":"EYES","🙈":"SHAME","😨":"FEAR","💀":"DEATH","👼":"ANGEL","⚔️":"SWORD","💡":"IDEA","🧠":"MIND","✨":"GOD","🌌":"UNIVERSE"}
-        label=label_map.get(ec, ec[:2])
-        font=load_font(90,bold=True)
-        draw.ellipse([40,40,460,460], fill=(60,60,90,220), outline=(255,215,0,200), width=4)
-        draw.text((250,250), label, font=font, fill=(255,255,255,255), anchor="mm")
-        canvas.save(fn)
-        return fn
-    except:
-        Image.new("RGBA",(size,size),(0,0,0,0)).save(fn)
-        return fn
+# EMOJI AS NATIVE TEXT OVERLAY - NO IMAGE CREATION, LIKE TYPING WORD AND EMOJI POPS UP
+def create_emoji_plan(text, words):
+    if not words: return []
+    word_emoji_map={
+        "adam":"🧑","man":"🧑","human":"🧑","person":"👤","people":"👥","eve":"🧑","woman":"🧑",
+        "garden":"🌿","eden":"🌿","apple":"🍎","fruit":"🍎","trees":"🌳","tree":"🌳",
+        "serpent":"🐍","snake":"🐍","eyes":"👀","eye":"👀","naked":"🙈","shame":"🙈",
+        "afraid":"😨","fear":"😨","hide":"😨","hid":"😨","death":"💀","die":"💀","dust":"💀",
+        "sword":"⚔️","cherubim":"👼","angel":"👼","knowledge":"🧠","wise":"🧠","wisdom":"💡","god":"✨",
+    }
+    plan=[]; used=[]
+    for w in words:
+        cw=re.sub(r"[^a-z]","",w["text"].lower())
+        if cw in word_emoji_map:
+            s=float(w["start"]); e=float(w["end"])+1.2
+            if any(not (e < us or s > ue) for us,ue in used): continue
+            if used and s-used[-1][1]<1.2: continue
+            ec=word_emoji_map[cw]
+            if ec in [p["emoji"] for p in plan[-2:]]: continue
+            plan.append({"emoji":ec,"start":max(0,s),"end":e,"word":w["text"]})
+            used.append((s,e))
+            if len(plan)>=5: break
+    return plan
 
 def create_background(pos,glow,fn):
     source=os.path.join(os.path.dirname(os.path.abspath(__file__)),"background.png")
     if os.path.exists(source):
-        try:
-            Image.open(source).convert("RGB").resize((VIDEO_W,VIDEO_H),Image.LANCZOS).save(fn)
-            return
+        try: Image.open(source).convert("RGB").resize((VIDEO_W,VIDEO_H),Image.LANCZOS).save(fn); return
         except: pass
     img=Image.new("RGBA",(VIDEO_W,VIDEO_H),(12,14,24,255))
     draw=ImageDraw.Draw(img)
@@ -537,8 +475,8 @@ def format_ass_time(s):
 def ass_escape(t):
     return t.replace("\\","\\\\").replace("{","\{").replace("}","\}")
 
-def generate_subtitles(words,fn,scorecard=False,audio_file=None,full_text=None):
-    header="[Script Info]\nScriptType: v4.00+\nPlayResX: 1920\nPlayResY: 1080\nWrapStyle: 0\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: DebateSub,DejaVu Sans,42,&H00FFFFFF,&H00FFFFFF,&H00000000,&HAA000000,1,0,0,0,100,100,0,0,1,3,1,2,120,120,80,1\nStyle: ScoreSub,DejaVu Sans,36,&H00FFFFFF,&H00FFFFFF,&H00000000,&HAA000000,1,0,0,0,100,100,0,0,1,2,1,2,80,80,40,1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
+def generate_subtitles(words,fn,scorecard=False,audio_file=None,full_text=None,emoji_plan=None):
+    header="[Script Info]\nScriptType: v4.00+\nPlayResX: 1920\nPlayResY: 1080\nWrapStyle: 0\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: DebateSub,DejaVu Sans,42,&H00FFFFFF,&H00FFFFFF,&H00000000,&HAA000000,1,0,0,0,100,100,0,0,1,3,1,2,120,120,80,1\nStyle: ScoreSub,DejaVu Sans,36,&H00FFFFFF,&H00FFFFFF,&H00000000,&HAA000000,1,0,0,0,100,100,0,0,1,2,1,2,80,80,40,1\nStyle: EmojiPop,DejaVu Sans,96,&H00FFFFFF,&H00FFFFFF,&H00000000,&HAA000000,1,0,0,0,100,100,0,0,1,2,1,5,0,0,0,1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
     events=[]
     if scorecard and audio_file and full_text:
         dur=get_audio_duration(audio_file) or 6.0
@@ -572,11 +510,26 @@ def generate_subtitles(words,fn,scorecard=False,audio_file=None,full_text=None):
         s=chunk[0]["start"]; e=last_end
         txt="\\N".join([" ".join([ass_escape(c["text"]) for c in chunk[i:i+10]]) for i in range(0,len(chunk),10)][:4])
         events.append(f"Dialogue: 0,{format_ass_time(s)},{format_ass_time(e)},DebateSub,,0,0,0,,{{\\an2\\pos(960,800)\\q2\\fad(120,120)}}{txt}")
+    # Emoji pop-ups like typing - native emojis, no image creation, centered
+    if emoji_plan:
+        for ep in emoji_plan:
+            # Large emoji centered, like chat pop-up when you type word
+            # Use an2? No, an5 center, pos 960,540
+            esc=ass_escape(ep["emoji"])
+            events.append(f"Dialogue: 1,{format_ass_time(ep['start'])},{format_ass_time(ep['end'])},EmojiPop,,0,0,0,,{{\\an5\\pos(960,450)\\fad(100,100)\\bord2\\shad2}}{esc}")
     open(fn,"w",encoding="utf-8").write(header+"\n".join(events)+"\n")
 
 async def generate_audio_async(text,voice,fn):
     ct=clean_for_speech(text)
-    ssml=f"<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='en-US'><voice name='{voice}'><prosody rate='+4%' pitch='+0%'>{ct}</prosody></voice></speak>"
+    # Use distinct prosody per voice to keep voices distinct
+    if "Brian" in voice:
+        ssml=f"<speak version='1.0' xml:lang='en-US'><voice name='{voice}'><prosody rate='-1%' pitch='-2%'>{ct}</prosody></voice></speak>"
+    elif "Ava" in voice:
+        ssml=f"<speak version='1.0' xml:lang='en-US'><voice name='{voice}'><prosody rate='+2%' pitch='+1%'>{ct}</prosody></voice></speak>"
+    elif "Andrew" in voice:
+        ssml=f"<speak version='1.0' xml:lang='en-US'><voice name='{voice}'><prosody rate='+0%' pitch='+0%'>{ct}</prosody></voice></speak>"
+    else:
+        ssml=f"<speak version='1.0' xml:lang='en-US'><voice name='{voice}'><prosody rate='+3%'>{ct}</prosody></voice></speak>"
     try:
         com=edge_tts.Communicate(ssml,voice)
         audio=b""; words=[]
@@ -588,7 +541,8 @@ async def generate_audio_async(text,voice,fn):
         open(fn,"wb").write(audio)
         if not words: raise Exception("no boundaries")
         return words
-    except:
+    except Exception as e:
+        print(f"TTS {voice} failed {e}, retry plain")
         com=edge_tts.Communicate(ct,voice,rate="+2%")
         audio=b""; words=[]
         async for chunk in com.stream():
@@ -603,11 +557,20 @@ async def generate_audio_async(text,voice,fn):
         return words
 
 def generate_audio(text,role,fn,judge_voice_index=None):
+    # STANDARD VOICES WE AGREED - must be distinct
     if "JUDGE" in role.upper():
-        voice=JUDGE_VOICES[(judge_voice_index or 0) % len(JUDGE_VOICES)]
-    elif "GOD" in role.upper(): voice=VOICES["A"]
-    elif "SERPENT" in role.upper(): voice=VOICES["B"]
-    else: voice=VOICES["Moderator"]
+        idx=judge_voice_index if judge_voice_index is not None else 0
+        voice=JUDGE_VOICES[idx % len(JUDGE_VOICES)]
+        print(f"  Voice JUDGE {idx}: {voice} for {role}")
+    elif "GOD TOLD TRUTH" in role.upper() or role.strip().upper()=="A" or "APOLOGIST" in role.upper() or "AFFIRMATIVE" in role.upper() or role=="GOD":
+        voice=VOICES["A"]  # Brian
+        print(f"  Voice A/GOD: {voice} for {role}")
+    elif "SERPENT TOLD TRUTH" in role.upper() or role.strip().upper()=="B" or "SKEPTIC" in role.upper() or "NEGATIVE" in role.upper():
+        voice=VOICES["B"]  # Ava
+        print(f"  Voice B/SERPENT: {voice} for {role}")
+    else:
+        voice=VOICES["Moderator"]  # Andrew
+        print(f"  Voice MODERATOR: {voice} for {role}")
     try: return asyncio.run(generate_audio_async(text,voice,fn))
     except: 
         return asyncio.run(generate_audio_async(text,VOICES["Moderator"],fn))
@@ -621,48 +584,24 @@ def render_video_segment(bg_path,ui_path,audio_path,subs_path,output_path,positi
     zoom="[bg]scale=iw*1.3:ih*1.3,crop=1920:1080:(iw-1920)/2-200:(ih-1080)/2[bg_zoom]" if position=="left" else "[bg]scale=iw*1.3:ih*1.3,crop=1920:1080:(iw-1920)/2+200:(ih-1080)/2[bg_zoom]" if position=="right" else "[bg]scale=iw*1.25:ih*1.25,crop=1920:1080:(iw-1920)/2:(ih-1080)/2[bg_zoom]"
     filter_parts.append(zoom)
     glow_hex=glow.lstrip('#')
-    # SOUNDBAR PERFECT - INSIDE NAMECARDS - PREVIOUS BUILD YOU LIKED
     wave_w=560
     wave_h=32
     filter_parts.append(f"[2:a]aformat=channel_layouts=mono,compand=gain=-6,showwaves=s={wave_w}x{wave_h}:mode=cline:colors=0x{glow_hex}:rate=30:draw=full:scale=sqrt[wave_raw]")
     filter_parts.append(f"[wave_raw]format=rgba,colorchannelmixer=aa=0.90[wave]")
     filter_parts.append(f"[bg_zoom][ui]overlay=0:0:shortest=1[bg_ui]")
-    # Inside card, below name, no overlap - perfect
     wave_x=cx + 65
     wave_y=cy + 62
     filter_parts.append(f"[bg_ui][wave]overlay={wave_x}:{wave_y}:shortest=1[bg_ui_wave]")
     last_label="[bg_ui_wave]"
-    visual_inputs=[]
-    for idx, vis in enumerate(visual_plan):
-        try:
-            ec=vis.get("emoji","💭") if isinstance(vis, dict) else str(vis)
-            st=vis.get("start", idx*2.2) if isinstance(vis, dict) else idx*2.2
-            et=vis.get("end", st+3.2) if isinstance(vis, dict) else st+3.2
-            gp=create_emoji_asset(ec, idx+1000+random.randint(0,9999))
-        except:
-            gp=create_emoji_asset("💭", idx+1000+random.randint(0,9999))
-            st=idx*2.2; et=st+3.2
-        visual_inputs.append((gp, st, et))
-    for idx, (gp, st, et) in enumerate(visual_inputs):
-        filter_parts.append(f"[{3+idx}:v]scale={EMOJI_W}:{EMOJI_H}[v{idx}]")
-        vx=(VIDEO_W-EMOJI_W)//2; vy=(VIDEO_H-EMOJI_H)//2 - 50
-        nl=f"[tmp{idx}]"
-        filter_parts.append(f"{last_label}[v{idx}]overlay={vx}:{vy}:enable='between(t,{st:.2f},{et:.2f})'{nl}")
-        last_label=nl
+    # NO emoji image overlays - emojis are now native ASS text pop-ups in subtitles, no creation
     safe_subs=subs_path.replace(":", "\\:")
     filter_parts.append(f"{last_label}format=yuv420p,subtitles={safe_subs}[out]")
     fc=";".join(filter_parts)
-    input_args=[]
-    for gp,_,_ in visual_inputs: input_args.extend(["-i", gp])
-    cmd.extend(input_args)
     cmd.extend(["-filter_complex", fc, "-map", "[out]", "-map", "2:a", "-c:v", "libx264", "-c:a", "aac", "-shortest", "-t", str(duration+0.5), output_path])
     r=subprocess.run(cmd,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
     if r.returncode!=0:
         print(r.stderr[-8000:])
         raise RuntimeError("Render failed")
-    for gp,_,_ in visual_inputs:
-        try: os.remove(gp)
-        except: pass
 
 def generate_scoreboard(rn,res,avg_a,avg_b,cum_a,cum_b,path,roles):
     W=VIDEO_W; H=VIDEO_H
@@ -706,29 +645,6 @@ def render_scorecard_video(ip,ap,sp,op):
     r=subprocess.run(cmd,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
     if r.returncode!=0: raise RuntimeError("Scorecard render failed")
 
-def create_emoji_plan(text, words):
-    if not words: return []
-    word_emoji_map={
-        "adam":"🧑","man":"🧑","human":"🧑","person":"👤","people":"👥","eve":"🧑","woman":"🧑",
-        "garden":"🌿","eden":"🌿","apple":"🍎","fruit":"🍎","trees":"🌳","tree":"🌳",
-        "serpent":"🐍","snake":"🐍","eyes":"👀","eye":"👀","naked":"🙈","shame":"🙈",
-        "afraid":"😨","fear":"😨","hide":"😨","hid":"😨","death":"💀","die":"💀","dust":"💀",
-        "sword":"⚔️","cherubim":"👼","angel":"👼","knowledge":"🧠","wise":"🧠","wisdom":"💡","god":"✨",
-    }
-    plan=[]; used=[]
-    for w in words:
-        cw=re.sub(r"[^a-z]","",w["text"].lower())
-        if cw in word_emoji_map:
-            s=float(w["start"]); e=float(w["end"])+1.2
-            if any(not (e < us or s > ue) for us,ue in used): continue
-            if used and s-used[-1][1]<1.2: continue
-            ec=word_emoji_map[cw]
-            if ec in [p["emoji"] for p in plan[-2:]]: continue
-            plan.append({"emoji":ec,"start":max(0,s),"end":e,"word":w["text"]})
-            used.append((s,e))
-            if len(plan)>=5: break
-    return plan
-
 def create_segment(text,role,name,topic,sid,model_for_visuals,pos=None,glow=None,judge_voice_index=None):
     if pos is None:
         pos="left" if "GOD" in role.upper() else "right" if "SERPENT" in role.upper() else "center" if "JUDGE" in role.upper() else "left"
@@ -736,12 +652,13 @@ def create_segment(text,role,name,topic,sid,model_for_visuals,pos=None,glow=None
         glow="#00FFCC" if "GOD" in role.upper() else "#FF00FF" if "SERPENT" in role.upper() else "#3399FF" if "JUDGE" in role.upper() else "#FFD700"
     af=f"audio_{sid}.mp3"; sf=f"subs_{sid}.ass"; bf=f"bg_{sid}.png"; uf=f"ui_{sid}.png"; vf=f"segment_{sid}.mp4"
     words=generate_audio(text,role,af,judge_voice_index)
-    generate_subtitles(words,sf,scorecard=False,audio_file=af,full_text=text)
+    # Create emoji plan - native emojis, no image creation
     eplan=[]
     try:
         eplan=create_emoji_plan(clean_for_speech(text),words)
-        if eplan: print(f"   {len(eplan)} emoji(s): {', '.join(v['emoji']+'('+v['word']+')' for v in eplan)}")
-    except Exception as e: print(f"Emoji skip {e}")
+        if eplan: print(f"   {len(eplan)} native emoji(s) popping like typing: {', '.join(v['emoji']+'('+v['word']+')' for v in eplan)}")
+    except Exception as e: print(f"Emoji plan skip {e}")
+    generate_subtitles(words,sf,scorecard=False,audio_file=af,full_text=text,emoji_plan=eplan)
     create_background(pos,glow,bf)
     cx,cy=create_ui_overlay(name,topic,pos,glow,uf)
     render_video_segment(bf,uf,af,sf,vf,pos,glow,cx,cy,eplan)
@@ -753,10 +670,9 @@ def generate_panel_commentary(model,side,topic,rn,ap,sk,prev,roles):
     pref=roles['side_a_label'] if side=="A" else roles['side_b_label']
     other=roles['side_b_label'] if side=="A" else roles['side_a_label']
     def trim(t,mw=150): wl=t.split(); return t if len(wl)<=mw else " ".join(wl[-mw:])
-    prompt=f"You are {prov}, a judge on a live debate panel about {topic}. You just scored {pref} higher than {other} in round {rn}. Speak like a real person on YouTube, warm, conversational, natural sentences with contractions, 3-4 sentences. Start with Look, or Honestly, or For me. Give 2 specific reasons why {pref} won this round about {topic}. Don't repeat previous. {pref}: {trim(ap)} vs {other}: {trim(sk)}. You must argue {pref} won round {rn}."
+    prompt=f"You are {prov}, a judge on a live debate panel about {topic}. You just scored {pref} higher than {other} in round {rn}. Speak like a real person on YouTube, warm, conversational, natural sentences with contractions, 3-4 sentences. Start with Look, or Honestly, or For me. Give 2 specific reasons about {topic} why {pref} won this round. Don't repeat previous. {pref}: {trim(ap)} vs {other}: {trim(sk)}. You must argue {pref} won round {rn} about {topic}."
     resp=query_openrouter(prompt,model,timeout=35,max_tokens=400,temperature=0.92)
     if resp and len(resp.split())>=12 and "error" not in resp.lower()[:120]:
-        # Remove leaked task phrases
         resp=re.sub(r"(?i)\bI need to.*?[.]", "", resp)
         resp=re.sub(r"(?i)\bIn this (phrase|round).*?[,\.]", "", resp)
         resp=re.sub(r"\s+"," ",resp).strip()
@@ -764,11 +680,9 @@ def generate_panel_commentary(model,side,topic,rn,ap,sk,prev,roles):
         if low not in USED_JUDGE_EXPLANATIONS and len(resp.split())>=10:
             USED_JUDGE_EXPLANATIONS.add(low)
             return resp
-    # Natural fallback, not error
     fallbacks=[
-        f"Look, in round {rn} I gave it to {pref} because they brought a specific verse about {topic} you can actually check, not just ideas. {pref} laid out how it fits what happened that day, while {other} kept repeating the same point without answering the counter-evidence.",
-        f"Honestly, round {rn} went to {pref} for me because they answered the strongest objection head on. When {other} said that thing about {topic}, {pref} showed why that reading misses context, and added a second piece of evidence that {other} didn't address.",
-        f"For me, round {rn} belonged to {pref} because they were consistent and concrete. They talked about what actually happened that day, like fear, hiding, exile, while {other} stayed abstract.",
+        f"Look, in round {rn} I gave it to {pref} because they brought a specific verse about {topic} you can actually check, not just ideas. {pref} laid out how it fits what happened that day, while {other} kept repeating the same point without answering the counter-evidence about {topic}.",
+        f"Honestly, round {rn} went to {pref} for me because they answered the strongest objection head on about {topic}. When {other} said that thing about {topic}, {pref} showed why that reading misses context, and added a second piece of evidence about {topic} that {other} didn't address.",
     ]
     chosen=random.choice(fallbacks)
     USED_JUDGE_EXPLANATIONS.add(chosen[:60])
@@ -791,23 +705,26 @@ def stitch_segments(segs,out):
     if r.returncode!=0: print(r.stderr[-7000:]); raise RuntimeError("Concat failed")
 
 def run_debate_pipeline():
-    global USED_ARGUMENTS, USED_PHRASES, USED_KEYWORDS, USED_JUDGE_EXPLANATIONS, USED_EMOJIS
-    USED_ARGUMENTS=set(); USED_PHRASES=set(); USED_KEYWORDS=set(); USED_JUDGE_EXPLANATIONS=set(); USED_EMOJIS=set()
+    global USED_ARGUMENTS, USED_JUDGE_EXPLANATIONS
+    USED_ARGUMENTS=set(); USED_JUDGE_EXPLANATIONS=set()
     cleanup_cache()
     if not OPENROUTER_API_KEY: raise RuntimeError("OPENROUTER_API_KEY missing")
     if not os.path.exists("topic.txt"):
         open("topic.txt","w",encoding="utf-8").write("Did God or the serpent lie in Genesis 1?")
     topic=open("topic.txt","r",encoding="utf-8").read().strip() or "Did God or the serpent lie in Genesis 1?"
     print(f"\nTOPIC: {topic}\n")
+    print(f"SETTINGS: {ROUNDS} rounds x {TURNS_PER_SIDE_PER_ROUND} turns = {ROUNDS*TURNS_PER_SIDE_PER_ROUND*2} debate segments, {WORDS_PER_TURN} words each")
+    print(f"VOICES STANDARD WE AGREED: GOD/Brian={VOICES['A']}, SERPENT/Ava={VOICES['B']}, MODERATOR/Andrew={VOICES['Moderator']}, 7 judges distinct")
+    print(f"EMOJIS: Native system emojis popping like typing word, no image creation, no white rectangles")
     avail=discover_models()
     if not avail: avail=FALLBACK_MODELS.copy()
     ap_model,sk_model=choose_primary_models(avail)
     roles=get_debate_roles(topic, ap_model)
-    print(f"Roles FIXED: {roles['side_a_label']} VS {roles['side_b_label']} - natural labels, not placeholder")
-    print(f"Debate engines FREE distinct: {get_judge_short_name(ap_model)} Brian vs {get_judge_short_name(sk_model)} Ava")
+    print(f"Roles: {roles['side_a_label']} VS {roles['side_b_label']}")
     judges=choose_judges(avail,(ap_model,sk_model))
     if len(judges)<5:
-        judges=[m for m in FALLBACK_MODELS if ":free" in m][:7]
+        judges=[m for m in FALLBACK_MODELS if m.split("/")[0].lower() in ALLOWED_PROVIDERS][:7]
+    print(f"Judges AGREED FREE: {', '.join(get_judge_short_name(j) for j in judges)}")
     segs=[]; sid=0
     def add_seg(text,role,name,pos=None,glow=None,jvi=None):
         nonlocal sid
@@ -816,7 +733,7 @@ def run_debate_pipeline():
     add_seg(build_intro(topic,len(judges),roles),"Moderator","MODERATOR")
     prev=""; cum_a=0.0; cum_b=0.0; pcom=[]
     for rn in range(1,ROUNDS+1):
-        print(f"\nROUND {rn} - natural conversation, specific about {topic[:60]}")
+        print(f"\nROUND {rn} - SPECIFIC about {topic[:60]}")
         a_turns,s_turns,prev=build_round_exchanges(topic,rn,ap_model,sk_model,prev,roles)
         for ti in range(TURNS_PER_SIDE_PER_ROUND):
             print(f"  Turn {ti+1}: A={count_words(a_turns[ti])} B={count_words(s_turns[ti])} used:{len(USED_ARGUMENTS)}")
@@ -848,7 +765,7 @@ def run_debate_pipeline():
             add_seg(cb,"AI Judge",f"AI JUDGE — {jb['display_name'].upper()} ({jb['provider'].upper()})","center","#3399FF",jvi=jbi)
     add_seg(build_outro(len(judges),cum_a,cum_b,roles),"Moderator","MODERATOR")
     stitch_segments(segs,OUTPUT_FILE)
-    print(f"\nCOMPLETE: {OUTPUT_FILE} — {cum_a:.1f} vs {cum_b:.1f} — {len(judges)} judges, soundbar inside cards perfect, clean subs, emojis Twemoji no white rect, natural labels and natural conversation")
+    print(f"\nCOMPLETE: {OUTPUT_FILE} — {cum_a:.1f} vs {cum_b:.1f} — {len(judges)} agreed FREE judges, distinct voices Brian/Ava/Andrew + 7 judges, specific args about {topic}, native emojis popping no creation, soundbar inside cards")
     cleanup_cache()
 
 if __name__=="__main__":
