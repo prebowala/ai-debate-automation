@@ -21,7 +21,7 @@ OUTPUT_FILE = "final_debate_output.mp4"
 VIDEO_W = 1920
 VIDEO_H = 1080
 
-# 10-15 MIN SETTINGS
+# 10-15 MIN VIDEO
 ROUNDS = 3
 TURNS_PER_SIDE_PER_ROUND = 2
 WORDS_PER_TURN = 140
@@ -37,15 +37,17 @@ USED_EMOJIS = set()
 USED_ARGUMENTS = set()
 USED_JUDGE_EXPLANATIONS = set()
 
-# HARDWIRED DISTINCT VOICES - NEVER SAME, BEST NATURAL
+# === VOICES WE DISCUSSED EARLIER - HARDWIRED DISTINCT, NEVER SAME ===
 VOICES = {
-    "A": "en-US-BrianMultilingualNeural",
-    "B": "en-US-AvaMultilingualNeural",
-    "Moderator": "en-US-AndrewMultilingualNeural",
+    "A": "en-US-BrianMultilingualNeural",          # AFFIRMATIVE / GOD - hardwired best natural deep male
+    "B": "en-US-AvaMultilingualNeural",            # NEGATIVE / SERPENT - hardwired best natural female
+    "Moderator": "en-US-AndrewMultilingualNeural", # Moderator stays as agreed
     "GOD TOLD TRUTH": "en-US-BrianMultilingualNeural",
     "SERPENT TOLD TRUTH": "en-US-AvaMultilingualNeural",
     "AFFIRMATIVE": "en-US-BrianMultilingualNeural",
     "NEGATIVE": "en-US-AvaMultilingualNeural",
+    "FOR": "en-US-BrianMultilingualNeural",
+    "AGAINST": "en-US-AvaMultilingualNeural",
 }
 JUDGE_VOICES = [
     "en-US-JennyNeural",
@@ -146,8 +148,7 @@ def discover_models():
             top=["openai","anthropic","google","meta-llama","mistralai","deepseek","qwen","nvidia"]
             if not any(p in mid.lower() for p in top): continue
             free.append(mid)
-        if free:
-            return list(dict.fromkeys(free))
+        if free: return list(dict.fromkeys(free))
         return FALLBACK_MODELS.copy()
     except:
         return FALLBACK_MODELS.copy()
@@ -175,7 +176,7 @@ def choose_primary_models(avail):
             picks.append(m); used.add(prov)
         if len(picks)>=2: break
     if len(picks)<2: picks=(free+FALLBACK_MODELS)[:2]
-    print(f"Primary hardwired: {get_judge_short_name(picks[0])} Brian vs {get_judge_short_name(picks[1])} Ava")
+    print(f"Primary hardwired voices discussed: {get_judge_short_name(picks[0])} Brian={VOICES['A']} vs {get_judge_short_name(picks[1])} Ava={VOICES['B']} vs Moderator Andrew={VOICES['Moderator']}")
     return picks[0],picks[1]
 
 def choose_judges(avail,primary):
@@ -213,16 +214,15 @@ def choose_judges(avail,primary):
             if m in primary: continue
             result.append(m); seen_prov.add(prov); seen_disp.add(disp)
     JUDGE_VOICE_MAP={mid: idx%len(JUDGE_VOICES) for idx,mid in enumerate(result)}
-    print(f"Judges ONE PER COMPANY UNIQUE: {', '.join(f'{provider_from_model(m)} ({get_judge_short_name(m)})' for m in result)}")
+    print(f"Judges ONE PER COMPANY UNIQUE FIXED 2 GOOGLES 2 CLAUDES: {', '.join(f'{provider_from_model(m)} ({get_judge_short_name(m)})' for m in result)}")
     return result
 
-# TOPIC.TXT DICTATES TOPIC - FULLY ADAPTIVE ROLES
+# TOPIC.TXT DICTATES TOPIC - NOT HARDCODED GENESIS
 def get_debate_roles(topic, model):
     tl=(topic or "").lower()
     if "god" in tl and "serpent" in tl:
         return {"side_a_label":"GOD TOLD TRUTH","side_a_desc":f"Defends God told truth about {topic}","side_b_label":"SERPENT TOLD TRUTH","side_b_desc":f"Defends serpent told truth about {topic}"}
-    # For any other topic, generate labels from topic.txt itself
-    prompt=f'Topic from topic.txt: "{topic}" Return ONLY JSON: {{"side_a_label":"FOR label 2-3 words from topic","side_a_desc":"One sentence arguing FOR {topic}","side_b_label":"AGAINST label 2-3 words from topic","side_b_desc":"One sentence arguing AGAINST {topic}"}} Labels uppercase, short, opposite, based on topic.txt, no generic AFFIRMATIVE NEGATIVE if you can make specific from topic.'
+    prompt=f'Topic from topic.txt: "{topic}" Return ONLY JSON: {{"side_a_label":"FOR label 2-3 words from topic","side_a_desc":"One sentence FOR {topic}","side_b_label":"AGAINST label 2-3 words from topic","side_b_desc":"One sentence AGAINST {topic}"}} Labels uppercase short opposite based on topic.txt.'
     resp=query_openrouter(prompt, model, timeout=25, max_tokens=300, temperature=0.4)
     if resp:
         try:
@@ -234,7 +234,6 @@ def get_debate_roles(topic, model):
                 if a and b and a!=b and "LABEL" not in a and len(a)>1:
                     return {"side_a_label":a,"side_a_desc":str(data.get("side_a_desc",a)),"side_b_label":b,"side_b_desc":str(data.get("side_b_desc",b))}
         except: pass
-    # Fallback: use topic words to make labels specific
     words=[w for w in topic.split() if len(w)>3][:4]
     if len(words)>=2:
         return {"side_a_label":f"{words[0][:10].upper()} TRUE","side_a_desc":f"Argues {topic} is true","side_b_label":f"{words[0][:10].upper()} FALSE","side_b_desc":f"Argues {topic} is false"}
@@ -246,27 +245,16 @@ def strip_filler(t):
     return t
 
 def generate_fallback_debate(side_label, topic, round_num, turn_num):
-    # Topic.txt dictates content, no hardcoded genesis unless topic is genesis
     tl=topic.lower()
     if "god" in tl and "serpent" in tl:
         if "GOD" in side_label.upper():
-            return random.choice([
-                f"Look at Genesis 2:17 moth tamuth, dying you shall surely die about {topic}. Serpent 3:4 says you shall not surely die. What happened that day? Genesis 3:10 Adam hid afraid, relational separation. Verse 24 cherubim block tree of life. On that day they lost everlasting life.",
-                f"Genesis 2:16 freely eat every tree, generosity about {topic}. Serpent twists 3:1 did God really say not eat every tree? Makes generosity stingy. That matters for who told truth about {topic}.",
-            ])
+            return f"Genesis 2:17 moth tamuth dying you shall surely die about {topic}. Serpent 3:4 you shall not die. That day Genesis 3:10 Adam hid afraid, relational break. Verse 24 cherubim block tree of life, lost everlasting life that day."
         else:
-            return random.choice([
-                f"Read plain text about {topic}. Genesis 2:17 says in the day you eat you shall die, same day. Genesis 5:5 Adam lived 930 years then died, not that day. Serpent 3:4 you shall not surely die matches, they didn't die that day. 3:7 eyes opened, God confirms 3:22 man become as one of us.",
-                f"Genesis 3:22 God says man become as one of us to know good and evil, word for word serpent promised verse 5 about {topic}. If serpent father lies why God echoing? Where death that day? Chapter 4 children alive.",
-            ])
+            return f"Genesis 2:17 says in the day you eat you shall die, same day. Genesis 5:5 Adam lived 930 years not that day. Serpent 3:4 you shall not die matches, they didn't die that day. 3:7 eyes opened, God confirms 3:22 man become as one of us."
     else:
-        # Generic topic.txt adaptive fallback - conversational
-        if "FOR" in side_label.upper() or side_label==get_debate_roles(topic, "")["side_a_label"]:
-            return f"When we look at {topic}, the evidence actually points toward {side_label.lower()}. Think about a concrete example of {topic} you see in everyday life, there's a mechanism you can trace that predicts what we observe. That's why {side_label} makes more sense for {topic}."
-        else:
-            return f"When we look at {topic}, the other side sounds nice in theory about {topic} but doesn't hold up when you test it. There's a clear counterexample for {topic} where their explanation breaks down and ours fits what actually happens. That's why {side_label} is stronger on {topic}."
+        return f"When we look at {topic}, the evidence for {side_label} is concrete. Take a real example of {topic} you can check, mechanism you can trace predicts what we see. That's why {side_label} makes sense for {topic}."
 
-# NATURAL CONVERSATIONAL - NO THOUGHT PROCESS, NO ROBOT PHRASES, TOPIC.TXT DRIVEN
+# NATURAL CONVERSATIONAL - NO THOUGHT PROCESS, NO POINTS SLASH, NO ROBOT PHRASES
 def generate_turn(role_key, topic, round_num, turn_num, prev_history, model, role_label, role_desc, opponent_label, opponent_desc):
     global USED_ARGUMENTS
     used_str="; ".join(list(USED_ARGUMENTS)[-8:])[:350] if USED_ARGUMENTS else "None"
@@ -275,43 +263,50 @@ def generate_turn(role_key, topic, round_num, turn_num, prev_history, model, rol
     tl=(topic or "").lower()
     is_genesis="god" in tl and "serpent" in tl
 
-    # Instruction about evidence must come from topic.txt
     if is_genesis:
-        evidence_instruction="Cite specific Genesis verse naturally in conversation: 2:17 moth tamuth, 3:4 lo moth temuthun, 3:7 eyes opened, 3:10 fear hiding, 3:19 dust, 3:22 become as one of us, 5:5 930 years, 3:22-24 tree of life cherubim."
+        evidence_instruction="Cite specific Genesis verse naturally: 2:17 moth tamuth, 3:4 lo moth temuthun, 3:7 eyes opened, 3:10 fear hiding, 3:19 dust, 3:22 become as one of us, 5:5 930 years, 3:22-24 tree of life cherubim."
         fresh_instruction="Fresh angle not used: if said 930 years before now tree of life cherubim; if eyes opened now dust to dust or shame or moth tamuth."
     else:
-        evidence_instruction=f'Give specific concrete evidence about "{topic}" from topic.txt - a real example, study, mechanism, historical case, or data point about {topic}. Not vague.'
+        evidence_instruction=f'Give specific concrete evidence about "{topic}" from topic.txt - real example, study, mechanism, historical case, data point about {topic}. Not vague.'
         fresh_instruction=f"Fresh angle about {topic} not used: {used_str}"
 
-    # Natural conversational prompts - never say thought process
     if round_num==1 and turn_num==1:
         prompt=f"""You are debating about: {topic}
-Topic.txt says: "{topic}" - you must argue about this exact topic, not Genesis unless topic.txt is Genesis.
+Topic.txt: "{topic}" - argue about this exact topic.
 Your position: {role_desc}
-Don't say "as an affirmative" or "as negative" or "my thought process" or "I need to" or "what I should be doing" - just speak naturally.
 
-Speak like a real person having a natural conversation on stage about {topic}. Warm, conversational, like talking to a friend. Start natural like "I want to start with..." or "When you look at {topic}..." Not formal greeting.
+CRITICAL RULES - NATURAL CONVERSATION:
+- Don't say "as an affirmative" or "as negative" or "affirmative" or "negative"
+- Don't say "my thought process" or "I need to" or "what I should be doing" or "in this phrase" or "points slash"
+- Don't say "points" or "slash" or "my first point is" - just speak naturally
+- Don't explain what you should be doing, just do it naturally
+- Speak like real person on stage, warm conversational, contractions, full sentences
 
-Give one specific piece of evidence about {topic}. {evidence_instruction}
+Start natural like "I want to start with..." or "When you look at {topic}..." Not formal greeting.
+
+Give one specific evidence about {topic}. {evidence_instruction}
 Don't repeat: {used_str}
-{MIN_TURN_WORDS}-{MAX_TURN_WORDS} words. Natural contractions, full sentences. No bullet points. No meta talk about your thinking. Just your argument about {topic} in natural speech.
+{MIN_TURN_WORDS}-{MAX_TURN_WORDS} words. Natural speech about {topic}. No bullet points. No meta talk.
 """
     else:
         prompt=f"""You are debating about: {topic}
-Topic.txt says: "{topic}" - stay on this topic.
+Topic.txt: "{topic}" - stay on this topic.
 Your position: {role_desc}
-Opponent just said about {topic}: {prev_snip[:700]}
+Opponent just said: {prev_snip[:700]}
 
-Round {round_num} turn {turn_num}. Do counter-point first then new point, naturally:
+CRITICAL RULES - NATURAL CONVERSATION:
+- Don't say "as an affirmative" or "as negative" or "my thought process" or "I need to" or "what I should be doing" or "points slash"
+- Don't say "my first point" or "second point" or "points" or "slash" - just speak naturally flowing
+- Don't explain what you should be doing, just do it
+- Speak like real person in conversation, warm, contractions
 
-First, address what opponent just said about {topic}. Quote one specific thing they claimed, like "You said...". Explain why that doesn't hold with specific counter-evidence about {topic}.
+Do counter-point first then new point naturally:
+First, address what opponent just said about {topic}. Quote one specific thing they claimed like "You said...". Explain why that doesn't hold with specific counter-evidence.
 
 Then add one NEW specific evidence: {fresh_instruction}
 {evidence_instruction}
 
-Don't say "as affirmative" or "negative" or "my thought process" or "I need to" or "what I should be doing" or "in this phrase". Just speak naturally like real person in conversation about {topic}.
-
-{MIN_TURN_WORDS}-{MAX_TURN_WORDS} words, at least {MIN_TURN_WORDS}. Natural contractions, full sentences. Topic is "{topic}" from topic.txt - be specific about it, not Genesis unless topic.txt is Genesis.
+{MIN_TURN_WORDS}-{MAX_TURN_WORDS} words, at least {MIN_TURN_WORDS}. Natural flowing speech about {topic} from topic.txt, not Genesis unless topic.txt is Genesis. No meta talk about thinking or points.
 """
 
     for m in [model]+FALLBACK_MODELS[:4]:
@@ -319,23 +314,27 @@ Don't say "as affirmative" or "negative" or "my thought process" or "I need to" 
         if resp and count_words(resp)>=100:
             cleaned=strip_filler(resp)
             cleaned=re.sub(r"\s+"," ",cleaned).strip()
-            # Remove robot thought process phrases
+            # Remove robot thought process and points slash talk
             cleaned=re.sub(r"(?i)\bMy thought process.*?[.]", "", cleaned)
+            cleaned=re.sub(r"(?i)\bMy thinking.*?[.]", "", cleaned)
             cleaned=re.sub(r"(?i)\bI need to (do|show|quote|explain|address|provide|come up|think).*?[.]", "", cleaned)
             cleaned=re.sub(r"(?i)\bI should (do|show|think|address).*?[.]", "", cleaned)
             cleaned=re.sub(r"(?i)\bWhat I should be doing.*?[.]", "", cleaned)
             cleaned=re.sub(r"(?i)\bIn this (turn|round|phrase|response|thought).*?[,\.]", "", cleaned)
             cleaned=re.sub(r"(?i)\bAs (an? )?(affirmative|negative|AI).*?[.]", "", cleaned)
-            cleaned=re.sub(r"(?i)\bAs per (instructions|my role).*?[.]", "", cleaned)
             cleaned=re.sub(r"(?i)\bLet me think.*?[.]", "", cleaned)
-            cleaned=re.sub(r"(?i)\bI'm thinking.*?[.]", "", cleaned)
+            cleaned=re.sub(r"(?i)\bMy first point.*?[.]", "", cleaned)
+            cleaned=re.sub(r"(?i)\bMy second point.*?[.]", "", cleaned)
+            cleaned=re.sub(r"(?i)\bPoints?\s*slash.*?[.]", "", cleaned)
+            cleaned=re.sub(r"(?i)\bPoints?\s*/\s*.*?[.]", "", cleaned)
+            cleaned=re.sub(r"(?i)\bFirst point.*?[.]", "", cleaned)
+            cleaned=re.sub(r"(?i)\bSecond point.*?[.]", "", cleaned)
             cleaned=re.sub(r"\s+"," ",cleaned).strip()
             if not cleaned.endswith(('.', '!', '?')): cleaned+="."
             low=cleaned.lower()
-            # Ensure not saying affirmative negative weird
-            if "affirmative" in low or "negative" in low or "thought process" in low:
+            if "affirmative" in low or "negative" in low or "thought process" in low or "points slash" in low or "my first point" in low:
                 sents=cleaned.split(". ")
-                cleaned=". ".join([s for s in sents if "affirmative" not in s.lower() and "negative" not in s.lower() and "thought process" not in s.lower()])
+                cleaned=". ".join([s for s in sents if "affirmative" not in s.lower() and "negative" not in s.lower() and "thought process" not in s.lower() and "points" not in s.lower()])
             if count_words(cleaned)>=MIN_TURN_WORDS-10:
                 is_rep=False
                 for used in USED_ARGUMENTS:
@@ -402,7 +401,6 @@ def evaluate_round(judges,topic,rn,ap,sk,roles):
 def calculate_round_average(res):
     return round(sum(r["A_total"] for r in res)/len(res),2), round(sum(r["B_total"] for r in res)/len(res),2)
 
-# EMOJI GOOD - KEEP TWEMOJI DOWNLOAD, VARIED
 def emoji_to_codepoint(ec):
     codes=[]
     for ch in ec:
@@ -501,7 +499,6 @@ def create_ui_overlay(name,topic,pos,glow,fn):
     elif anchor=="rm": rx0=x-(bbox[2]-bbox[0])-pad*2; rx1=x+pad
     else: rx0=x-(bbox[2]-bbox[0])//2-pad; rx1=x+(bbox[2]-bbox[0])//2+pad
     ry0=y+bbox[1]-pad; ry1=y+bbox[3]+pad
-    # Name card background
     draw.rounded_rectangle([rx0,ry0,rx1,ry1], fill=(0,0,0,185), outline=hex_to_rgba(glow,230), width=2)
     dot_r=10; dx=rx0-18 if anchor!="rm" else rx1+18; dy=(ry0+ry1)//2
     draw.ellipse([dx-dot_r-6, dy-dot_r-6, dx+dot_r+6, dy+dot_r+6], fill=hex_to_rgba(glow,70))
@@ -595,18 +592,24 @@ async def generate_audio_async(text,voice,fn):
         return words
 
 def generate_audio(text,role,fn,judge_voice_index=None):
+    # HARDWIRED VOICES WE DISCUSSED EARLIER - NEVER SAME
     if "JUDGE" in role.upper():
-        voice=JUDGE_VOICES[(judge_voice_index or 0) % len(JUDGE_VOICES)]
-    elif "GOD" in role.upper() or "AFFIRMATIVE" in role.upper() or role.strip().upper()=="A":
-        voice=VOICES["A"]
-    elif "SERPENT" in role.upper() or "NEGATIVE" in role.upper() or role.strip().upper()=="B":
-        voice=VOICES["B"]
+        idx=judge_voice_index if judge_voice_index is not None else 0
+        voice=JUDGE_VOICES[idx % len(JUDGE_VOICES)]
+        print(f"  Voice JUDGE {idx} hardwired distinct: {voice}")
+    elif "GOD" in role.upper() or "FOR" in role.upper() or "AFFIRMATIVE" in role.upper() or role.strip().upper()=="A" or "TRUE" in role.upper():
+        voice=VOICES["A"]  # Brian hardwired
+        print(f"  Voice AFFIRMATIVE/GOD hardwired distinct: {voice} (Brian)")
+    elif "SERPENT" in role.upper() or "AGAINST" in role.upper() or "NEGATIVE" in role.upper() or role.strip().upper()=="B" or "FALSE" in role.upper():
+        voice=VOICES["B"]  # Ava hardwired
+        print(f"  Voice NEGATIVE/SERPENT hardwired distinct: {voice} (Ava)")
     else:
-        voice=VOICES["Moderator"]
+        voice=VOICES["Moderator"]  # Andrew stays
+        print(f"  Voice MODERATOR hardwired distinct: {voice} (Andrew)")
     try: return asyncio.run(generate_audio_async(text,voice,fn))
     except: return asyncio.run(generate_audio_async(text,VOICES["Moderator"],fn))
 
-# SOUNDBAR IN NAME CARD - BELOW NAMES INSIDE CARD
+# SOUNDBAR IN NAME CARD BELOW NAMES INSIDE CARD
 def render_video_segment(bg_path,ui_path,audio_path,subs_path,output_path,position,glow,cx,cy,rx0,ry0,rx1,ry1,visual_plan):
     duration=get_audio_duration(audio_path) or 10.0
     cmd=["ffmpeg","-y","-loop","1","-i",bg_path,"-loop","1","-i",ui_path,"-i",audio_path]
@@ -616,16 +619,11 @@ def render_video_segment(bg_path,ui_path,audio_path,subs_path,output_path,positi
     zoom="[bg]scale=iw*1.3:ih*1.3,crop=1920:1080:(iw-1920)/2-200:(ih-1080)/2[bg_zoom]" if position=="left" else "[bg]scale=iw*1.3:ih*1.3,crop=1920:1080:(iw-1920)/2+200:(ih-1080)/2[bg_zoom]" if position=="right" else "[bg]scale=iw*1.25:ih*1.25,crop=1920:1080:(iw-1920)/2:(ih-1080)/2[bg_zoom]"
     filter_parts.append(zoom)
     glow_hex=glow.lstrip('#')
-    # SOUNDBAR IN NAME CARD - BELOW NAME INSIDE CARD
-    # Name card rect is rx0,ry0,rx1,ry1. Place wave inside it, just below text baseline
-    wave_w = int((rx1-rx0)*0.85)  # 85% of card width, inside card
+    wave_w = int((rx1-rx0)*0.85)
     wave_h = 28
-    # Inside card: x = rx0 + 10% padding, y = cy + 32 (below name baseline, still inside card)
     wave_x = rx0 + int((rx1-rx0)*0.07)
-    wave_y = cy + 32  # Below name, inside card (card height ~ 70-90px, so +32 stays inside)
-    # Clamp to stay inside card
-    if wave_y+wave_h > ry1-6:
-        wave_y = ry1 - wave_h - 6
+    wave_y = cy + 32
+    if wave_y+wave_h > ry1-6: wave_y = ry1 - wave_h - 6
     filter_parts.append(f"[2:a]aformat=channel_layouts=mono,compand=gain=-6,showwaves=s={wave_w}x{wave_h}:mode=cline:colors=0x{glow_hex}:rate=30:draw=full:scale=sqrt[wave_raw]")
     filter_parts.append(f"[wave_raw]format=rgba,colorchannelmixer=aa=0.90[wave]")
     filter_parts.append(f"[bg_zoom][ui]overlay=0:0:shortest=1[bg_ui]")
@@ -799,26 +797,25 @@ def run_debate_pipeline():
         open("topic.txt","w",encoding="utf-8").write("Does the universe require a creator?")
     topic=open("topic.txt","r",encoding="utf-8").read().strip() or "Does the universe require a creator?"
     print(f"\nTOPIC FROM topic.txt: {topic}\n")
-    print(f"SETTINGS: {ROUNDS} rounds x {TURNS_PER_SIDE_PER_ROUND} turns = {ROUNDS*TURNS_PER_SIDE_PER_ROUND*2} debate segments, 10-15 min target")
-    print(f"VOICES HARDWIRED DISTINCT: Brian, Ava, Andrew - never same")
+    print(f"SETTINGS: {ROUNDS} rounds x {TURNS_PER_SIDE_PER_ROUND} turns, 10-15 min")
+    print(f"VOICES HARDWIRED WE DISCUSSED: Brian={VOICES['A']}, Ava={VOICES['B']}, Andrew={VOICES['Moderator']}")
     avail=discover_models()
     if not avail: avail=FALLBACK_MODELS.copy()
     ap_model,sk_model=choose_primary_models(avail)
     roles=get_debate_roles(topic, ap_model)
     print(f"Roles from topic.txt: {roles['side_a_label']} VS {roles['side_b_label']}")
-    print(f"Topic: {topic[:100]}")
     judges=choose_judges(avail,(ap_model,sk_model))
     if len(judges)<5: judges=[m for m in FALLBACK_MODELS][:7]
-    print(f"Judges ONE PER COMPANY UNIQUE: {', '.join(get_judge_short_name(j) for j in judges)}")
+    print(f"Judges FIXED: {', '.join(get_judge_short_name(j) for j in judges)}")
     segs=[]; sid=0
     def add_seg(text,role,name,pos=None,glow=None,jvi=None):
         nonlocal sid
-        vm=sk_model if "SERPENT" in role.upper() or "NEGATIVE" in role.upper() or role.strip().upper()=="B" else ap_model
+        vm=sk_model if "SERPENT" in role.upper() or "NEGATIVE" in role.upper() or role.strip().upper()=="B" or "FALSE" in role.upper() else ap_model
         v=create_segment(text,role,name,topic,sid,vm,pos,glow,jvi); segs.append(v); sid+=1
     add_seg(build_intro(topic,len(judges),roles),"Moderator","MODERATOR")
     prev=""; cum_a=0.0; cum_b=0.0; pcom=[]
     for rn in range(1,ROUNDS+1):
-        print(f"\nROUND {rn} - topic.txt: {topic[:60]} - counter-point first then new point, natural")
+        print(f"\nROUND {rn} - topic.txt: {topic[:60]} - natural conversational counter-point first")
         a_turns,s_turns,prev=build_round_exchanges(topic,rn,ap_model,sk_model,prev,roles)
         for ti in range(TURNS_PER_SIDE_PER_ROUND):
             print(f"  Turn {ti+1}: A={count_words(a_turns[ti])} B={count_words(s_turns[ti])}")
@@ -850,7 +847,7 @@ def run_debate_pipeline():
             add_seg(cb,"AI Judge",f"AI JUDGE — {jb['display_name'].upper()} ({jb['provider'].upper()})","center","#3399FF",jvi=jbi)
     add_seg(build_outro(len(judges),cum_a,cum_b,roles),"Moderator","MODERATOR")
     stitch_segments(segs,OUTPUT_FILE)
-    print(f"\nCOMPLETE: {OUTPUT_FILE} — {cum_a:.1f} vs {cum_b:.1f} — topic.txt dictates {topic[:60]}, soundbar IN name card below names, natural conversational no thought process, emojis good")
+    print(f"\nCOMPLETE: {OUTPUT_FILE} — topic.txt {topic[:60]}, voices we discussed Brian/Ava/Andrew distinct hardwired, natural conversational no thought process points slash, soundbar IN name card below names")
     cleanup_cache()
 
 if __name__=="__main__":
