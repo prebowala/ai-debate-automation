@@ -32,7 +32,11 @@ EMOJI_H = 180
 USED_ARGUMENTS = set()
 USED_JUDGE_EXPLANATIONS = set()
 
+# VOICES SAME EACH BUILD NO MATTER TOPIC - HARDWIRED DISTINCT WE DISCUSSED
 VOICES = {
+    "GOD EXISTS": "en-US-BrianMultilingualNeural",
+    "GOD DOESN'T EXIST": "en-US-AvaMultilingualNeural",
+    "GOD DOESNT EXIST": "en-US-AvaMultilingualNeural",
     "YES": "en-US-BrianMultilingualNeural",
     "NO": "en-US-AvaMultilingualNeural",
     "Moderator": "en-US-AndrewMultilingualNeural",
@@ -103,11 +107,6 @@ def count_words(t): return len(re.findall(r"\b[\w'-]+\b", t or ""))
 
 def clean_for_speech(t):
     if not t: return ""
-    # Fix YES/NO pronunciation - ensure not spelled N O
-    t=re.sub(r"\bY\s*E\s*S\b","yes",t,flags=re.IGNORECASE)
-    t=re.sub(r"\bN\s*O\b","no",t,flags=re.IGNORECASE)
-    t=re.sub(r"\bYES\b","yes",t)
-    t=re.sub(r"\bNO\b","no",t)
     t=re.sub(r"https?://\S+"," ",t)
     t=re.sub(r"www\.\S+"," ",t)
     t=re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", t)
@@ -155,10 +154,10 @@ def discover_models():
     except:
         return FALLBACK_MODELS.copy()
 
-def query_openrouter(prompt,mid,timeout=60,max_tokens=850,temperature=0.88):
+def query_openrouter(prompt,mid,timeout=60,max_tokens=800,temperature=0.82):
     if not OPENROUTER_API_KEY: return None
     if ":free" not in mid.lower(): return None
-    payload={"model":mid,"messages":[{"role":"user","content":prompt}],"temperature":temperature,"max_tokens":max_tokens}
+    payload={"model":mid,"messages":[{"role":"system","content":"You are a natural human debater. Never say what you are going to do, never explain your thinking process, never say here's a thinking process, never list steps. Just speak naturally with real evidence. No meta talk."},{"role":"user","content":prompt}],"temperature":temperature,"max_tokens":max_tokens}
     for _ in range(2):
         try:
             resp=requests.post(OPENROUTER_URL,headers=openrouter_headers(),json=payload,timeout=timeout)
@@ -178,7 +177,7 @@ def choose_primary_models(avail):
             picks.append(m); used.add(prov)
         if len(picks)>=2: break
     if len(picks)<2: picks=(free+FALLBACK_MODELS)[:2]
-    print(f"Primary same each build: YES Brian vs NO Ava vs Moderator Andrew")
+    print(f"Primary same each build: GOD EXISTS Brian vs GOD DOESNT EXIST Ava vs Moderator Andrew")
     return picks[0],picks[1]
 
 def choose_judges(avail,primary):
@@ -220,11 +219,12 @@ def choose_judges(avail,primary):
 
 def get_debate_roles(topic, model):
     tl=(topic or "").lower()
+    if "does god exist" in tl or "is there a god" in tl or "god exists" in tl:
+        return {"side_a_label":"GOD EXISTS","side_a_desc":"God exists side for Does God exist","side_b_label":"GOD DOESN'T EXIST","side_b_desc":"God does not exist side for Does God exist"}
     if "god" in tl and "serpent" in tl:
-        return {"side_a_label":"YES","side_a_desc":f"God told truth about {topic}","side_b_label":"NO","side_b_desc":f"serpent told truth about {topic}"}
-    if "does god exist" in tl:
-        return {"side_a_label":"YES","side_a_desc":f"Yes God exists for {topic}","side_b_label":"NO","side_b_desc":f"No God does not exist for {topic}"}
-    return {"side_a_label":"YES","side_a_desc":f"Yes for {topic}","side_b_label":"NO","side_b_desc":f"No for {topic}"}
+        return {"side_a_label":"GOD EXISTS","side_a_desc":"God told truth side","side_b_label":"GOD DOESN'T EXIST","side_b_desc":"serpent told truth side interpreted as God does not exist side"}
+    # Default descriptive labels from topic
+    return {"side_a_label":"GOD EXISTS","side_a_desc":f"Yes side for {topic}","side_b_label":"GOD DOESN'T EXIST","side_b_desc":f"No side for {topic}"}
 
 def strip_filler(t):
     for pat in [r"^(ladies and gentlemen[,.]?\s*)",r"^(my friends[,.]?\s*)",r"^(well[,.]?\s*)",r"^(thank you[,.]?\s*)"]:
@@ -232,117 +232,99 @@ def strip_filler(t):
     return t
 
 def generate_fallback_debate(side_label, topic, round_num, turn_num):
-    # Human sounding, relevant, same length YES NO
-    if "does god exist" in topic.lower():
-        if side_label=="YES":
+    # Human sounding, same length, relevant points
+    tl=topic.lower()
+    if "does god exist" in tl or "god exists" in tl:
+        if "DOESN'T" in side_label.upper() or "DOESNT" in side_label.upper() or "NO" in side_label.upper():
             return random.choice([
-                "I think about the universe having a beginning. Everything we see that begins has a cause. If space and time themselves began at the Big Bang, the cause has to be outside space and time. That sounds a lot like what people mean by God, and it fits with yes, God exists.",
-                "DNA is what really got me. It's not just chemistry, it's information, like a four letter code that builds proteins. In our everyday experience, information always comes from a mind. You don't get code without a coder. That pushes me toward yes, God exists.",
-                "The fine tuning is hard to ignore. If gravity was a fraction stronger, stars burn out too fast. If it was weaker, no stars form at all. The numbers are balanced on a knife edge to allow life. That precision makes more sense if it was intended, so yes.",
+                "You know what makes me doubt, it's suffering. I have seen kids with cancer and earthquakes that wipe out towns. If there is a God who is all loving and all powerful, that kind of pointless pain should not happen. That is why I land on the God does not exist side.",
+                "I used to think we needed God to explain complexity, but evolution and physics actually do the job and make predictions we can test. We do not need to add an extra layer. The simpler explanation is that God does not exist, and that fits what we observe.",
+                "I looked at prayer studies, like the big STEP trial on heart patients where they prayed for recovery. No consistent effect beyond placebo. If someone was listening, we should see a clear signal, but we do not. That pushes me to the God does not exist side.",
             ])
         else:
             return random.choice([
-                "What I keep coming back to is suffering. If there is an all powerful and all loving God, why do children get bone cancer or tsunamis wipe out whole villages. That kind of pointless pain does not fit with a loving designer, so I lean to no, God does not exist.",
-                "We used to need God to explain lightning and disease, now we have natural explanations that actually work and make predictions. Evolution explains complexity, physics explains origins. Adding God does not help predict anything, so no is the simpler and more honest answer.",
-                "Prayer studies are telling. When you test intercessory prayer in double blind trials like the STEP study on heart patients, there is no consistent effect beyond placebo. If someone was listening and intervening, we should see a signal, but we don't, which points to no.",
+                "What gets me is that the universe had a beginning. The Big Bang means space and time started. Anything that begins needs a cause outside itself, something beyond space and time. That description matches what people mean by God, so I am on the God exists side.",
+                "DNA struck me as different. It is not just chemicals, it is information, a four letter code that builds proteins. In all our experience, information comes from a mind. You do not get a book without an author, so I lean to the God exists side.",
+                "Fine tuning is hard to ignore. If gravity was a tiny bit stronger stars burn out too fast, a bit weaker no stars at all. The constants are balanced on a knife edge to allow life. That precision feels intentional, which fits the God exists side.",
             ])
-    if side_label=="YES":
-        return f"When I look at {topic}, yes makes sense because of a concrete pattern you can check. For example, take a real case of {topic} you see in life, the mechanism behind yes predicts what happens next. That is why I land on yes for {topic}."
+    if side_label.upper().startswith("GOD EXISTS") or side_label.upper()=="YES":
+        return f"Looking at {topic}, I am on the God exists side because there is a concrete pattern you can check. Take a real example of {topic}, the mechanism behind it predicts what we see. That is why I stay with God exists."
     else:
-        return f"When I look at {topic}, no fits the real world better. Think about a concrete case of {topic}, the yes explanation sounds nice but fails when you test it. No explains what actually happens, so I land on no for {topic}."
+        return f"Looking at {topic}, I am on the God does not exist side because the real world data fits better. Take a concrete case of {topic}, the God exists explanation sounds nice but breaks when tested. God does not exist explains it."
 
 def generate_turn(role_key, topic, round_num, turn_num, prev_history, model, role_label, role_desc, opponent_label, opponent_desc):
     global USED_ARGUMENTS
-    used_str="; ".join(list(USED_ARGUMENTS)[-5:])[:200] if USED_ARGUMENTS else "none yet"
-    prev_snip=prev_history[-600:] if prev_history else ""
+    used_str="; ".join(list(USED_ARGUMENTS)[-5:])[:180] if USED_ARGUMENTS else "none"
+    prev_snip=prev_history[-500:] if prev_history else ""
 
-    # Human prompt - no instruction leak words like Constraints, Give relevant points
     tl=topic.lower()
-
-    if "does god exist" in tl:
-        if role_label=="YES":
-            human_context="You personally believe yes, God does exist. You are warm, conversational, like talking to a friend over coffee, not a lecture. Use contractions, small pauses, real examples."
-            evidence_hint="Pick one concrete reason yes: universe needing cause outside itself, DNA code needing coder, fine tuning razor edge, consciousness not just brain, moral sense, historical evidence."
-        else:
-            human_context="You personally believe no, God does not exist. You are warm, conversational, like talking to a friend over coffee, not a lecture. Use contractions, small pauses, real examples."
-            evidence_hint="Pick one concrete reason no: evil and suffering, hiddenness, prayer studies showing no effect, natural explanations work, inconsistent revelations, lack of evidence."
-    elif "god" in tl and "serpent" in tl:
-        if role_label=="YES":
-            human_context="You believe yes, God told truth. Conversational, natural."
-            evidence_hint="Use Genesis: 2:17 moth tamuth surely die, 3:10 Adam hid afraid, 3:24 cherubim block tree of life, 2:16 freely eat every tree generosity."
-        else:
-            human_context="You believe no, serpent told truth. Conversational, natural."
-            evidence_hint="Use Genesis: 2:17 in the day you shall die same day, 5:5 Adam lived 930 years, 3:4 you shall not die, 3:7 eyes opened, 3:22 become as one of us."
+    # Human natural instructions - no leak words
+    if "DOESN'T" in role_label.upper() or "DOESNT" in role_label.upper() or "NO" in role_label.upper():
+        side_name = "God does not exist side"
+        belief = "you believe God does not exist"
+        pronoun = "God does not exist"
     else:
-        human_context=f"You believe {role_label.lower()} for {topic}. Conversational, human, warm."
-        evidence_hint=f"Give one specific real example or data point for {role_label.lower()} about {topic}."
+        side_name = "God exists side"
+        belief = "you believe God exists"
+        pronoun = "God exists"
 
     if round_num==1 and turn_num==1:
-        prompt=f"""{human_context}
-Question is {topic}.
+        prompt=f"""Question {topic}. {belief}. You are on the {side_name}.
 
-Tell a short human story or example that made you believe {role_label.lower()} for {topic}. {evidence_hint}
+Share one personal real example or evidence that convinced you {pronoun}. Make it human, warm, conversational like talking to a friend, with contractions and natural pauses. About {MIN_TURN_WORDS} words. Start directly with your example, no intro like I will explain.
 
-Speak naturally, like a person, not a robot. About {MIN_TURN_WORDS} words. No bullet points. Do not say what you need to do, just do it. Start directly with your story.
-Do not use the words constraints, relevant points, arguing YES, position, task.
+Do not say thinking process, analyze, step 1, task, constraints, relevant points, arguing YES.
 
-Do not repeat: {used_str}
+Not used before: {used_str}
 """
     else:
-        prompt=f"""{human_context}
-Question is {topic}.
-Other person just said: {prev_snip[:500]}
+        prompt=f"""Question {topic}. {belief}. You are on the {side_name}.
+Other side said: {prev_snip[:400]}
 
-First, respond to what they just said in a natural way. Say something like You mentioned... and then gently show why you see it differently with a specific fact.
+First, reply naturally to what they just said. Mention one thing they said and why you see it differently with a specific fact.
 
-Then share a new reason why you still believe {role_label.lower()} for {topic}. {evidence_hint}
+Then add one new piece of evidence for {pronoun} you have not used yet.
 
-Speak like a real human, warm, with contractions. About {MIN_TURN_WORDS} words. No phrases like points slash or my task is. Just natural conversation.
+Speak like a real person, warm, human, contractions. About {MIN_TURN_WORDS} words. No robotic phrases. No saying thinking process or steps.
 
-Do not use words constraints, relevant points, arguing YES.
-
-New reason not used: {used_str}
+Not used: {used_str}
 """
 
     for m in [model]+FALLBACK_MODELS[:4]:
-        resp=query_openrouter(prompt,m,max_tokens=800,temperature=0.88+random.random()*0.08)
+        resp=query_openrouter(prompt,m,max_tokens=780,temperature=0.84+random.random()*0.08)
         if resp and count_words(resp)>=110:
             cleaned=strip_filler(resp)
             cleaned=re.sub(r"\s+"," ",cleaned).strip()
 
-            # Aggressive removal of leaked instruction phrases seen in screenshots
-            bad_phrases=[
-                r"Give relevant points with evidence,? not.*?(\.|$)",
-                r"arguing YES.*?Constraints.*?(\.|$)",
-                r"arguing NO.*?Constraints.*?(\.|$)",
+            # Remove thinking aloud and robotic leaks seen in screenshot
+            leak_patterns=[
+                r"Here's a thinking process.*?(\.|$)",
+                r"thinking process.*?(\.|$)",
+                r"1\.\s*Analyze.*?(\.|$)",
+                r"Step 1.*?(\.|$)",
+                r"Let me think.*?(\.|$)",
+                r"I need to.*?(\.|$)",
+                r"My thinking.*?(\.|$)",
                 r"Constraints.*?(\.|$)",
                 r"Relevant points.*?(\.|$)",
-                r"Position.*?(\.|$)",
+                r"Arguing YES.*?(\.|$)",
+                r"Position\s*\..*?(\.|$)",
                 r"User Constraints.*?(\.|$)",
-                r"My task is.*?(\.|$)",
-                r"I need to.*?(\.|$)",
-                r"What I should be doing.*?(\.|$)",
-                r"As (an? )?(affirmative|negative).*?(\.|$)",
-                r"Points? slash.*?(\.|$)",
+                r"As an? (affirmative|negative).*?(\.|$)",
+                r"Points?\s*slash.*?(\.|$)",
             ]
-            for pat in bad_phrases:
+            for pat in leak_patterns:
                 cleaned=re.sub(pat,"",cleaned,flags=re.IGNORECASE)
 
             cleaned=re.sub(r"\s+"," ",cleaned).strip()
             if not cleaned.endswith(('.', '!', '?')): cleaned+="."
 
             low=cleaned.lower()
-
-            # Must be human sounding, not just meta
-            if len(low)<90: continue
-            if "give relevant points" in low or "arguing yes" in low or "constraints" in low:
+            if "thinking process" in low or "here's a thinking" in low or "1. analyze" in low:
                 continue
-
-            # Ensure not too short, ensure YES and NO same length range
-            wc=count_words(cleaned)
-            if wc < MIN_TURN_WORDS-10 or wc > MAX_TURN_WORDS+20:
-                # Trim or keep but try to balance
-                pass
+            if len(low)<90: continue
+            if count_words(cleaned) < MIN_TURN_WORDS-15:
+                continue
 
             is_rep=False
             for used in USED_ARGUMENTS:
@@ -351,17 +333,7 @@ New reason not used: {used_str}
             if not is_rep:
                 for s in cleaned.split('. ')[:2]:
                     if len(s)>30: USED_ARGUMENTS.add(s[:80])
-                # Fix YES NO pronunciation: ensure we say yes/no as words not letters
-                # Replace standalone YES/NO acronyms with full phrase for speech
-                final = cleaned
-                # Do not keep all caps YES/NO in spoken text - convert to natural
-                final = re.sub(r"\bYES\b","yes",final)
-                final = re.sub(r"\bNO\b","no",final)
-                # Ensure says yes, God exists not just yes
-                if role_label=="YES" and "yes" in final.lower() and "god" not in final.lower() and "does god exist" in tl:
-                    # keep but add context later if needed
-                    pass
-                return final[:1700]
+                return cleaned[:1700]
 
     fb=generate_fallback_debate(role_label, topic, round_num, turn_num)
     USED_ARGUMENTS.add(fb[:80])
@@ -374,18 +346,15 @@ def build_round_exchanges(topic, rn, ap_model, sk_model, prev, roles):
         a_turns.append(a); hist+=f"\n{roles['side_a_label']}: {a}\n"
         s=generate_turn("B", topic, rn, tn, hist, sk_model, roles['side_b_label'], roles['side_b_desc'], roles['side_a_label'], roles['side_a_desc'])
         s_turns.append(s); hist+=f"\n{roles['side_b_label']}: {s}\n"
-    # Balance lengths - make NO same length as YES
+    # Balance YES NO same length
     for i in range(len(a_turns)):
-        if abs(count_words(a_turns[i]) - count_words(s_turns[i])) > 25:
-            # Trim longer to match shorter avg
-            avg = (count_words(a_turns[i]) + count_words(s_turns[i]))//2
-            # simple truncation for longer
-            if count_words(a_turns[i]) > avg+10:
-                words = a_turns[i].split()
-                a_turns[i] = " ".join(words[:avg+5]) + "."
-            if count_words(s_turns[i]) > avg+10:
-                words = s_turns[i].split()
-                s_turns[i] = " ".join(words[:avg+5]) + "."
+        aw=count_words(a_turns[i]); bw=count_words(s_turns[i])
+        if abs(aw-bw)>20:
+            avg=(aw+bw)//2
+            if aw>avg+10:
+                a_turns[i]=" ".join(a_turns[i].split()[:avg+5])+"."
+            if bw>avg+10:
+                s_turns[i]=" ".join(s_turns[i].split()[:avg+5])+"."
     return a_turns,s_turns,hist
 
 def neutral_judge(model):
@@ -396,10 +365,10 @@ def neutral_judge(model):
     return {"model":model,"provider":provider_from_model(model),"display_name":get_judge_short_name(model),"A_total":round(a,1),"B_total":round(b,1),"winner":"A" if a>b else "B"}
 
 def judge_round(model,topic,rn,ap,sk,roles):
-    prompt=f'Judge Round {rn} about {topic}. {roles["side_a_label"]}: {ap[:700]} vs {roles["side_b_label"]}: {sk[:700]}. Score 0 to 100. Return ONLY JSON like {{"A_total":80,"B_total":70,"winner":"A","reason":"one sentence"}} Must not be equal.'
+    prompt=f'Judge round {rn} about {topic}. {roles["side_a_label"]} says {ap[:600]} vs {roles["side_b_label"]} says {sk[:600]}. Score 0 to 100. Return ONLY JSON {{"A_total":80,"B_total":70,"winner":"A","reason":"one human sentence why"}} Not equal. Be human, not robotic.'
     for m in [model]+FALLBACK_MODELS[:2]:
         if ":free" not in m: continue
-        resp=query_openrouter(prompt,m,timeout=35,max_tokens=300,temperature=0.2)
+        resp=query_openrouter(prompt,m,timeout=35,max_tokens=300,temperature=0.6)
         if not resp: continue
         try:
             mm=re.search(r"\{{.*\}}",resp,re.DOTALL)
@@ -583,11 +552,11 @@ def generate_subtitles(words,fn,scorecard=False,audio_file=None,full_text=None):
 async def generate_audio_async(text,voice,fn):
     ct=clean_for_speech(text)
     if "Brian" in voice:
-        ssml=f"<speak version='1.0' xml:lang='en-US'><voice name='{voice}'><prosody rate='-1%' pitch='-2%'>{ct}</prosody></voice></speak>"
+        ssml=f"<speak version='1.0' xml:lang='en-US'><voice name='{voice}'><prosody rate='-2%' pitch='-2%'>{ct}</prosody></voice></speak>"
     elif "Ava" in voice:
-        ssml=f"<speak version='1.0' xml:lang='en-US'><voice name='{voice}'><prosody rate='+2%' pitch='+1%'>{ct}</prosody></voice></speak>"
+        ssml=f"<speak version='1.0' xml:lang='en-US'><voice name='{voice}'><prosody rate='+1%' pitch='+1%'>{ct}</prosody></voice></speak>"
     else:
-        ssml=f"<speak version='1.0' xml:lang='en-US'><voice name='{voice}'><prosody rate='+0%' pitch='+0%'>{ct}</prosody></voice></speak>"
+        ssml=f"<speak version='1.0' xml:lang='en-US'><voice name='{voice}'><prosody rate='+0%'>{ct}</prosody></voice></speak>"
     try:
         com=edge_tts.Communicate(ssml,voice)
         audio=b""; words=[]
@@ -600,7 +569,7 @@ async def generate_audio_async(text,voice,fn):
         if not words: raise Exception("no boundaries")
         return words
     except:
-        com=edge_tts.Communicate(ct,voice,rate="+2%")
+        com=edge_tts.Communicate(ct,voice,rate="+1%")
         audio=b""; words=[]
         async for chunk in com.stream():
             if chunk["type"]=="audio": audio+=chunk["data"]
@@ -618,10 +587,10 @@ def generate_audio(text,role,fn,judge_voice_index=None):
     if "JUDGE" in role_up:
         idx=judge_voice_index if judge_voice_index is not None else 0
         voice=JUDGE_VOICES[idx % len(JUDGE_VOICES)]
-    elif role_up=="YES" or "GOD" in role_up or "FOR" in role_up or role_up=="A":
-        voice=VOICES["YES"]
-    elif role_up=="NO" or "SERPENT" in role_up or "AGAINST" in role_up or role_up=="B":
-        voice=VOICES["NO"]
+    elif "DOESN'T" in role_up or "DOESNT" in role_up or role_up=="NO" or "GOD DOES" in role_up and "N'T" in role_up:
+        voice=VOICES["GOD DOESN'T EXIST"]
+    elif "GOD EXISTS" in role_up or role_up=="YES":
+        voice=VOICES["GOD EXISTS"]
     else:
         voice=VOICES["Moderator"]
     try: return asyncio.run(generate_audio_async(text,voice,fn))
@@ -688,7 +657,7 @@ def generate_scoreboard(rn,res,avg_a,avg_b,cum_a,cum_b,path,roles):
     draw.text((W//2,50),f"ROUND {rn} SCORES",font=ft,fill=(255,215,0,255),anchor="mt")
     draw.text((W//2,115),f"{roles['side_a_label']}  vs  {roles['side_b_label']}",font=fs,fill=(255,255,255,230),anchor="mt")
     hy=190; cx1=120; cx2=750; cx3=1050; cx4=1350
-    sa=roles['side_a_label'][:12]; sb=roles['side_b_label'][:12]
+    sa=roles['side_a_label'][:14]; sb=roles['side_b_label'][:14]
     draw.rectangle([60,hy-10,W-60,hy+45],fill=(25,35,70,255),outline=(255,215,0,180),width=2)
     draw.text((cx1,hy),"Judge",font=fh,fill=(255,255,255,230))
     draw.text((cx2,hy),sa,font=fh,fill=(0,255,204,255))
@@ -721,9 +690,7 @@ def render_scorecard_video(ip,ap,sp,op):
 
 def create_emoji_plan(text, words):
     if not words: return []
-    word_emoji_map={
-        "god":"✨","life":"🌟","universe":"🌌","beginning":"💫","dna":"🧬","code":"🧬","information":"🧠","fine":"💫","tuning":"⚙️","gravity":"🌌","stars":"⭐","pain":"😣","evil":"😣","suffering":"😢","prayer":"🙏","evolution":"🐒","prayers":"🙏","natural":"🌿",
-    }
+    word_emoji_map={"god":"✨","universe":"🌌","dna":"🧬","stars":"⭐","pain":"😣","evil":"😢","prayer":"🙏","life":"🌟","beginning":"💫"}
     plan=[]; used=[]
     for w in words:
         cw=re.sub(r"[^a-z]","",w["text"].lower())
@@ -740,14 +707,13 @@ def create_emoji_plan(text, words):
 
 def create_segment(text,role,name,topic,sid,model_for_visuals,pos=None,glow=None,judge_voice_index=None):
     if pos is None:
-        pos="left" if role.upper() in ["YES","GOD TOLD TRUTH","FOR","AFFIRMATIVE"] else "right" if role.upper() in ["NO","SERPENT TOLD TRUTH","AGAINST","NEGATIVE"] else "center" if "JUDGE" in role.upper() else "left"
+        pos="left" if "GOD EXISTS" in role.upper() or "YES" in role.upper() else "right" if "DOESN" in role.upper() or "NO" in role.upper() else "center" if "JUDGE" in role.upper() else "left"
     if glow is None:
-        glow="#00FFCC" if role.upper()=="YES" else "#FF00FF" if role.upper()=="NO" else "#3399FF" if "JUDGE" in role.upper() else "#FFD700"
+        glow="#00FFCC" if "GOD EXISTS" in role.upper() or role.upper()=="YES" else "#FF00FF" if "DOESN" in role.upper() or role.upper()=="NO" else "#3399FF" if "JUDGE" in role.upper() else "#FFD700"
     af=f"audio_{sid}.mp3"; sf=f"subs_{sid}.ass"; bf=f"bg_{sid}.png"; uf=f"ui_{sid}.png"; vf=f"segment_{sid}.mp4"
     words=generate_audio(text,role,af,judge_voice_index)
     eplan=[]
-    try:
-        eplan=create_emoji_plan(clean_for_speech(text),words)
+    try: eplan=create_emoji_plan(clean_for_speech(text),words)
     except: pass
     generate_subtitles(words,sf,scorecard=False,audio_file=af,full_text=text)
     create_background(pos,glow,bf)
@@ -760,31 +726,36 @@ def generate_panel_commentary(model,side,topic,rn,ap,sk,prev,roles):
     prov=get_judge_short_name(model)
     pref=roles['side_a_label'] if side=="A" else roles['side_b_label']
     other=roles['side_b_label'] if side=="A" else roles['side_a_label']
-    def trim(t,mw=150): wl=t.split(); return t if len(wl)<=mw else " ".join(wl[-mw:])
-    starters=["Honestly,","For me,","What stood out in round {rn} was","I kept coming back to","The thing that decided round {rn}","Round {rn} really came down to","If I'm being honest about round {rn},","What convinced me in round {rn}","When I weighed both sides in round {rn},"]
+    def trim(t,mw=140): wl=t.split(); return t if len(wl)<=mw else " ".join(wl[-mw:])
+    # Human judge prompt - not robotic
+    starters=["Honestly,","For me,","What stood out was","I kept coming back to","The moment that decided it for me","Round {rn} really turned on","If I'm being honest,","What convinced me was"]
     starter=random.choice(starters).format(rn=rn)
-    prompt=f"You are {prov}, judge about {topic}. You scored {pref} higher than {other} in round {rn}. Speak like real person on YouTube, warm conversational, 3 to 4 sentences. Do not start with Look. Start with {starter}. Give 2 specific reasons why {pref} won round {rn} about {topic} naturally. {pref}: {trim(ap)} vs {other}: {trim(sk)}. Must argue {pref} won."
-    resp=query_openrouter(prompt,model,timeout=35,max_tokens=400,temperature=0.93)
+    prompt=f"You are {prov}, a real person judging {topic}. You scored {pref} higher than {other} in round {rn}. Talk like a YouTuber reacting, warm, natural, contractions, 3 short sentences. Start with {starter}. Give 2 specific human reasons why {pref} side felt stronger, referencing actual points they made about {topic}. {pref}: {trim(ap)} vs {other}: {trim(sk)}. Do NOT say thinking process or analyze. Must argue {pref} won."
+    resp=query_openrouter(prompt,model,timeout=35,max_tokens=350,temperature=0.88)
     if resp and len(resp.split())>=12:
-        resp=re.sub(r"(?i)\bI need to.*?\.", "", resp)
-        resp=re.sub(r"^Look,?\s*", "", resp, flags=re.IGNORECASE)
+        resp=re.sub(r"(?i)Here's a thinking process.*?(\.|$)","",resp)
+        resp=re.sub(r"(?i)thinking process.*?(\.|$)","",resp)
+        resp=re.sub(r"(?i)1\.\s*Analyze.*?(\.|$)","",resp)
+        resp=re.sub(r"^Look,?\s*","",resp,flags=re.IGNORECASE)
         resp=re.sub(r"\s+"," ",resp).strip()
-        low=resp.lower()[:80]
-        if low not in USED_JUDGE_EXPLANATIONS and len(resp.split())>=10:
-            USED_JUDGE_EXPLANATIONS.add(low)
-            return resp
-    chosen=f"{starter} {pref} brought specific evidence about {topic} you can check, not just ideas. They laid out how it fits what actually happened, while {other} repeated same point without answering counter-evidence about {topic}."
+        if len(resp.split())>=10 and "thinking process" not in resp.lower():
+            low=resp.lower()[:80]
+            if low not in USED_JUDGE_EXPLANATIONS:
+                USED_JUDGE_EXPLANATIONS.add(low)
+                return resp
+    # Fallback human
+    chosen=f"{starter} the {pref.lower()} side gave a concrete example you can check, not just theory. The {other.lower()} side talked around it but did not answer that point about {topic}."
     USED_JUDGE_EXPLANATIONS.add(chosen[:60])
     return chosen
 
 def build_intro(topic,jc,roles):
-    return f"Welcome to the AI Debate Arena. Today we ask {topic}. {roles['side_a_label']} says yes, {roles['side_b_label']} says no. Three rounds, equal time. An independent panel of {jc} judges will score. Let's begin."
+    return f"Welcome to the AI Debate Arena. Tonight's question is {topic}. On one side we have the God exists side, on the other the God does not exist side. Three rounds, equal time, {jc} independent judges. Let's begin."
 
 def build_outro(jc,ca,cb,roles):
     if abs(ca-cb)<0.01: res="a draw"
-    elif ca>cb: res=f"yes for {roles['side_a_label']}"
-    else: res=f"no for {roles['side_b_label']}"
-    return f"After three rounds, judges gave {roles['side_a_label']} {ca:.1f}, {roles['side_b_label']} {cb:.1f}. Final result is {res}. Thank you for watching."
+    elif ca>cb: res="the God exists side"
+    else: res="the God does not exist side"
+    return f"After three rounds, judges gave {roles['side_a_label']} {ca:.1f} and {roles['side_b_label']} {cb:.1f}. Tonight's result is {res}. Thanks for watching."
 
 def stitch_segments(segs,out):
     lf="concat_list.txt"
@@ -802,28 +773,27 @@ def run_debate_pipeline():
         open("topic.txt","w",encoding="utf-8").write("Does God exist?")
     topic=open("topic.txt","r",encoding="utf-8").read().strip() or "Does God exist?"
     print(f"\nTOPIC FROM topic.txt: {topic}\n")
-    print(f"VOICES SAME EACH BUILD: YES Brian={VOICES['YES']}, NO Ava={VOICES['NO']}, Moderator Andrew")
-    print(f"YES NO cards, speech says yes God exists / no God does not exist, not N O letters")
-    print(f"Arguments same length YES NO, human sounding, background fixed")
+    print(f"LABELS NOW GOD EXISTS / GOD DOESN'T EXIST per your request")
+    print(f"VOICES SAME EACH BUILD: GOD EXISTS Brian, GOD DOESN'T EXIST Ava, Moderator Andrew")
     avail=discover_models()
     if not avail: avail=FALLBACK_MODELS.copy()
     ap_model,sk_model=choose_primary_models(avail)
     roles=get_debate_roles(topic, ap_model)
-    print(f"Roles: {roles['side_a_label']} vs {roles['side_b_label']} - {topic}")
+    print(f"Roles: {roles['side_a_label']} vs {roles['side_b_label']}")
     judges=choose_judges(avail,(ap_model,sk_model))
     if len(judges)<5: judges=[m for m in FALLBACK_MODELS][:7]
     segs=[]; sid=0
     def add_seg(text,role,name,pos=None,glow=None,jvi=None):
         nonlocal sid
-        vm=sk_model if role.upper()=="NO" else ap_model
+        vm=sk_model if "DOESN" in role.upper() else ap_model
         v=create_segment(text,role,name,topic,sid,vm,pos,glow,jvi); segs.append(v); sid+=1
     add_seg(build_intro(topic,len(judges),roles),"MODERATOR","MODERATOR")
     prev=""; cum_a=0.0; cum_b=0.0; pcom=[]
     for rn in range(1,ROUNDS+1):
-        print(f"\nROUND {rn} - YES NO human natural same length")
+        print(f"\nROUND {rn} - GOD EXISTS vs GOD DOESN'T EXIST human")
         a_turns,s_turns,prev=build_round_exchanges(topic,rn,ap_model,sk_model,prev,roles)
         for ti in range(TURNS_PER_SIDE_PER_ROUND):
-            print(f"  Turn {ti+1}: YES={count_words(a_turns[ti])} words, NO={count_words(s_turns[ti])} words - balanced")
+            print(f"  Turn {ti+1}: {roles['side_a_label']} {count_words(a_turns[ti])} vs {roles['side_b_label']} {count_words(s_turns[ti])} balanced")
             add_seg(a_turns[ti],roles['side_a_label'],roles['side_a_label'],"left","#00FFCC")
             add_seg(s_turns[ti],roles['side_b_label'],roles['side_b_label'],"right","#FF00FF")
         a_full="\n".join(a_turns); s_full="\n".join(s_turns)
@@ -852,7 +822,7 @@ def run_debate_pipeline():
             add_seg(cb,"AI Judge",f"AI JUDGE — {jb['display_name'].upper()} ({jb['provider'].upper()})","center","#3399FF",jvi=jbi)
     add_seg(build_outro(len(judges),cum_a,cum_b,roles),"MODERATOR","MODERATOR")
     stitch_segments(segs,OUTPUT_FILE)
-    print(f"\nCOMPLETE: YES NO same length, human sounding, no N O spelling, background fixed")
+    print(f"\nCOMPLETE: GOD EXISTS vs GOD DOESN'T EXIST labels, no thinking process, human judges, balanced lengths")
     cleanup_cache()
 
 if __name__=="__main__":
