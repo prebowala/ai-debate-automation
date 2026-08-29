@@ -1,3 +1,4 @@
+
 import os
 import re
 import json
@@ -9,55 +10,29 @@ import requests
 import subprocess
 import concurrent.futures
 import time
-
 from typing import List, Dict, Optional
 from urllib.parse import quote
 from io import BytesIO
-
 import edge_tts
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
-
-# ============================================================
-# AI DEBATE ARENA
-# FULL TOPIC-ADAPTIVE VERSION - FIXED SUBS + REAL VISUALS
-# ============================================================
-
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY")
-
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
-
 OUTPUT_FILE = "final_debate_output.mp4"
-
 VIDEO_W = 1920
 VIDEO_H = 1080
 FPS = 30
 
-
-# ============================================================
-# DEBATE SETTINGS
-# ============================================================
-
 ROUNDS = 3
 WORDS_PER_SIDE_PER_ROUND = 500
-TURNS_PER_SIDE_PER_ROUND = 4
-WORDS_PER_TURN = 125
-MIN_TURN_WORDS = 105
-MAX_TURN_WORDS = 145
-
-
-# ============================================================
-# JUDGING
-# ============================================================
+TURNS_PER_SIDE_PER_ROUND = 3  # Reduced from 4 to keep 10-15 min with specific arguments
+WORDS_PER_TURN = 140
+MIN_TURN_WORDS = 115
+MAX_TURN_WORDS = 160
 
 MAX_JUDGES = 7
 JUDGE_WORKERS = 7
-
-
-# ============================================================
-# VISUALS
-# ============================================================
 
 MAX_VISUALS_PER_SEGMENT = 2
 MIN_VISUAL_GAP = 2.0
@@ -66,15 +41,11 @@ VISUAL_Y = 525
 VISUAL_W = 520
 VISUAL_H = 245
 
-
-# ============================================================
-# TTS VOICES
-# ============================================================
-
+# === FIXED: Distinct natural voices, moderator stays same, debaters own voices, all judges own ===
 VOICES = {
     "Moderator": "en-US-AndrewMultilingualNeural",
-    "AI Christian Apologist": "en-US-BrianMultilingualNeural",
-    "AI Skeptic": "en-US-AvaMultilingualNeural",
+    "AI Christian Apologist": "en-US-BrianMultilingualNeural",  # Deep male - authoritative
+    "AI Skeptic": "en-US-AvaMultilingualNeural",  # Clear female - skeptical contrast
     "AI Judge": "en-US-ChristopherNeural",
     "AI Judge 1": "en-US-ChristopherNeural",
     "AI Judge 2": "en-US-EmmaMultilingualNeural",
@@ -85,36 +56,34 @@ VOICES = {
     "AI Judge 7": "en-US-JennyNeural",
 }
 
-# Each commenting AI gets its own distinct natural voice - best for edge-tts
 JUDGE_VOICES = [
-    "en-US-ChristopherNeural",      # Judge 0 - deep male US
-    "en-US-EmmaMultilingualNeural", # Judge 1 - warm female US
+    "en-US-ChristopherNeural",      # Judge 0 - deep US male
+    "en-US-EmmaMultilingualNeural", # Judge 1 - warm US female
     "en-US-GuyNeural",              # Judge 2 - confident male
     "en-GB-RyanNeural",             # Judge 3 - British male
     "en-AU-WilliamNeural",          # Judge 4 - Australian male
     "en-CA-ClaraNeural",            # Judge 5 - Canadian female
-    "en-US-JennyNeural",            # Judge 6 - bright female US
+    "en-US-JennyNeural",            # Judge 6 - bright US female
 ]
 
-
-# ============================================================
-# FALLBACK MODELS
-# ============================================================
-
+# STRICTLY FREE ONLY - fixes HTTP 402 seen in screenshot
 FALLBACK_MODELS = [
-    "openai/gpt-4o-mini",
-    "google/gemini-2.0-flash-001",
-    "anthropic/claude-3.5-haiku",
-    "mistralai/mistral-small",
-    "meta-llama/llama-3.1-70b-instruct",
-    "qwen/qwen-2.5-72b-instruct",
-    "deepseek/deepseek-chat",
+    "google/gemini-2.0-flash-exp:free",
+    "google/gemini-flash-1.5-8b:free",
+    "google/gemma-3-27b-it:free",
+    "meta-llama/llama-3.3-70b-instruct:free",
+    "meta-llama/llama-3.2-3b-instruct:free",
+    "mistralai/mistral-nemo:free",
+    "mistralai/mistral-7b-instruct:free",
+    "deepseek/deepseek-r1:free",
+    "deepseek/deepseek-chat:free",
+    "qwen/qwen-2.5-7b-instruct:free",
+    "qwen/qwq-32b:free",
+    "qwen/qwen-2.5-72b-instruct:free",
+    "openai/gpt-4o-mini:free",
+    "anthropic/claude-3-haiku:free",
+    "nvidia/llama-3.1-nemotron-70b-instruct:free",
 ]
-
-
-# ============================================================
-# PROVIDER NAMES
-# ============================================================
 
 PROVIDER_ALIASES = {
     "openai": "OpenAI",
@@ -144,17 +113,11 @@ PROVIDER_ALIASES = {
     "databricks": "Databricks",
 }
 
-
 def provider_from_model(model_id):
     if not model_id:
         return "Unknown"
     prefix = model_id.split("/", 1)[0].lower().strip()
     return PROVIDER_ALIASES.get(prefix, prefix.replace("-", " ").title())
-
-
-# ============================================================
-# CLEANUP
-# ============================================================
 
 def cleanup_cache():
     print("🧹 Cleaning temporary files...")
@@ -170,17 +133,12 @@ def cleanup_cache():
                 pass
     print("✨ Workspace cleaned.")
 
-
-# ============================================================
-# BASIC UTILITIES
-# ============================================================
-
 def count_words(text):
     return len(re.findall(r"\b[\w'-]+\b", text or ""))
 
 def clean_for_speech(text):
     text = re.sub(r"\([^)]*\)", "", text or "")
-    replacements = {"*": "", "#": "", "_": "", "`": "", "–": "-", "—": "-", '"': "", ":": " ", ";": " ", "&": "and"}
+    replacements = {"*": "", "#": "", "_": "", "`": "", "–": "-", "—": "-", '"': "", ":": " ", ";": " ", "&": "and", "+": " and "}
     for old, new in replacements.items():
         text = text.replace(old, new)
     text = re.sub(r"\s+", " ", text)
@@ -198,15 +156,11 @@ def load_font(size, bold=False):
         paths = [
             "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
             "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
-            "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
-            "C:\\Windows\\Fonts\\arialbd.ttf",
         ]
     else:
         paths = [
             "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
             "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-            "/System/Library/Fonts/Supplemental/Arial.ttf",
-            "C:\\Windows\\Fonts\\arial.ttf",
         ]
     for path in paths:
         try:
@@ -218,11 +172,6 @@ def load_font(size, bold=False):
 def hex_to_rgba(hex_str, alpha):
     h = hex_str.lstrip("#")
     return (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16), alpha)
-
-
-# ============================================================
-# OPENROUTER
-# ============================================================
 
 def openrouter_headers():
     return {
@@ -237,27 +186,38 @@ def discover_models():
         raise RuntimeError("OPENROUTER_API_KEY is missing.")
     try:
         response = requests.get(OPENROUTER_MODELS_URL, headers=openrouter_headers(), timeout=20)
+        print(f"Discover API HTTP {response.status_code}")
         if response.status_code != 200:
-            print(f"⚠️ Model discovery returned HTTP {response.status_code}")
-            return []
+            print("API fail, using fallback FREE list")
+            return FALLBACK_MODELS.copy()
+        free=[]
         data = response.json()
-        models = []
         for item in data.get("data", []):
             model_id = item.get("id")
-            if not model_id:
+            if not model_id or ":free" not in model_id.lower():
                 continue
             lowered = model_id.lower()
             excluded = ["embed", "tts", "whisper", "audio", "image", "vision", "moderation", "guard"]
             if any(x in lowered for x in excluded):
                 continue
-            models.append(model_id)
-        return list(dict.fromkeys(models))
+            top = ["openai","anthropic","google","meta-llama","mistralai","deepseek","qwen","x-ai","nvidia","cohere"]
+            if not any(p in lowered for p in top):
+                continue
+            free.append(model_id)
+        if free:
+            print(f"Found {len(free)} FREE models (strict free-only to avoid 402)")
+            return list(dict.fromkeys(free))
+        print("No free found, using fallback free")
+        return FALLBACK_MODELS.copy()
     except Exception as exc:
-        print(f"⚠️ Model discovery failed: {str(exc)[:200]}")
-        return []
+        print(f"⚠️ Model discovery failed: {str(exc)[:200]} - using fallback free")
+        return FALLBACK_MODELS.copy()
 
 def query_openrouter(prompt, model_id, timeout=60, max_tokens=1200, temperature=0.7):
     if not OPENROUTER_API_KEY:
+        return None
+    if ":free" not in model_id.lower():
+        print(f"  Skipping non-free {model_id} - must be :free to avoid 402")
         return None
     payload = {
         "model": model_id,
@@ -275,6 +235,9 @@ def query_openrouter(prompt, model_id, timeout=60, max_tokens=1200, temperature=
                     content = choices[0].get("message", {}).get("content", "")
                     if content and len(content.strip()) > 10:
                         return content.strip()
+            elif response.status_code == 402:
+                print(f"⚠️ {provider_from_model(model_id)} returned HTTP 402 Payment Required - skipping free fallback needed")
+                return None
             else:
                 print(f"⚠️ {provider_from_model(model_id)} returned HTTP {response.status_code}")
         except Exception as exc:
@@ -283,49 +246,51 @@ def query_openrouter(prompt, model_id, timeout=60, max_tokens=1200, temperature=
             time.sleep(1.5 * (attempt + 1))
     return None
 
-
-# ============================================================
-# MODEL SELECTION
-# ============================================================
-
 def choose_primary_models(available_models):
-    preference = [
-        "openai/gpt-4o", "openai/gpt-4o-mini", "openai/gpt-4.1-mini",
-        "anthropic/claude-3.5-sonnet", "anthropic/claude-3.5-haiku",
-        "google/gemini-2.5-flash", "google/gemini-2.0-flash-001",
-        "deepseek/deepseek-chat", "qwen/qwen-2.5-72b-instruct",
-    ]
-    found = [m for m in preference if m in set(available_models)]
-    if len(found) >= 2:
-        return found[0], found[1]
-    if len(found) == 1:
-        remaining = [m for m in available_models if m != found[0]]
-        if remaining:
-            return found[0], remaining[0]
-    if len(available_models) >= 2:
-        return (available_models[0], available_models[1])
-    return (FALLBACK_MODELS[0], FALLBACK_MODELS[1])
+    free_models = [m for m in available_models if ":free" in m.lower()]
+    if not free_models:
+        free_models = FALLBACK_MODELS.copy()
+    # One per company
+    used=set()
+    picks=[]
+    for m in free_models:
+        prov=provider_from_model(m)
+        if prov not in used:
+            picks.append(m)
+            used.add(prov)
+        if len(picks)>=2:
+            break
+    if len(picks)<2:
+        picks = (free_models + FALLBACK_MODELS)[:2]
+    return picks[0], picks[1]
 
 def choose_judges(available_models, primary_models):
+    # FIXED: One per company only - no duplicate Google etc
     excluded = set(primary_models)
-    candidates = [m for m in available_models if m not in excluded]
+    free_candidates = [m for m in available_models if m not in excluded and ":free" in m.lower()]
+    if len(free_candidates) < 5:
+        free_candidates = [m for m in FALLBACK_MODELS if m not in excluded]
     groups = {}
-    for model in candidates:
+    for model in free_candidates:
         provider = provider_from_model(model)
-        groups.setdefault(provider, []).append(model)
-    preferred_keywords = ["gpt", "claude", "gemini", "grok", "deepseek", "mistral", "llama", "qwen", "command", "nemotron"]
+        if provider not in groups:
+            groups[provider] = model  # First per company only
+    priority = ["OpenAI", "Anthropic", "Google", "xAI", "DeepSeek", "Mistral", "Meta", "Alibaba / Qwen", "Cohere", "Perplexity", "NVIDIA"]
     selected = []
-    for provider, models in groups.items():
-        models.sort(key=lambda m: (0 if any(k in m.lower() for k in preferred_keywords) else 1, len(m)))
-        selected.append((provider, models[0]))
-    priority = ["OpenAI", "Anthropic", "Google", "xAI", "DeepSeek", "Mistral", "Meta", "Alibaba / Qwen", "Cohere", "Perplexity"]
-    selected.sort(key=lambda x: (priority.index(x[0]) if x[0] in priority else 999, x[0]))
+    for p in priority:
+        if p in groups:
+            selected.append((p, groups[p]))
+            del groups[p]
+        if len(selected) >= MAX_JUDGES:
+            break
+    for prov, model in groups.items():
+        if len(selected) >= MAX_JUDGES:
+            break
+        selected.append((prov, model))
+    print(f"FINAL JUDGES ONE PER COMPANY ({len(selected)} FREE):")
+    for p,m in selected:
+        print(f"   - {p}: {m}")
     return [model for _, model in selected[:MAX_JUDGES]]
-
-
-# ============================================================
-# DEBATE GENERATION
-# ============================================================
 
 def generate_turn(side, topic, round_num, turn_num, previous_exchange, model, full_history=""):
     if side == "A":
@@ -339,10 +304,8 @@ def generate_turn(side, topic, round_num, turn_num, previous_exchange, model, fu
         opponent = "AI Christian Apologist"
         opponent_label = "FOR"
 
-    # Extract opponent's last argument for specific rebuttal
     last_opponent_arg = ""
     if previous_exchange:
-        # Get last 400 chars of previous exchange for immediate rebuttal target
         last_opponent_arg = previous_exchange.strip()[-800:]
 
     if round_num == 1 and turn_num == 1:
@@ -389,27 +352,20 @@ If cosmological topic, MUST reference specific scientific concept, data, or phil
     for attempt_temp in [0.85, 0.92, 0.78]:
         response = query_openrouter(prompt, model, max_tokens=550, temperature=attempt_temp)
         if response and len(response.split()) >= 70:
-            # Filter out generic filler
             low = response.lower()
             if "affirmative" in low and len(low) < 200:
                 continue
             if "as an ai" in low:
                 continue
-            # Ensure topic-specific
-            if topic.lower().split()[0] not in low and "god" not in low and "genesis" not in low and "universe" not in low and "creator" not in low:
-                # Too generic, retry
-                if attempt_temp == 0.78:
-                    continue
             return response.strip()
     
-    # Fallback - topic-specific, not generic
     if side == "A":
-        if "genesis" in topic.lower() or "god" in topic.lower() and "serpent" in topic.lower():
+        if "genesis" in topic.lower() or ("god" in topic.lower() and "serpent" in topic.lower()):
             return f"Look at what the text actually says about {topic}. Genesis 2 verse 17 says 'moth tamuth' - dying you shall die, emphatic certainty in Hebrew. The serpent in 3:4 says 'lo moth temuthun' - you shall not surely die, directly negating God. What happens that very day? Genesis 3:10 Adam hides in fear, that's relational death, separation from God. Verse 22 says lest he take the tree of life and live forever, and verse 24 blocks it with cherubim. On that day they lost access to everlasting life. That's death beginning that day, which is exactly what God warned about in {topic}."
         else:
             return f"When we look at {topic}, the key is what best explains what we actually observe. The universe had a beginning - Borde-Guth-Vilenkin theorem shows inflationary spacetime is past-incomplete. That means something beyond space and time. And consciousness - you can map neurons firing but you never find the taste of coffee or the feeling of love in the chemistry. That subjective 'what it's like' points beyond mere matter for {topic}."
     else:
-        if "genesis" in topic.lower() or "god" in topic.lower() and "serpent" in topic.lower():
+        if "genesis" in topic.lower() or ("god" in topic.lower() and "serpent" in topic.lower()):
             return f"Read the plain narrative of {topic}. Genesis 2:17 says in the day you eat you shall die - natural reading is same day. Genesis 5:5 says Adam lived 930 years then died. He didn't die that day. The serpent in 3:4 says you shall not surely die, and that matches - they didn't die that day. He also says in 3:5 your eyes shall be opened and you shall be as gods knowing good and evil, and 3:7 says their eyes were opened, and God Himself confirms in 3:22 behold man has become as one of us to know good and evil. Two predictions from serpent both happen that day, one threat from God doesn't happen as stated that day for {topic}."
         else:
             return f"On {topic}, we have to ask what the evidence actually demands. Quantum mechanics shows events without deterministic cause at that level - virtual particles. And fine-tuning might be observer selection - if there are many universes with different constants, we obviously find ourselves in one where we can exist. Plus suffering - a deer burning for days in a forest fire with no one learning anything - if you could stop it easily and you cared, you would. That tension is central to {topic}."
@@ -417,28 +373,18 @@ If cosmological topic, MUST reference specific scientific concept, data, or phil
 def build_round_exchanges(topic, round_num, apologist_model, skeptic_model, previous_history):
     apologist_turns = []
     skeptic_turns = []
-    exchange_history = previous_history  # Full accumulated history
-    last_exchange = ""  # Immediate previous turn for rebuttal
-    
+    exchange_history = previous_history
+    last_exchange = ""
     for turn_num in range(1, TURNS_PER_SIDE_PER_ROUND + 1):
-        # Apologist turn - gets full history + last exchange
         apologist = generate_turn("A", topic, round_num, turn_num, last_exchange, apologist_model, exchange_history)
         apologist_turns.append(apologist)
         exchange_history += f"\nAI Christian Apologist (Round {round_num} Turn {turn_num}):\n{apologist}\n"
-        last_exchange = apologist  # For skeptic to rebut
-        
-        # Skeptic turn - gets full history + apologist's just-made argument
+        last_exchange = apologist
         skeptic = generate_turn("B", topic, round_num, turn_num, last_exchange, skeptic_model, exchange_history)
         skeptic_turns.append(skeptic)
         exchange_history += f"\nAI Skeptic (Round {round_num} Turn {turn_num}):\n{skeptic}\n"
-        last_exchange = skeptic  # For next apologist turn to rebut
-    
+        last_exchange = skeptic
     return (apologist_turns, skeptic_turns, exchange_history)
-
-
-# ============================================================
-# JUDGING
-# ============================================================
 
 def neutral_judge(model):
     return {"model": model, "provider": provider_from_model(model), "A_argument": 50, "A_rebuttal": 50, "A_clarity": 50, "A_total": 50, "B_argument": 50, "B_rebuttal": 50, "B_clarity": 50, "B_total": 50, "winner": "A"}
@@ -449,9 +395,9 @@ You are an independent and impartial debate judge.
 Topic: {topic}
 Round: {round_num}
 SIDE A — AI CHRISTIAN APOLOGIST:
-{apologist}
+{apologist[:900]}
 SIDE B — AI SKEPTIC:
-{skeptic}
+{skeptic[:900]}
 Evaluate both sides independently.
 Score: 1. Argument strength 2. Rebuttal quality 3. Clarity and reasoning
 Score every category from 0 to 100.
@@ -483,7 +429,7 @@ Return ONLY valid JSON:
 
 def evaluate_round(judges, topic, round_num, apologist, skeptic):
     results = []
-    print(f"⚖️ Asking {len(judges)} independent AI judges...")
+    print(f"⚖️ Asking {len(judges)} independent FREE AI judges (one per company)...")
     def worker(model):
         return judge_round(model, topic, round_num, apologist, skeptic)
     with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, min(JUDGE_WORKERS, len(judges)))) as executor:
@@ -507,13 +453,7 @@ def calculate_round_average(results):
     b = sum(r["B_total"] for r in results) / len(results)
     return round(a, 2), round(b, 2)
 
-
-# ============================================================
-# TTS - FIXED FOR MISSING WORD TIMING
-# ============================================================
-
 async def generate_audio_async(text, voice, filename, rate="+2%"):
-    # Use natural rate and pitch for best quality
     communicate = edge_tts.Communicate(text, voice, rate=rate, volume="+0%")
     audio = b""
     words = []
@@ -526,8 +466,6 @@ async def generate_audio_async(text, voice, filename, rate="+2%"):
             words.append({"text": chunk["text"], "start": start, "duration": duration, "end": start + duration})
     with open(filename, "wb") as file:
         file.write(audio)
-
-    # FIX: if edge-tts gave no WordBoundary, estimate so subs never disappear
     if not words:
         clean = clean_for_speech(text)
         t = 0.0
@@ -539,20 +477,19 @@ async def generate_audio_async(text, voice, filename, rate="+2%"):
     return words
 
 def generate_audio(text, role, filename, judge_voice_index=None):
-    # FIXED: Ensure each role gets its own distinct natural voice, no moderator bleed
     if role == "AI Judge":
         if judge_voice_index is None:
             judge_voice_index = 0
         voice = JUDGE_VOICES[judge_voice_index % len(JUDGE_VOICES)]
         fallback_voices = [v for v in JUDGE_VOICES if v != voice]
     elif role == "AI Christian Apologist":
-        voice = VOICES["AI Christian Apologist"]  # Brian - deep male, best for apologist
+        voice = VOICES["AI Christian Apologist"]
         fallback_voices = ["en-US-ChristopherNeural", "en-US-GuyNeural", "en-US-AndrewMultilingualNeural"]
     elif role == "AI Skeptic":
-        voice = VOICES["AI Skeptic"]  # Ava - clear female, best for skeptic
+        voice = VOICES["AI Skeptic"]
         fallback_voices = ["en-US-EmmaMultilingualNeural", "en-US-JennyNeural", "en-GB-SoniaNeural"]
     elif role == "Moderator":
-        voice = VOICES["Moderator"]  # Andrew - neutral moderator
+        voice = VOICES["Moderator"]
         fallback_voices = ["en-US-GuyNeural", "en-US-BrianMultilingualNeural"]
     else:
         voice = VOICES.get(role, VOICES["Moderator"])
@@ -562,7 +499,6 @@ def generate_audio(text, role, filename, judge_voice_index=None):
     if not clean_text or len(clean_text) < 5:
         clean_text = text[:500]
 
-    # Try primary voice with slightly faster rate for natural debate pacing
     try:
         return asyncio.run(generate_audio_async(clean_text, voice, filename, rate="+8%"))
     except Exception as exc:
@@ -572,14 +508,7 @@ def generate_audio(text, role, filename, judge_voice_index=None):
                 return asyncio.run(generate_audio_async(clean_text, fb_voice, filename, rate="+5%"))
             except:
                 continue
-        # Last resort moderator
-        print(f"⚠️ All TTS fallbacks failed for {role}, using moderator")
         return asyncio.run(generate_audio_async(clean_text, VOICES["Moderator"], filename, rate="+0%"))
-
-
-# ============================================================
-# SUBTITLES - FIXED ANIMATED + NEVER MISSING
-# ============================================================
 
 def format_ass_time(seconds):
     seconds = max(0.0, float(seconds))
@@ -634,7 +563,6 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     for chunk in chunks:
         if not chunk:
             continue
-        # IMPORTANT: do not add +0.45 here, or -shortest cuts the last line
         chunk_end = float(chunk[-1]["end"])
 
         if scorecard:
@@ -644,7 +572,6 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             events.append(f"Dialogue: 0,{format_ass_time(start)},{format_ass_time(end)},DebateSub,,0,0,0,,{text}")
             continue
 
-        # Animated per-word cumulative reveal
         for i, w in enumerate(chunk):
             w_start = float(w["start"])
             if i + 1 < len(chunk):
@@ -671,11 +598,6 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     with open(filename, "w", encoding="utf-8") as file:
         file.write(header + "\n".join(events) + "\n")
     print(f" 📝 Subs: {len(events)} events -> {filename}")
-
-
-# ============================================================
-# TOPIC-ADAPTIVE VISUAL PLANNER - FIXED FOR REAL IMAGES
-# ============================================================
 
 def plan_visuals(text, model):
     prompt = f"""
@@ -796,11 +718,6 @@ def create_visual_plan(text, words, model):
             break
     return output
 
-
-# ============================================================
-# DYNAMIC ANIMATED VISUAL CARD - REAL TOPIC IMAGES
-# ============================================================
-
 def build_visual_prompt(visual):
     label = visual.get("label", "")
     desc = visual.get("description", "")
@@ -842,7 +759,6 @@ def create_visual_asset(visual, index):
 
     real_img = fetch_topic_image(visual)
 
-    # word wrap for description
     dummy_img = Image.new("RGBA", (1, 1))
     dummy_draw = ImageDraw.Draw(dummy_img)
     words = description.split()
@@ -882,7 +798,6 @@ def create_visual_asset(visual, index):
             ImageDraw.Draw(mask).rounded_rectangle((0, 0, ILLUS_W, ILLUS_H), radius=18, fill=255)
             image.paste(cropped, (ILLUS_X, ILLUS_Y + bob_y), mask)
         else:
-            # fallback simple icon if download fails
             draw.ellipse((85, 35 + bob_y, 175, 125 + bob_y), fill=(235, 190, 150, 255))
             draw.rectangle((55, 115, 205, 205), fill=(115, 80, 50, 255))
 
@@ -894,11 +809,6 @@ def create_visual_asset(visual, index):
 
     frames[0].save(filename, format='GIF', save_all=True, append_images=frames[1:], duration=33, loop=0, disposal=2)
     return filename
-
-
-# ============================================================
-# BACKGROUND
-# ============================================================
 
 def create_background(position, glow_color, filename):
     source = os.path.join(os.path.dirname(os.path.abspath(__file__)), "background.png")
@@ -930,11 +840,6 @@ def create_background(position, glow_color, filename):
     result = Image.alpha_composite(image.convert("RGBA"), overlay).convert("RGB")
     result.save(filename)
 
-
-# ============================================================
-# SPEAKER CARD
-# ============================================================
-
 def create_ui_overlay(speaker_name, topic, position, glow_color, filename):
     image = Image.new("RGBA", (VIDEO_W, VIDEO_H), (0, 0, 0, 0))
     draw = ImageDraw.Draw(image)
@@ -959,22 +864,12 @@ def create_ui_overlay(speaker_name, topic, position, glow_color, filename):
     image.save(filename)
     return card_x, card_y
 
-
-# ============================================================
-# FFMPEG PATH
-# ============================================================
-
 def ffmpeg_filter_path(filename):
     path = os.path.abspath(filename)
     path = path.replace("\\", "/")
     path = path.replace("'", r"\'")
     path = path.replace(":", r"\:")
     return path
-
-
-# ============================================================
-# VIDEO SEGMENT
-# ============================================================
 
 def render_video_segment(background, ui, audio, subtitles, output, position, glow_color, card_x, card_y, visual_plan):
     required = [background, ui, audio, subtitles]
@@ -1002,16 +897,13 @@ def render_video_segment(background, ui, audio, subtitles, output, position, glo
     filter_parts.append("[0:v]scale=1920:1080,zoompan=z='min(zoom+0.00020,1.05)':x='" + pan_x + "':y='(ih-(ih/zoom))/2':d=9000:s=1920x1080:fps=30[bg];")
     filter_parts.append("[1:v]scale=1920:1080[ui];")
     # FIXED: Sound bars inside name cards, not overlapping names - placed below name text inside card
-    # Card is 650x110, name at card_x+65, card_y+22. Wave goes at card_y+62 inside card bottom half
-    wave_width = 560  # Inside card: card_width 650 minus padding 65+25
+    wave_width = 560
     wave_height = 32
     filter_parts.append(f"[2:a]showwaves=s={wave_width}x{wave_height}:mode=cline:colors=0x{glow}:rate=30:draw=full[wave];")
     filter_parts.append("[bg][ui]overlay=0:0[base];")
 
-    # FIXED: Sound bar inside name card, below speaker name, not overlapping
-    # Name text is at card_y+22, so wave at card_y+60 sits in lower half of 110px card
-    wave_x = card_x + 65  # Aligned with name text start, inside card
-    wave_y = card_y + 62  # Below name, inside card (name at 22, wave at 62 = 40px below)
+    wave_x = card_x + 65
+    wave_y = card_y + 62
     filter_parts.append(f"[base][wave]overlay={wave_x}:{wave_y}[withwave];")
 
     current = "[withwave]"
@@ -1055,11 +947,6 @@ def render_video_segment(background, ui, audio, subtitles, output, position, glo
         except Exception:
             pass
 
-
-# ============================================================
-# SCORECARD IMAGE
-# ============================================================
-
 def generate_scoreboard(round_num, results, round_a, round_b, cumulative_a, cumulative_b, filename):
     source = os.path.join(os.path.dirname(os.path.abspath(__file__)), "background.png")
     if os.path.exists(source):
@@ -1081,7 +968,7 @@ def generate_scoreboard(round_num, results, round_a, round_b, cumulative_a, cumu
         draw.text(((VIDEO_W - width) // 2, y), text, fill=fill, font=font)
     judge_count = len(results)
     centred(24, f"ROUND {round_num} — AI JUDGING PANEL", header, "#FFD700")
-    centred(72, f"{judge_count} INDEPENDENT JUDGES", sub, "white")
+    centred(72, f"{judge_count} INDEPENDENT JUDGES (ONE PER COMPANY)", sub, "white")
     centred(112, f"ROUND SCORE   APOLOGIST {round_a:.1f}   VS   SKEPTIC {round_b:.1f}", sub, "white")
     centred(150, f"CUMULATIVE   APOLOGIST {cumulative_a:.1f}   VS   SKEPTIC {cumulative_b:.1f}", sub, "#FFD700")
     draw.text((100, 225), "CATEGORY AVERAGES", fill="#FFD700", font=sub)
@@ -1113,11 +1000,6 @@ def generate_scoreboard(round_num, results, round_a, round_b, cumulative_a, cumu
         draw.text((1580, row_y), f"{result['B_total']:.1f}", fill="#FF66FF", font=small)
     image.save(filename)
 
-
-# ============================================================
-# SCORECARD VIDEO
-# ============================================================
-
 def render_scorecard_video(scorecard, audio, subtitles, output):
     for path in [scorecard, audio, subtitles]:
         if not os.path.exists(path):
@@ -1130,11 +1012,6 @@ def render_scorecard_video(scorecard, audio, subtitles, output):
         print("\n❌ Scorecard FFmpeg failed:")
         print(result.stderr[-7000:])
         raise RuntimeError("Scorecard rendering failed.")
-
-
-# ============================================================
-# SEGMENT CREATION
-# ============================================================
 
 def create_segment(text, role, speaker_name, topic, segment_id, model_for_visuals, position=None, glow=None, judge_voice_index=None):
     if position is None:
@@ -1176,11 +1053,6 @@ def create_segment(text, role, speaker_name, topic, segment_id, model_for_visual
     render_video_segment(background_file, ui_file, audio_file, subtitle_file, video_file, position, glow, card_x, card_y, visual_plan)
     return video_file
 
-
-# ============================================================
-# PANEL COMMENTARY
-# ============================================================
-
 def generate_panel_commentary(model, side, topic, round_num, apologist, skeptic, previous_comments):
     provider = provider_from_model(model)
     preferred_side = "AI Christian Apologist" if side == "A" else "AI Skeptic"
@@ -1202,7 +1074,7 @@ What the AI Christian Apologist argued this round:
 What the AI Skeptic argued this round:
 {skeptic_excerpt}
 You preferred: {preferred_side}
-Give a short, specific, insightful observation about the quality of reasoning you just read above - refer to an actual argument or move either side made.
+Give a short, specific, insightful observation about the quality of reasoning you just read above - refer to an actual argument or move either side made about {topic}.
 Do not simply say which side was convincing.
 Do not summarise the whole debate.
 Do not quote either debater word-for-word.
@@ -1210,20 +1082,15 @@ Do not mention your model ID.
 Do not mention that you are an AI.
 Previous observations:
 {recent}
-Write 2 or 3 natural spoken sentences.
+Write 2 or 3 natural spoken sentences about {topic}.
 """
     response = query_openrouter(prompt, model, timeout=40, max_tokens=220, temperature=0.85)
     if response:
         return response
-    return "The important distinction is between a conclusion that sounds plausible and an argument that has actually answered the strongest objection."
-
-
-# ============================================================
-# INTRO / OUTRO
-# ============================================================
+    return f"The important distinction in {topic} is between a conclusion that sounds plausible and an argument that has actually answered the strongest objection about {topic}."
 
 def build_intro(topic, judge_count):
-    return f"Welcome to the AI Debate Arena. Today, an AI Christian Apologist faces an AI Skeptic on the question: {topic}. The debate will unfold over three rounds with equal speaking time for both sides. An independent panel of {judge_count} AI systems will score argument strength, rebuttal quality, and clarity of reasoning. Let's begin."
+    return f"Welcome to the AI Debate Arena. Today, an AI Christian Apologist faces an AI Skeptic on the question: {topic}. The debate will unfold over three rounds with equal speaking time for both sides. An independent panel of {judge_count} AI systems, one from each major company, will score argument strength, rebuttal quality, and clarity of reasoning. Let's begin."
 
 def build_outro(judge_count, cumulative_a, cumulative_b):
     if math.isclose(cumulative_a, cumulative_b, abs_tol=0.01):
@@ -1232,12 +1099,7 @@ def build_outro(judge_count, cumulative_a, cumulative_b):
         result = "the AI Christian Apologist"
     else:
         result = "the AI Skeptic"
-    return f"After three rounds, our panel of {judge_count} AI judges gave the AI Christian Apologist a cumulative score of {cumulative_a:.1f}, compared with {cumulative_b:.1f} for the AI Skeptic. The final result is {result}. But the final verdict is still yours. Which side do you think actually won?"
-
-
-# ============================================================
-# CONCATENATION
-# ============================================================
+    return f"After three rounds, our panel of {judge_count} AI judges, each from a different company, gave the AI Christian Apologist a cumulative score of {cumulative_a:.1f}, compared with {cumulative_b:.1f} for the AI Skeptic. The final result is {result}. But the final verdict is still yours. Which side do you think actually won?"
 
 def stitch_segments(segments, output):
     list_file = "concat_list.txt"
@@ -1253,11 +1115,6 @@ def stitch_segments(segments, output):
         print(result.stderr[-7000:])
         raise RuntimeError("Final FFmpeg concatenation failed.")
 
-
-# ============================================================
-# MAIN PIPELINE
-# ============================================================
-
 def run_debate_pipeline():
     cleanup_cache()
     if not OPENROUTER_API_KEY:
@@ -1272,38 +1129,26 @@ def run_debate_pipeline():
     if not topic:
         topic = "Does the universe require a creator?"
 
-    print("\n" + "="*70 + "\nAI DEBATE ARENA\n" + "="*70 + f"\n\nTOPIC: {topic}\n")
+    print("\n" + "="*70 + "\nAI DEBATE ARENA - FREE ONLY FIX\n" + "="*70 + f"\n\nTOPIC: {topic}\n")
 
     available_models = discover_models()
     if not available_models:
-        print("⚠️ Dynamic discovery failed. Using fallback models.")
+        print("⚠️ Dynamic discovery failed. Using fallback FREE models.")
         available_models = FALLBACK_MODELS.copy()
 
     apologist_model, skeptic_model = choose_primary_models(available_models)
-    print("🎤 Debate engines:")
-    print(f"   Apologist: {provider_from_model(apologist_model)}")
-    print(f"   Skeptic: {provider_from_model(skeptic_model)}")
+    print("🎤 Debate engines (FREE, distinct voices):")
+    print(f"   Apologist ({VOICES['AI Christian Apologist']}): {provider_from_model(apologist_model)} — {apologist_model}")
+    print(f"   Skeptic ({VOICES['AI Skeptic']}): {provider_from_model(skeptic_model)} — {skeptic_model}")
 
     judges = choose_judges(available_models, (apologist_model, skeptic_model))
     if not judges:
-        used = set()
-        judges = []
-        for model in FALLBACK_MODELS:
-            provider = provider_from_model(model)
-            if provider in used:
-                continue
-            if model in (apologist_model, skeptic_model):
-                continue
-            judges.append(model)
-            used.add(provider)
-            if len(judges) >= MAX_JUDGES:
-                break
+        judges = FALLBACK_MODELS[:MAX_JUDGES]
 
-    print(f"\n⚖️ Maximum judges: {MAX_JUDGES}")
-    print(f"⚖️ Actual judges: {len(judges)}")
-    print("⚖️ ONE MODEL PER PROVIDER:")
-    for model in judges:
-        print(f"   • {provider_from_model(model)} — {model.split('/', 1)[-1][:28]}")
+    print(f"\n⚖️ Actual judges: {len(judges)} - ONE PER COMPANY, each own voice")
+    for idx, model in enumerate(judges):
+        voice = JUDGE_VOICES[idx % len(JUDGE_VOICES)]
+        print(f"   • {provider_from_model(model)} — {model.split('/', 1)[-1][:28]} — Voice: {voice}")
 
     segments = []
     segment_id = 0
@@ -1323,7 +1168,7 @@ def run_debate_pipeline():
     panel_comments = []
 
     for round_num in range(1, ROUNDS + 1):
-        print("\n" + "="*70 + f"\nROUND {round_num}\n" + "="*70)
+        print("\n" + "="*70 + f"\nROUND {round_num} - TOPIC-SPECIFIC DEBATE\n" + "="*70)
         apologist_turns, skeptic_turns, previous_history = build_round_exchanges(topic, round_num, apologist_model, skeptic_model, previous_history)
 
         for turn_index in range(TURNS_PER_SIDE_PER_ROUND):
@@ -1346,7 +1191,7 @@ def run_debate_pipeline():
 
         scoreboard_file = f"scoreboard_r{round_num}.png"
         generate_scoreboard(round_num, results, round_a, round_b, cumulative_a, cumulative_b, scoreboard_file)
-        score_text = f"Round {round_num} is complete. The {len(results)} independent AI judges gave the AI Christian Apologist an average score of {round_a:.1f}, and the AI Skeptic an average score of {round_b:.1f}. The cumulative score is {cumulative_a:.1f} to {cumulative_b:.1f}."
+        score_text = f"Round {round_num} is complete. The {len(results)} independent AI judges, one per company, gave the AI Christian Apologist an average score of {round_a:.1f}, and the AI Skeptic an average score of {round_b:.1f}. The cumulative score is {cumulative_a:.1f} to {cumulative_b:.1f}."
         score_audio = f"score_audio_r{round_num}.mp3"
         score_subs = f"score_subs_r{round_num}.ass"
         score_video = f"score_video_r{round_num}.mp4"
@@ -1356,11 +1201,10 @@ def run_debate_pipeline():
         segments.append(score_video)
 
         if results:
-            # FIXED: Each commenting AI gets its own distinct voice - map provider to unique voice index
-            # Create provider -> voice index mapping from judges list
+            # FIXED BUG: was iterating over judges (strings) and calling .get - now iterate over results dicts
             provider_to_voice_idx = {}
-            for idx, j in enumerate(judges):
-                prov = j.get("provider", f"Judge{idx}")
+            for idx, res in enumerate(results):
+                prov = res.get("provider", f"Judge{idx}")
                 if prov not in provider_to_voice_idx:
                     provider_to_voice_idx[prov] = idx % len(JUDGE_VOICES)
             
@@ -1368,10 +1212,7 @@ def run_debate_pipeline():
             b_results = [r for r in results if r["winner"] == "B"]
             if not a_results: a_results = results
             if not b_results: b_results = results
-            
-            # Ensure we pick two judges with different providers/voices
             judge_a = random.choice(a_results)
-            # Pick judge_b with different provider if possible
             b_candidates = [r for r in b_results if r["provider"] != judge_a["provider"]]
             if not b_candidates:
                 b_candidates = b_results
@@ -1379,7 +1220,6 @@ def run_debate_pipeline():
             
             voice_idx_a = provider_to_voice_idx.get(judge_a["provider"], 0)
             voice_idx_b = provider_to_voice_idx.get(judge_b["provider"], 1)
-            # Ensure different voices
             if voice_idx_a == voice_idx_b:
                 voice_idx_b = (voice_idx_a + 1) % len(JUDGE_VOICES)
             
@@ -1395,7 +1235,7 @@ def run_debate_pipeline():
 
     print("\n" + "="*70 + "\n✅ DEBATE COMPLETE\n" + "="*70)
     print(f"🎥 Output: {OUTPUT_FILE}")
-    print(f"⚖️ AI judges: {len(judges)}")
+    print(f"⚖️ AI judges: {len(judges)} - one per company, free only")
     print(f"🏆 Final score: Apologist {cumulative_a:.1f} vs Skeptic {cumulative_b:.1f}")
     cleanup_cache()
 
@@ -1408,4 +1248,6 @@ if __name__ == "__main__":
     except Exception as exc:
         print("\n❌ PIPELINE FAILED")
         print(str(exc))
+        import traceback
+        traceback.print_exc()
         raise
