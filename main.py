@@ -125,12 +125,22 @@ class DebateGenerationError(RuntimeError):
 
 # Every model the build may fall back to for one turn, in order, deduplicated.
 AVAILABLE_MODELS = []
+# Models sitting on the judging panel this build.
+JUDGE_MODELS = set()
 
 
 def turn_model_chain(preferred):
+    """Models to try for one debate turn, best first.
+
+    Panel models go last: a judge that writes a turn would otherwise score its
+    own text. If one is used anyway, the caller recuses it from that round.
+    """
     chain = [preferred] + [m for m in AVAILABLE_MODELS if m != preferred]
     chain += [m for m in FALLBACK_MODELS if m not in chain]
-    return [m for m in dict.fromkeys(chain) if m and not is_reasoning_model(m)]
+    chain = [m for m in dict.fromkeys(chain) if m and not is_reasoning_model(m)]
+    non_panel = [m for m in chain if m not in JUDGE_MODELS]
+    panel = [m for m in chain if m in JUDGE_MODELS]
+    return non_panel + panel
 
 
 def provider_from_model(mid):
@@ -751,6 +761,7 @@ def generate_turn(topic, roles, side, round_num, turn_num, opponent_last, target
 
     attempted = []
     best = ""
+    best_model = None
     for m in turn_model_chain(model):
         attempted.append(get_judge_short_name(m))
         resp = query_openrouter(prompt, m, max_tokens=900,
@@ -779,14 +790,14 @@ def generate_turn(topic, roles, side, round_num, turn_num, opponent_last, target
         # a fuller one rather than discarding real content.
         if count_words(cleaned) < target_words - 40:
             if count_words(cleaned) > count_words(best):
-                best = cleaned
+                best, best_model = cleaned, m
             continue
 
         cleaned = trim_to_words(cleaned, target_words + 25)
         for s in re.split(r"(?<=[.!?])\s+", cleaned)[:3]:
             if len(s) > 40:
                 USED_ARGUMENTS.add(s[:90])
-        return cleaned
+        return cleaned, m
 
     if best:
         print(f"    {label} turn came in at {count_words(best)} words against a "
@@ -794,7 +805,7 @@ def generate_turn(topic, roles, side, round_num, turn_num, opponent_last, target
         for s in re.split(r"(?<=[.!?])\s+", best)[:3]:
             if len(s) > 40:
                 USED_ARGUMENTS.add(s[:90])
-        return best
+        return best, best_model
 
     raise DebateGenerationError(
         f"No model produced a usable {label} turn for round {round_num}, turn {turn_num}. "
@@ -853,15 +864,28 @@ def judge_round(model, topic, rn, ap, sk, roles):
     return None
 
 
-def evaluate_round(judges, topic, rn, ap, sk, roles):
+def evaluate_round(judges, topic, rn, ap, sk, roles, recused=()):
     """Score a round with the judges that actually responded.
 
     The panel is never padded. A model that fails to return scores simply does
-    not appear on the scorecard for that round.
+    not appear on the scorecard. Any model that wrote a turn this round is
+    recused, so nothing scores its own text.
     """
+    recused = set(recused)
+    sitting = [m for m in judges if m not in recused]
+    for m in judges:
+        if m in recused:
+            print(f"    {get_judge_short_name(m)} wrote a turn this round and is recused "
+                  f"from scoring it.")
+    if not sitting:
+        raise DebateGenerationError(
+            f"Every judge on the panel wrote a turn in round {rn}, so none can score it "
+            f"impartially. Widen FALLBACK_MODELS so debaters and judges do not overlap."
+        )
+
     results = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=min(7, len(judges))) as ex:
-        futs = {ex.submit(judge_round, m, topic, rn, ap, sk, roles): m for m in judges}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(7, len(sitting))) as ex:
+        futs = {ex.submit(judge_round, m, topic, rn, ap, sk, roles): m for m in sitting}
         for f in concurrent.futures.as_completed(futs):
             try:
                 r = f.result()
@@ -870,16 +894,20 @@ def evaluate_round(judges, topic, rn, ap, sk, roles):
             if r:
                 results.append(r)
 
-    missing = len(judges) - len(results)
+    missing = len(sitting) - len(results)
     if missing:
-        print(f"    {missing} of {len(judges)} judges returned no score and were left off "
-              f"the round {rn} scorecard.")
+        print(f"    {missing} of {len(sitting)} sitting judges returned no score and were "
+              f"left off the round {rn} scorecard.")
     if not results:
         raise DebateGenerationError(
             f"No judge returned a usable score for round {rn}. The scorecard would have been "
             f"invented, so the build stops here instead."
         )
     results.sort(key=lambda r: r["display_name"])
+    for r in results:
+        print(f"    judge {r['display_name']} [{r['model']}]: "
+              f"{roles['side_a_label']} {r['A_total']:.1f}, "
+              f"{roles['side_b_label']} {r['B_total']:.1f} -> {r['winner']}")
     return results
 
 
@@ -1669,7 +1697,11 @@ def run_debate_pipeline():
             f"panel, and padding it with invented scores is exactly what this build refuses "
             f"to do."
         )
+    global JUDGE_MODELS
+    JUDGE_MODELS = set(judges)
     print(f"Judges: {', '.join(get_judge_short_name(j) for j in judges)}")
+    print(f"Debaters: {roles['side_a_label']} = {ap_model}, "
+          f"{roles['side_b_label']} = {sk_model}")
 
     pacing = Pacing()
     specs = []
@@ -1694,9 +1726,11 @@ def run_debate_pipeline():
     last_a_text = ""
     last_b_text = ""
 
+    turn_attribution = []
     for rn in range(1, ROUNDS + 1):
         print(f"\n--- ROUND {rn} ---")
         a_turns, b_turns = [], []
+        round_writers = set()
         for tn in range(1, TURNS_PER_SIDE_PER_ROUND + 1):
             for side in ("A", "B"):
                 turns_left = total_turns - turns_done
@@ -1707,9 +1741,15 @@ def run_debate_pipeline():
                 target = pacing.turn_words(turns_left, reserved)
                 opponent_last = last_b_text if side == "A" else last_a_text
                 model = ap_model if side == "A" else sk_model
-                text = generate_turn(topic, roles, side, rn, tn, opponent_last, target, model)
+                text, wrote = generate_turn(topic, roles, side, rn, tn, opponent_last,
+                                            target, model)
                 label = roles["side_a_label"] if side == "A" else roles["side_b_label"]
-                print(f"  R{rn} T{tn} {label}: target {target}w, got {count_words(text)}w")
+                round_writers.add(wrote)
+                turn_attribution.append({"round": rn, "turn": tn, "side": label,
+                                         "model": wrote, "words": count_words(text)})
+                substitute = " (substitute)" if wrote != model else ""
+                print(f"  R{rn} T{tn} {label}: {count_words(text)}w / target {target}w "
+                      f"- written by {get_judge_short_name(wrote)} [{wrote}]{substitute}")
                 if side == "A":
                     a_turns.append(text)
                     last_a_text = text
@@ -1721,7 +1761,8 @@ def run_debate_pipeline():
 
         a_full = "\n\n".join(a_turns)
         b_full = "\n\n".join(b_turns)
-        res = evaluate_round(judges, topic, rn, a_full, b_full, roles)
+        res = evaluate_round(judges, topic, rn, a_full, b_full, roles,
+                             recused=round_writers)
         ra, rb = calculate_round_average(res)
         cum_a += ra
         cum_b += rb
@@ -1751,13 +1792,19 @@ def run_debate_pipeline():
                 continue
             jvi = JUDGE_VOICE_MAP.get(judge["model"], 0)
             name = f"JUDGE — {judge['display_name'].upper()} ({judge['provider'].upper()})"
+            print(f"  reaction for {roles['side_a_label'] if side == 'A' else roles['side_b_label']}"
+                  f" by {judge['display_name']} [{judge['model']}]")
             add_seg(text, "JUDGE", name, jvi=jvi, count_speech=False)
         print(f"  written and voiced so far: {pacing.consumed / 60:.1f} min")
 
     add_seg(build_outro(cum_a, cum_b, roles), "MOD", "MODERATOR", count_speech=False)
 
     try:
-        json.dump({"topic": topic, "sides": roles, "rounds": all_results,
+        json.dump({"topic": topic, "sides": roles,
+                   "debater_models": {"A": ap_model, "B": sk_model},
+                   "judge_models": judges,
+                   "turns": turn_attribution,
+                   "rounds": all_results,
                    "cumulative": {"A": round(cum_a, 2), "B": round(cum_b, 2)}},
                   open("scores.json", "w", encoding="utf-8"), indent=2)
     except Exception:
