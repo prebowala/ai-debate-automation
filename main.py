@@ -34,6 +34,8 @@ MAX_TURN_WORDS = 175
 # A real turn shorter than the pacing target is still a real turn. Below this
 # it is too thin to use, and nothing is ever substituted for it.
 MIN_ACCEPTABLE_TURN_WORDS = 70
+# Fewer judges than this is not a panel; the build stops rather than pretend.
+MIN_PANEL_SIZE = 2
 
 # Estimates used to reserve room for the non-debate segments while pacing.
 EST_INTRO_SEC = 26.0
@@ -1422,21 +1424,60 @@ def create_emoji_plan(words):
     return plan
 
 
-def create_segment(text, slot, display_name, topic, sid, judge_voice_index=None):
+def prepare_segment(text, slot, display_name, topic, sid, judge_voice_index=None):
+    """Do everything for a segment except the ffmpeg render.
+
+    Audio synthesis gives the exact duration pacing needs, so the whole debate
+    can be written and voiced before a single frame is encoded. Rendering is by
+    far the most expensive step, and nothing should be rendered until the build
+    is known to be sound.
+    """
     pos, glow = SLOT_STYLE.get(slot, SLOT_STYLE["MOD"])
-    af, sf = f"audio_{sid}.mp3", f"subs_{sid}.ass"
-    bf, uf = f"bg_{sid}.png", f"ui_{sid}.png"
-    vf = f"segment_{sid}.mp4"
-    words = generate_audio(text, slot, af, judge_voice_index)
+    spec = {
+        "kind": "segment", "sid": sid, "pos": pos, "glow": glow, "name": display_name,
+        "audio": f"audio_{sid}.mp3", "subs": f"subs_{sid}.ass",
+        "bg": f"bg_{sid}.png", "ui": f"ui_{sid}.png", "video": f"segment_{sid}.mp4",
+    }
+    words = generate_audio(text, slot, spec["audio"], judge_voice_index)
     try:
-        eplan = create_emoji_plan(words)
+        spec["eplan"] = create_emoji_plan(words)
     except Exception:
-        eplan = []
-    generate_subtitles(words, sf, scorecard=False, audio_file=af, full_text=text)
-    create_background(pos, glow, bf)
-    wave_box = create_ui_overlay(display_name, topic, pos, glow, uf)
-    duration = render_video_segment(bf, uf, af, sf, vf, pos, glow, wave_box, eplan)
-    return vf, duration
+        spec["eplan"] = []
+    generate_subtitles(words, spec["subs"], scorecard=False,
+                       audio_file=spec["audio"], full_text=text)
+    create_background(pos, glow, spec["bg"])
+    spec["wave_box"] = create_ui_overlay(display_name, topic, pos, glow, spec["ui"])
+    spec["duration"] = get_audio_duration(spec["audio"])
+    return spec
+
+
+def prepare_scorecard(rn, res, ra, rb, cum_a, cum_b, roles):
+    """Scoreboard image, spoken summary and subtitles. No render yet."""
+    spec = {
+        "kind": "scorecard", "sid": f"r{rn}",
+        "image": f"scoreboard_r{rn}.png", "audio": f"score_audio_r{rn}.mp3",
+        "subs": f"score_subs_r{rn}.ass", "video": f"score_video_r{rn}.mp4",
+    }
+    generate_scoreboard(rn, res, ra, rb, cum_a, cum_b, spec["image"], roles)
+    text = (f"Round {rn} is scored. The panel gave {roles['side_a_label']} {ra:.1f}, "
+            f"and {roles['side_b_label']} {rb:.1f}. That puts us at "
+            f"{cum_a:.1f} to {cum_b:.1f} overall.")
+    words = generate_audio(text, "MOD", spec["audio"])
+    generate_subtitles(words, spec["subs"], scorecard=True,
+                       audio_file=spec["audio"], full_text=text)
+    spec["duration"] = get_audio_duration(spec["audio"])
+    return spec
+
+
+def render_prepared(spec):
+    """Encode one prepared segment. This is the expensive half of the build."""
+    if spec["kind"] == "scorecard":
+        render_scorecard_video(spec["image"], spec["audio"], spec["subs"], spec["video"])
+    else:
+        render_video_segment(spec["bg"], spec["ui"], spec["audio"], spec["subs"],
+                             spec["video"], spec["pos"], spec["glow"],
+                             spec["wave_box"], spec["eplan"])
+    return spec["video"]
 
 
 def build_intro(topic, jc, roles):
@@ -1502,26 +1543,101 @@ class Pacing:
         return int(max(MIN_TURN_WORDS, min(MAX_TURN_WORDS, per_turn * self.wps)))
 
 
-def preflight_check(models):
-    """Confirm a model will actually answer before anything is rendered.
+def preflight_environment():
+    """Prove the toolchain works before any content is generated.
 
-    Without this, a bad key or an empty model list only surfaces after the
-    first turns have been generated, and the old code hid it behind canned
-    text. Now it fails in seconds, loudly.
+    Every check here fails in seconds. Without them, a missing codec or a
+    blocked TTS endpoint only shows up once the build has already spent real
+    time on model calls.
     """
-    for m in models[:4]:
-        resp = query_openrouter(
+    for tool in ("ffmpeg", "ffprobe"):
+        try:
+            r = subprocess.run([tool, "-version"], stdout=subprocess.PIPE,
+                               stderr=subprocess.PIPE, timeout=20)
+            if r.returncode != 0:
+                raise OSError
+        except Exception:
+            raise DebateGenerationError(
+                f"{tool} is not available. Install ffmpeg before running the pipeline.")
+
+    if not os.path.exists("background.png"):
+        print("No background.png; the generated gradient backdrop will be used.")
+
+    font = load_font(40, bold=True)
+    if not isinstance(font, ImageFont.FreeTypeFont):
+        print("DejaVu fonts not found; text will fall back to a bitmap font.")
+
+    # Text to speech: the network dependency most likely to be blocked.
+    probe_audio = "preflight_probe.mp3"
+    try:
+        words = generate_audio("Preflight check.", "MOD", probe_audio)
+    except Exception as e:
+        raise DebateGenerationError(
+            f"Text to speech failed: {type(e).__name__}: {e}. edge-tts cannot reach "
+            f"Microsoft's endpoint, so no audio can be produced.")
+    dur = get_audio_duration(probe_audio)
+    if dur <= 0 or not words:
+        raise DebateGenerationError("Text to speech produced no usable audio in preflight.")
+
+    # A real render, in miniature, to catch filtergraph and codec problems.
+    try:
+        box = create_ui_overlay("PREFLIGHT", "preflight", "left", "#00FFCC", "preflight_ui.png")
+        create_background("left", "#00FFCC", "preflight_bg.png")
+        generate_subtitles(words, "preflight_subs.ass", audio_file=probe_audio)
+        render_video_segment("preflight_bg.png", "preflight_ui.png", probe_audio,
+                             "preflight_subs.ass", "preflight_seg.mp4",
+                             "left", "#00FFCC", box, [])
+    except Exception as e:
+        raise DebateGenerationError(
+            f"Rendering a one segment smoke test failed: {type(e).__name__}: {e}")
+    finally:
+        for f in ("preflight_probe.mp3", "preflight_ui.png", "preflight_bg.png",
+                  "preflight_subs.ass", "preflight_seg.mp4"):
+            try:
+                os.remove(f)
+            except OSError:
+                pass
+    print("Preflight: ffmpeg, fonts, text to speech and rendering all OK.")
+
+
+def preflight_models(models, judges_needed):
+    """Confirm enough models actually answer, before generating anything.
+
+    Checks a debater model and, in parallel, that at least `judges_needed`
+    distinct judges respond, so a panel that cannot be assembled fails now
+    rather than after the first round has been written and voiced.
+    """
+    responded = []
+
+    def probe(m):
+        return m, query_openrouter(
             "Reply with exactly the word: ready",
             m, timeout=30, max_tokens=20, temperature=0,
             system="You reply with one word.")
-        if resp:
-            print(f"Preflight OK via {get_judge_short_name(m)}.")
-            return True
-    raise DebateGenerationError(
-        "No model answered a trivial preflight prompt. Check OPENROUTER_API_KEY and that the "
-        "free models in FALLBACK_MODELS are still available. Stopping before anything is "
-        "rendered rather than filling the video with placeholder content."
-    )
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(8, len(models))) as ex:
+        for f in concurrent.futures.as_completed([ex.submit(probe, m) for m in models[:8]]):
+            try:
+                m, resp = f.result()
+            except Exception:
+                continue
+            if resp:
+                responded.append(m)
+
+    if not responded:
+        raise DebateGenerationError(
+            "No model answered a trivial preflight prompt. Check OPENROUTER_API_KEY and that "
+            "the free models in FALLBACK_MODELS are still available. Stopping before anything "
+            "is generated or rendered.")
+    if len(responded) < judges_needed:
+        raise DebateGenerationError(
+            f"Only {len(responded)} model(s) answered preflight, but a real panel needs at "
+            f"least {judges_needed}. Responding: "
+            f"{', '.join(get_judge_short_name(m) for m in responded)}. Stopping now rather "
+            f"than reaching the first scorecard and failing there.")
+    print(f"Preflight: {len(responded)} models responding "
+          f"({', '.join(get_judge_short_name(m) for m in responded)}).")
+    return responded
 
 
 def run_debate_pipeline():
@@ -1530,7 +1646,8 @@ def run_debate_pipeline():
     USED_JUDGE_EXPLANATIONS = set()
     cleanup_cache()
     if not OPENROUTER_API_KEY:
-        raise RuntimeError("OPENROUTER_API_KEY missing")
+        raise DebateGenerationError("OPENROUTER_API_KEY missing")
+    preflight_environment()
     if not os.path.exists("topic.txt"):
         open("topic.txt", "w", encoding="utf-8").write("Does God exist?")
     topic = open("topic.txt", "r", encoding="utf-8").read().strip() or "Does God exist?"
@@ -1539,14 +1656,14 @@ def run_debate_pipeline():
     global AVAILABLE_MODELS
     avail = discover_models() or FALLBACK_MODELS.copy()
     AVAILABLE_MODELS = [m for m in avail if not is_reasoning_model(m)]
-    preflight_check(AVAILABLE_MODELS or avail)
+    preflight_models(AVAILABLE_MODELS or avail, MIN_PANEL_SIZE)
     ap_model, sk_model = choose_primary_models(AVAILABLE_MODELS or avail)
     roles = get_debate_roles(topic, ap_model)
     print(f"Sides: {roles['side_a_label']} (Brian, left) vs {roles['side_b_label']} (Ava, right)")
     print(f"  A stance: {roles['side_a_stance']}")
     print(f"  B stance: {roles['side_b_stance']}")
     judges = choose_judges(AVAILABLE_MODELS or avail, (ap_model, sk_model))
-    if len(judges) < 2:
+    if len(judges) < MIN_PANEL_SIZE:
         raise DebateGenerationError(
             f"Only {len(judges)} usable judge model(s) were found. A scorecard needs a real "
             f"panel, and padding it with invented scores is exactly what this build refuses "
@@ -1555,16 +1672,17 @@ def run_debate_pipeline():
     print(f"Judges: {', '.join(get_judge_short_name(j) for j in judges)}")
 
     pacing = Pacing()
-    segs = []
+    specs = []
     sid = 0
 
     def add_seg(text, slot, display_name, jvi=None, count_speech=True):
+        """Write and voice a segment. Rendering happens later, in one pass."""
         nonlocal sid
-        path, dur = create_segment(text, slot, display_name, topic, sid, jvi)
-        segs.append(path)
+        spec = prepare_segment(text, slot, display_name, topic, sid, jvi)
+        specs.append(spec)
         sid += 1
-        pacing.add(dur, count_words(text) if count_speech else None)
-        return dur
+        pacing.add(spec["duration"], count_words(text) if count_speech else None)
+        return spec["duration"]
 
     total_turns = ROUNDS * TURNS_PER_SIDE_PER_ROUND * 2
     turns_done = 0
@@ -1600,7 +1718,6 @@ def run_debate_pipeline():
                     last_b_text = text
                 add_seg(text, side, label)
                 turns_done += 1
-                print(f"    running time {pacing.consumed / 60:.1f} min")
 
         a_full = "\n\n".join(a_turns)
         b_full = "\n\n".join(b_turns)
@@ -1609,17 +1726,12 @@ def run_debate_pipeline():
         cum_a += ra
         cum_b += rb
         all_results.append({"round": rn, "avg_a": ra, "avg_b": rb, "judges": res})
-        print(f"  Round {rn} average: {roles['side_a_label']} {ra:.1f} vs {roles['side_b_label']} {rb:.1f}")
+        print(f"  Round {rn} average: {roles['side_a_label']} {ra:.1f} "
+              f"vs {roles['side_b_label']} {rb:.1f}")
 
-        sb = f"scoreboard_r{rn}.png"
-        generate_scoreboard(rn, res, ra, rb, cum_a, cum_b, sb, roles)
-        st = (f"Round {rn} is scored. The panel gave {roles['side_a_label']} {ra:.1f}, "
-              f"and {roles['side_b_label']} {rb:.1f}. That puts us at {cum_a:.1f} to {cum_b:.1f} overall.")
-        sa_f, ss_f, sv_f = f"score_audio_r{rn}.mp3", f"score_subs_r{rn}.ass", f"score_video_r{rn}.mp4"
-        sw = generate_audio(st, "MOD", sa_f)
-        generate_subtitles(sw, ss_f, scorecard=True, audio_file=sa_f, full_text=st)
-        pacing.add(render_scorecard_video(sb, sa_f, ss_f, sv_f))
-        segs.append(sv_f)
+        score_spec = prepare_scorecard(rn, res, ra, rb, cum_a, cum_b, roles)
+        specs.append(score_spec)
+        pacing.add(score_spec["duration"])
 
         # One judge from each camp explains the round, but only where that camp exists.
         a_favs = [r for r in res if r["winner"] == "A"]
@@ -1631,9 +1743,6 @@ def run_debate_pipeline():
             taken = {p[0]["provider"] for p in picks}
             pool = [r for r in b_favs if r["provider"] not in taken] or b_favs
             picks.append((random.choice(pool), "B"))
-        if len(picks) == 1:
-            side_word = roles["side_a_label"] if picks[0][1] == "A" else roles["side_b_label"]
-            print(f"  Panel was unanimous for {side_word}; one reaction only.")
         for judge, side in picks:
             text = generate_panel_commentary(judge["model"], side, topic, rn, a_full, b_full, roles)
             if not text:
@@ -1643,7 +1752,7 @@ def run_debate_pipeline():
             jvi = JUDGE_VOICE_MAP.get(judge["model"], 0)
             name = f"JUDGE — {judge['display_name'].upper()} ({judge['provider'].upper()})"
             add_seg(text, "JUDGE", name, jvi=jvi, count_speech=False)
-        print(f"  running time after round {rn}: {pacing.consumed / 60:.1f} min")
+        print(f"  written and voiced so far: {pacing.consumed / 60:.1f} min")
 
     add_seg(build_outro(cum_a, cum_b, roles), "MOD", "MODERATOR", count_speech=False)
 
@@ -1654,14 +1763,24 @@ def run_debate_pipeline():
     except Exception:
         pass
 
+    # Everything above is cheap and can fail. Only now, with the full debate
+    # written, judged and voiced, do we spend time encoding video.
+    planned = pacing.consumed
+    print(f"\nDebate complete: {len(specs)} segments, {planned / 60:.1f} min of audio.")
+    if planned < MIN_TOTAL_SECONDS:
+        print(f"NOTE: runtime is under the {MIN_TOTAL_SECONDS / 60:.0f} minute floor.")
+    elif planned > MAX_TOTAL_SECONDS:
+        print(f"NOTE: runtime is over the {MAX_TOTAL_SECONDS / 60:.0f} minute ceiling.")
+    print("Rendering now; this is the slow part.")
+
+    segs = []
+    for idx, spec in enumerate(specs, 1):
+        segs.append(render_prepared(spec))
+        print(f"  rendered {idx}/{len(specs)} ({spec['duration']:.0f}s)")
+
     stitch_segments(segs, OUTPUT_FILE)
     final = get_audio_duration(OUTPUT_FILE) or pacing.consumed
-    mins = final / 60.0
-    print(f"\nCOMPLETE: {OUTPUT_FILE}  runtime {int(mins)}m {int(final % 60)}s")
-    if final < MIN_TOTAL_SECONDS:
-        print(f"NOTE: runtime is under the {MIN_TOTAL_SECONDS / 60:.0f} minute floor.")
-    elif final > MAX_TOTAL_SECONDS:
-        print(f"NOTE: runtime is over the {MAX_TOTAL_SECONDS / 60:.0f} minute ceiling.")
+    print(f"\nCOMPLETE: {OUTPUT_FILE}  runtime {int(final // 60)}m {int(final % 60)}s")
     cleanup_cache()
 
 
