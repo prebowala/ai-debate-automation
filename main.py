@@ -20,8 +20,10 @@ VIDEO_W = 1920
 VIDEO_H = 1080
 FPS = 30
 
-ROUNDS = 3
-TURNS_PER_SIDE_PER_ROUND = 2
+# Two rounds keeps the model rotation exactly even: each model argues each side
+# once. Three exchanges per side per round preserves the total runtime.
+ROUNDS = 2
+TURNS_PER_SIDE_PER_ROUND = 3
 MAX_JUDGES = 7
 
 # ---- Runtime budget: the finished video should land between 10 and 15 minutes.
@@ -867,10 +869,12 @@ def _score_once(model, topic, rn, first_text, second_text):
         "they answered the other debater.\n"
         "Judge the argument as it was actually made. Do not score based on whether you agree "
         "with the position being defended, only on how well it was argued.\n"
+        "Length is not quality. Do not reward a debater for saying more, only for saying "
+        "something better supported.\n"
         'Return ONLY JSON: {"one_total": 0, "two_total": 0, '
         '"reason": "one spoken sentence naming the specific point that decided it"}'
     )
-    resp = query_openrouter(prompt, model, timeout=40, max_tokens=320, temperature=0.3,
+    resp = query_openrouter(prompt, model, timeout=40, max_tokens=320, temperature=0.0,
                             system="You return only valid JSON. No commentary.")
     d = extract_json_object(resp)
     if not d or d.get("one_total") is None or d.get("two_total") is None:
@@ -947,11 +951,13 @@ def evaluate_round(judges, topic, rn, ap, sk, roles, recused=()):
     recused, so nothing scores its own text.
     """
     recused = set(recused)
-    sitting = [m for m in judges if m not in recused]
+    recused_providers = {provider_from_model(m) for m in recused}
+    sitting = [m for m in judges
+               if m not in recused and provider_from_model(m) not in recused_providers]
     for m in judges:
-        if m in recused:
-            print(f"    {get_judge_short_name(m)} wrote a turn this round and is recused "
-                  f"from scoring it.")
+        if m not in sitting:
+            print(f"    {get_judge_short_name(m)} is recused this round "
+                  f"({provider_from_model(m)} wrote a turn).")
     if not sitting:
         raise DebateGenerationError(
             f"Every judge on the panel wrote a turn in round {rn}, so none can score it "
@@ -1904,6 +1910,15 @@ def run_debate_pipeline():
 
         a_full = "\n\n".join(a_turns)
         b_full = "\n\n".join(b_turns)
+
+        # Judges reward longer answers, so an unequal share of speaking is a
+        # thumb on the scale even when the judging itself is blind.
+        wa, wb = count_words(a_full), count_words(b_full)
+        gap = abs(wa - wb) / max(1, max(wa, wb))
+        flag = "  <-- uneven, favours the longer side" if gap > 0.25 else ""
+        print(f"  speaking length: {roles['side_a_label']} {wa}w vs "
+              f"{roles['side_b_label']} {wb}w ({gap:.0%} apart){flag}")
+
         res = evaluate_round(judges, topic, rn, a_full, b_full, roles,
                              recused=round_writers)
         ra, rb = calculate_round_average(res)
@@ -1915,6 +1930,7 @@ def run_debate_pipeline():
         votes_t += vt
         all_results.append({"round": rn, "avg_a": ra, "avg_b": rb,
                             "votes": {"A": va, "B": vb, "TIE": vt},
+                            "words": {"A": wa, "B": wb, "gap": round(gap, 3)},
                             "debater_models": {"A": a_model, "B": b_model},
                             "judges": res})
         print(f"  Round {rn}: panel split {va}-{vb}"
