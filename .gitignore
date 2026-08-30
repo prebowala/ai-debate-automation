@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+emoji_cache/
+concat_list.txt
+segment_*.mp4
+score_video_*.mp4
+scoreboard_*.png
+audio_*.mp3
+score_audio_*.mp3
+subs_*.ass
+score_subs_*.ass
+bg_*.png
+ui_*.png
+emoji_*.png
+final_debate_output.mp4

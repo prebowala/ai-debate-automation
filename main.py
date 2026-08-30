@@ -1,4 +1,3 @@
-
 import os
 import re
 import json
@@ -19,37 +18,37 @@ OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
 OUTPUT_FILE = "final_debate_output.mp4"
 VIDEO_W = 1920
 VIDEO_H = 1080
+FPS = 30
 
 ROUNDS = 3
 TURNS_PER_SIDE_PER_ROUND = 2
-WORDS_PER_TURN = 145
-MIN_TURN_WORDS = 130
-MAX_TURN_WORDS = 160
 MAX_JUDGES = 7
+
+# ---- Runtime budget: the finished video should land between 10 and 15 minutes.
+TARGET_TOTAL_SECONDS = 780.0        # aim for 13:00
+MIN_TOTAL_SECONDS = 600.0
+MAX_TOTAL_SECONDS = 900.0
+DEFAULT_WORDS_PER_SEC = 2.55        # edge-tts neural voices run ~150-160 wpm
+MIN_TURN_WORDS = 95
+MAX_TURN_WORDS = 175
+
+# Estimates used to reserve room for the non-debate segments while pacing.
+EST_INTRO_SEC = 26.0
+EST_OUTRO_SEC = 22.0
+EST_SCORECARD_SEC = 16.0
+EST_COMMENTARY_SEC = 22.0
+COMMENTARY_WORDS = 55
 
 EMOJI_W = 180
 EMOJI_H = 180
 USED_ARGUMENTS = set()
 USED_JUDGE_EXPLANATIONS = set()
 
-# VOICES SAME EACH BUILD NO MATTER TOPIC - HARDWIRED DISTINCT WE DISCUSSED
-VOICES = {
-    "GOD EXISTS": "en-US-BrianMultilingualNeural",
-    "GOD DOESN'T EXIST": "en-US-AvaMultilingualNeural",
-    "GOD DOESNT EXIST": "en-US-AvaMultilingualNeural",
-    "YES": "en-US-BrianMultilingualNeural",
-    "NO": "en-US-AvaMultilingualNeural",
-    "Moderator": "en-US-AndrewMultilingualNeural",
-    "MODERATOR": "en-US-AndrewMultilingualNeural",
-    "GOD TOLD TRUTH": "en-US-BrianMultilingualNeural",
-    "SERPENT TOLD TRUTH": "en-US-AvaMultilingualNeural",
-    "AFFIRMATIVE": "en-US-BrianMultilingualNeural",
-    "NEGATIVE": "en-US-AvaMultilingualNeural",
-    "FOR": "en-US-BrianMultilingualNeural",
-    "AGAINST": "en-US-AvaMultilingualNeural",
-    "AI Christian Apologist": "en-US-BrianMultilingualNeural",
-    "AI Skeptic": "en-US-AvaMultilingualNeural",
-}
+# Speaker slots are fixed, so voices stay identical build to build whatever the topic is.
+SIDE_A_VOICE = "en-US-BrianMultilingualNeural"
+SIDE_B_VOICE = "en-US-AvaMultilingualNeural"
+MODERATOR_VOICE = "en-US-AndrewMultilingualNeural"
+
 JUDGE_VOICES = [
     "en-US-JennyNeural",
     "en-GB-RyanNeural",
@@ -60,6 +59,14 @@ JUDGE_VOICES = [
     "en-CA-ClaraNeural",
 ]
 JUDGE_VOICE_MAP = {}
+
+# Speaker slot -> (screen position, accent colour)
+SLOT_STYLE = {
+    "A": ("left", "#00FFCC"),
+    "B": ("right", "#FF00FF"),
+    "JUDGE": ("center", "#3399FF"),
+    "MOD": ("center", "#FFD700"),
+}
 
 FALLBACK_MODELS = [
     "openai/gpt-4o-mini:free",
@@ -78,12 +85,24 @@ PROVIDER_ALIASES = {
     "meta-llama": "Meta", "qwen": "Qwen", "nvidia": "Nvidia",
 }
 
+SPEECH_SYSTEM_PROMPT = (
+    "You are a person speaking out loud on a live debate stage. Everything you produce is "
+    "spoken word that goes straight to a text to speech engine. Never describe what you are "
+    "about to do, never announce your structure, never say you will address or discuss "
+    "something, never write headings, numbered lists, bullet points, stage directions or word "
+    "counts. No markdown. Just talk, using contractions and plain language, and get straight "
+    "into the substance."
+)
+
+
 def provider_from_model(mid):
-    if not mid: return "Unknown"
-    return PROVIDER_ALIASES.get(mid.split("/",1)[0].lower().strip(), mid.split("/",1)[0].title())
+    if not mid:
+        return "Unknown"
+    return PROVIDER_ALIASES.get(mid.split("/", 1)[0].lower().strip(), mid.split("/", 1)[0].title())
+
 
 def get_judge_short_name(mid):
-    low=(mid or "").lower()
+    low = (mid or "").lower()
     if "gpt" in low: return "ChatGPT"
     if "claude-3-5" in low: return "Claude 3.5"
     if "claude" in low: return "Claude"
@@ -91,741 +110,1380 @@ def get_judge_short_name(mid):
     if "gemini" in low: return "Gemini"
     if "deepseek" in low: return "DeepSeek"
     if "mistral" in low: return "Mistral"
+    if "nemotron" in low: return "Nemotron"
     if "llama" in low: return "Llama"
     if "qwen" in low: return "Qwen"
-    if "nemotron" in low: return "Nemotron"
     return provider_from_model(mid)
 
-def cleanup_cache():
-    for pat in ["*.mp4","*.mp3","*.ass","*.png","*_list.txt"]:
-        for fn in glob.glob(pat):
-            if fn in [OUTPUT_FILE,"background.png","topic.txt"]: continue
-            try: os.remove(fn)
-            except: pass
 
-def count_words(t): return len(re.findall(r"\b[\w'-]+\b", t or ""))
+def cleanup_cache():
+    for pat in ["*.mp4", "*.mp3", "*.ass", "*.png", "*_list.txt"]:
+        for fn in glob.glob(pat):
+            if fn in [OUTPUT_FILE, "background.png", "topic.txt"]:
+                continue
+            try:
+                os.remove(fn)
+            except OSError:
+                pass
+
+
+def count_words(t):
+    return len(re.findall(r"\b[\w'-]+\b", t or ""))
+
+
+def trim_to_words(text, max_words):
+    """Cut on a sentence boundary rather than mid-thought."""
+    if count_words(text) <= max_words:
+        return text
+    sentences = re.split(r"(?<=[.!?])\s+", text.strip())
+    kept, total = [], 0
+    for s in sentences:
+        w = count_words(s)
+        if kept and total + w > max_words:
+            break
+        kept.append(s)
+        total += w
+        if total >= max_words:
+            break
+    out = " ".join(kept).strip()
+    if not out:
+        out = " ".join(text.split()[:max_words]).rstrip(",;: ") + "."
+    return out
+
 
 def clean_for_speech(t):
-    if not t: return ""
-    t=re.sub(r"https?://\S+"," ",t)
-    t=re.sub(r"www\.\S+"," ",t)
-    t=re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", t)
-    t=re.sub(r"```.*?```"," ",t, flags=re.DOTALL)
-    t=t.replace("(", " ").replace(")", " ").replace("[", " ").replace("]", " ")
-    t=t.replace("–",", ").replace("—",". ").replace(" - ",". ")
-    for o,n in {"*":"", "#":"", "_":"", "`":"", "\"":"", ":":" . ", ";":" . ", "&":" and"}.items():
-        t=t.replace(o,n)
-    t=re.sub(r"\s+"," ",t).strip()
-    if t and not t[-1] in ".!?": t+="."
-    t=re.sub(r"\.{2,}",".",t)
+    if not t:
+        return ""
+    t = re.sub(r"https?://\S+", " ", t)
+    t = re.sub(r"www\.\S+", " ", t)
+    t = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", t)
+    t = re.sub(r"```.*?```", " ", t, flags=re.DOTALL)
+    t = t.replace("(", " ").replace(")", " ").replace("[", " ").replace("]", " ")
+    t = t.replace("–", ", ").replace("—", ". ").replace(" - ", ". ")
+    for o, n in {"*": "", "#": "", "_": "", "`": "", "\"": "", ":": " . ", ";": " . ", "&": " and"}.items():
+        t = t.replace(o, n)
+    t = re.sub(r"\s+", " ", t).strip()
+    if t and t[-1] not in ".!?":
+        t += "."
+    t = re.sub(r"\.{2,}", ".", t)
     return t
 
+
 def clamp_score(v):
-    try: v=float(v)
-    except: v=50.0
-    return max(0.0,min(100.0,v))
+    try:
+        v = float(v)
+    except (TypeError, ValueError):
+        v = 50.0
+    return max(0.0, min(100.0, v))
 
-def load_font(sz,bold=False):
-    p="/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
-    try: return ImageFont.truetype(p,sz)
-    except: return ImageFont.load_default()
 
-def hex_to_rgba(h,a):
-    h=h.lstrip("#")
-    return (int(h[0:2],16),int(h[2:4],16),int(h[4:6],16),a)
+def load_font(sz, bold=False):
+    p = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+    try:
+        return ImageFont.truetype(p, sz)
+    except OSError:
+        return ImageFont.load_default()
+
+
+def hex_to_rgba(h, a):
+    h = h.lstrip("#")
+    return (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16), a)
+
 
 def openrouter_headers():
-    return {"Authorization":f"Bearer {OPENROUTER_API_KEY}","Content-Type":"application/json","HTTP-Referer":"https://openrouter.ai/","X-Title":"AI Debate Arena"}
+    return {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://openrouter.ai/",
+        "X-Title": "AI Debate Arena",
+    }
+
 
 def discover_models():
-    if not OPENROUTER_API_KEY: raise RuntimeError("OPENROUTER_API_KEY missing")
+    if not OPENROUTER_API_KEY:
+        raise RuntimeError("OPENROUTER_API_KEY missing")
     try:
-        r=requests.get(OPENROUTER_MODELS_URL,headers=openrouter_headers(),timeout=20)
-        free=[]
-        for it in r.json().get("data",[]):
-            mid=it.get("id","")
-            if not mid or ":free" not in mid.lower(): continue
-            if any(x in mid.lower() for x in ["embed","tts","whisper","audio"]): continue
-            top=["openai","anthropic","google","meta-llama","mistralai","deepseek","qwen","nvidia"]
-            if not any(p in mid.lower() for p in top): continue
+        r = requests.get(OPENROUTER_MODELS_URL, headers=openrouter_headers(), timeout=20)
+        free = []
+        for it in r.json().get("data", []):
+            mid = it.get("id", "")
+            if not mid or ":free" not in mid.lower():
+                continue
+            if any(x in mid.lower() for x in ["embed", "tts", "whisper", "audio"]):
+                continue
+            top = ["openai", "anthropic", "google", "meta-llama", "mistralai", "deepseek", "qwen", "nvidia"]
+            if not any(p in mid.lower() for p in top):
+                continue
             free.append(mid)
-        if free: return list(dict.fromkeys(free))
+        if free:
+            return list(dict.fromkeys(free))
         return FALLBACK_MODELS.copy()
-    except:
+    except Exception:
         return FALLBACK_MODELS.copy()
 
-def query_openrouter(prompt,mid,timeout=60,max_tokens=800,temperature=0.82):
-    if not OPENROUTER_API_KEY: return None
-    if ":free" not in mid.lower(): return None
-    payload={"model":mid,"messages":[{"role":"system","content":"You are a natural human debater. Never say what you are going to do, never explain your thinking process, never say here's a thinking process, never list steps. Just speak naturally with real evidence. No meta talk."},{"role":"user","content":prompt}],"temperature":temperature,"max_tokens":max_tokens}
+
+def query_openrouter(prompt, mid, timeout=60, max_tokens=800, temperature=0.82, system=None):
+    if not OPENROUTER_API_KEY:
+        return None
+    if ":free" not in (mid or "").lower():
+        return None
+    payload = {
+        "model": mid,
+        "messages": [
+            {"role": "system", "content": system or SPEECH_SYSTEM_PROMPT},
+            {"role": "user", "content": prompt},
+        ],
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+    }
     for _ in range(2):
         try:
-            resp=requests.post(OPENROUTER_URL,headers=openrouter_headers(),json=payload,timeout=timeout)
-            if resp.status_code==200:
-                c=resp.json().get("choices",[])[0].get("message",{}).get("content","")
-                if c and len(c.strip())>80: return c.strip()
-        except: pass
+            resp = requests.post(OPENROUTER_URL, headers=openrouter_headers(), json=payload, timeout=timeout)
+            if resp.status_code == 200:
+                c = resp.json().get("choices", [])[0].get("message", {}).get("content", "")
+                if c and len(c.strip()) > 60:
+                    return c.strip()
+        except Exception:
+            pass
         time.sleep(1)
     return None
 
-def choose_primary_models(avail):
-    free=[m for m in avail if ":free" in m] or FALLBACK_MODELS
-    used=set(); picks=[]
-    for m in free:
-        prov=provider_from_model(m)
-        if prov not in used:
-            picks.append(m); used.add(prov)
-        if len(picks)>=2: break
-    if len(picks)<2: picks=(free+FALLBACK_MODELS)[:2]
-    print(f"Primary same each build: GOD EXISTS Brian vs GOD DOESNT EXIST Ava vs Moderator Andrew")
-    return picks[0],picks[1]
 
-def choose_judges(avail,primary):
+def extract_json_object(text):
+    """Pull the first balanced {...} block out of a model reply."""
+    if not text:
+        return None
+    start = text.find("{")
+    while start != -1:
+        depth = 0
+        for i in range(start, len(text)):
+            if text[i] == "{":
+                depth += 1
+            elif text[i] == "}":
+                depth -= 1
+                if depth == 0:
+                    blob = text[start:i + 1]
+                    for candidate in (blob, blob.replace("'", '"')):
+                        try:
+                            return json.loads(candidate)
+                        except (ValueError, TypeError):
+                            continue
+                    break
+        start = text.find("{", start + 1)
+    return None
+
+
+def choose_primary_models(avail):
+    free = [m for m in avail if ":free" in m] or FALLBACK_MODELS
+    used = set()
+    picks = []
+    for m in free:
+        prov = provider_from_model(m)
+        if prov not in used:
+            picks.append(m)
+            used.add(prov)
+        if len(picks) >= 2:
+            break
+    if len(picks) < 2:
+        picks = (free + FALLBACK_MODELS)[:2]
+    return picks[0], picks[1]
+
+
+def choose_judges(avail, primary):
     global JUDGE_VOICE_MAP
-    primary_providers=set(provider_from_model(m) for m in primary)
-    excl=set(primary)
-    top_providers={"openai","anthropic","google","meta-llama","mistralai","deepseek","qwen","nvidia"}
-    cands=[m for m in avail if m not in excl and ":free" in m and m.split("/")[0].lower() in top_providers and provider_from_model(m) not in primary_providers]
-    if len(cands)<4:
-        cands=[m for m in avail if m not in excl and ":free" in m and provider_from_model(m) not in primary_providers]
-    groups={}
+    primary_providers = set(provider_from_model(m) for m in primary)
+    excl = set(primary)
+    top_providers = {"openai", "anthropic", "google", "meta-llama", "mistralai", "deepseek", "qwen", "nvidia"}
+    cands = [m for m in avail if m not in excl and ":free" in m
+             and m.split("/")[0].lower() in top_providers
+             and provider_from_model(m) not in primary_providers]
+    if len(cands) < 4:
+        cands = [m for m in avail if m not in excl and ":free" in m
+                 and provider_from_model(m) not in primary_providers]
+    groups = {}
     for m in cands:
-        prov=provider_from_model(m)
-        if prov not in groups: groups[prov]=m
-    order=["OpenAI","Anthropic","Google","Meta","Mistral","DeepSeek","Qwen","Nvidia"]
-    sel=[]
+        prov = provider_from_model(m)
+        if prov not in groups:
+            groups[prov] = m
+    order = ["OpenAI", "Anthropic", "Google", "Meta", "Mistral", "DeepSeek", "Qwen", "Nvidia"]
+    sel = []
     for name in order:
         if name in groups:
-            sel.append(groups[name]); del groups[name]
-        if len(sel)>=MAX_JUDGES: break
-    for m in groups.values():
-        if len(sel)>=MAX_JUDGES: break
+            sel.append(groups.pop(name))
+        if len(sel) >= MAX_JUDGES:
+            break
+    for m in list(groups.values()):
+        if len(sel) >= MAX_JUDGES:
+            break
         sel.append(m)
-    seen_prov=set(); seen_disp=set(); uniq=[]
+    seen_prov, seen_disp, uniq = set(), set(), []
     for m in sel:
-        prov=provider_from_model(m); disp=get_judge_short_name(m)
-        if prov in seen_prov or disp in seen_disp: continue
-        uniq.append(m); seen_prov.add(prov); seen_disp.add(disp)
-    result=uniq[:MAX_JUDGES]
-    if len(result)<MAX_JUDGES:
+        prov, disp = provider_from_model(m), get_judge_short_name(m)
+        if prov in seen_prov or disp in seen_disp:
+            continue
+        uniq.append(m)
+        seen_prov.add(prov)
+        seen_disp.add(disp)
+    result = uniq[:MAX_JUDGES]
+    if len(result) < MAX_JUDGES:
         for m in FALLBACK_MODELS:
-            if len(result)>=MAX_JUDGES: break
-            prov=provider_from_model(m); disp=get_judge_short_name(m)
-            if prov in seen_prov or disp in seen_disp: continue
-            if m in primary: continue
-            result.append(m); seen_prov.add(prov); seen_disp.add(disp)
-    JUDGE_VOICE_MAP={mid: idx%len(JUDGE_VOICES) for idx,mid in enumerate(result)}
+            if len(result) >= MAX_JUDGES:
+                break
+            prov, disp = provider_from_model(m), get_judge_short_name(m)
+            if prov in seen_prov or disp in seen_disp or m in primary:
+                continue
+            result.append(m)
+            seen_prov.add(prov)
+            seen_disp.add(disp)
+    JUDGE_VOICE_MAP = {mid: idx % len(JUDGE_VOICES) for idx, mid in enumerate(result)}
     return result
 
+
+# ----------------------------------------------------------------------------
+# Topic -> sides. Nothing below is tied to any particular subject.
+# ----------------------------------------------------------------------------
+
+STOP_WORDS = {"a", "an", "the", "is", "are", "was", "were", "be", "been", "do", "does",
+              "did", "should", "would", "could", "can", "will", "shall", "must", "has",
+              "have", "had", "there", "really", "actually", "ever"}
+
+
+def _titlecase_label(s, limit=26):
+    s = re.sub(r"[^\w\s'-]", " ", s or "").strip()
+    s = re.sub(r"\s+", " ", s)
+    if not s:
+        return ""
+    if len(s) > limit:
+        s = s[:limit].rsplit(" ", 1)[0]
+    return s.upper()
+
+
+def fallback_roles(topic):
+    """Derive two opposing side labels from the wording of the topic itself."""
+    raw = (topic or "").strip().rstrip("?.!")
+    low = raw.lower()
+
+    m = re.match(r"^(does|do|is|are|was|were)\s+(.+?)\s+(?:exists?|real)$", low)
+    if m:
+        aux = m.group(1)
+        subject = _titlecase_label(m.group(2))
+        plural = aux in ("do", "are", "were")
+        if subject:
+            verb = "EXIST" if plural else "EXISTS"
+            neg = "DON'T EXIST" if plural else "DOESN'T EXIST"
+            does = "do" if plural else "does"
+            return {
+                "side_a_label": f"{subject} {verb}",
+                "side_a_stance": f"{subject.title()} really {does} exist",
+                "side_b_label": f"{subject} {neg}",
+                "side_b_stance": f"{subject.title()} {does} not exist",
+            }
+
+    for sep in [" versus ", " vs. ", " vs ", " or "]:
+        if sep in low:
+            left, right = low.split(sep, 1)
+            la, lb = _titlecase_label(left), _titlecase_label(right)
+            if la and lb and la != lb:
+                return {
+                    "side_a_label": la,
+                    "side_a_stance": f"{la.title()} is the right answer to this question",
+                    "side_b_label": lb,
+                    "side_b_stance": f"{lb.title()} is the right answer to this question",
+                }
+
+    if re.match(r"^(should|is|are|was|were|does|do|did|can|could|will|would|has|have|must|shall)\b", low):
+        return {
+            "side_a_label": "YES",
+            "side_a_stance": f"the answer to \"{raw}\" is yes",
+            "side_b_label": "NO",
+            "side_b_stance": f"the answer to \"{raw}\" is no",
+        }
+
+    return {
+        "side_a_label": "FOR",
+        "side_a_stance": f"you support the motion \"{raw}\"",
+        "side_b_label": "AGAINST",
+        "side_b_stance": f"you oppose the motion \"{raw}\"",
+    }
+
+
 def get_debate_roles(topic, model):
-    tl=(topic or "").lower()
-    if "does god exist" in tl or "is there a god" in tl or "god exists" in tl:
-        return {"side_a_label":"GOD EXISTS","side_a_desc":"God exists side for Does God exist","side_b_label":"GOD DOESN'T EXIST","side_b_desc":"God does not exist side for Does God exist"}
-    if "god" in tl and "serpent" in tl:
-        return {"side_a_label":"GOD EXISTS","side_a_desc":"God told truth side","side_b_label":"GOD DOESN'T EXIST","side_b_desc":"serpent told truth side interpreted as God does not exist side"}
-    # Default descriptive labels from topic
-    return {"side_a_label":"GOD EXISTS","side_a_desc":f"Yes side for {topic}","side_b_label":"GOD DOESN'T EXIST","side_b_desc":f"No side for {topic}"}
+    """Ask a model to name the two sides; fall back to grammar-based labels."""
+    prompt = (
+        f'A televised debate is being staged on this question or motion: "{topic}".\n'
+        "Name the two opposing sides.\n"
+        "Return ONLY JSON, no other text:\n"
+        '{"side_a_label":"...","side_a_stance":"...","side_b_label":"...","side_b_stance":"..."}\n'
+        "side_a_label and side_b_label: the position itself in at most three words, all caps, "
+        "readable on a name card (for example GOD EXISTS, YES, BAN IT, FREE WILL). They must be "
+        "genuine opposites and must not be identical.\n"
+        "side_a_stance and side_b_stance: one short clause completing the sentence "
+        "\"You believe that ...\", written for the debater on that side."
+    )
+    for m in [model] + FALLBACK_MODELS[:3]:
+        resp = query_openrouter(prompt, m, timeout=35, max_tokens=250, temperature=0.3,
+                                system="You return only valid JSON. No commentary.")
+        d = extract_json_object(resp)
+        if not d:
+            continue
+        la = _titlecase_label(str(d.get("side_a_label", "")))
+        lb = _titlecase_label(str(d.get("side_b_label", "")))
+        if not la or not lb or la == lb:
+            continue
+        return {
+            "side_a_label": la,
+            "side_a_stance": str(d.get("side_a_stance", "")).strip() or f"{la.title()} is correct",
+            "side_b_label": lb,
+            "side_b_stance": str(d.get("side_b_stance", "")).strip() or f"{lb.title()} is correct",
+        }
+    return fallback_roles(topic)
 
-def strip_filler(t):
-    for pat in [r"^(ladies and gentlemen[,.]?\s*)",r"^(my friends[,.]?\s*)",r"^(well[,.]?\s*)",r"^(thank you[,.]?\s*)"]:
-        t=re.sub(pat,"",t,flags=re.IGNORECASE).strip()
-    return t
 
-def generate_fallback_debate(side_label, topic, round_num, turn_num):
-    # Human sounding, same length, relevant points
-    tl=topic.lower()
-    if "does god exist" in tl or "god exists" in tl:
-        if "DOESN'T" in side_label.upper() or "DOESNT" in side_label.upper() or "NO" in side_label.upper():
-            return random.choice([
-                "You know what makes me doubt, it's suffering. I have seen kids with cancer and earthquakes that wipe out towns. If there is a God who is all loving and all powerful, that kind of pointless pain should not happen. That is why I land on the God does not exist side.",
-                "I used to think we needed God to explain complexity, but evolution and physics actually do the job and make predictions we can test. We do not need to add an extra layer. The simpler explanation is that God does not exist, and that fits what we observe.",
-                "I looked at prayer studies, like the big STEP trial on heart patients where they prayed for recovery. No consistent effect beyond placebo. If someone was listening, we should see a clear signal, but we do not. That pushes me to the God does not exist side.",
-            ])
-        else:
-            return random.choice([
-                "What gets me is that the universe had a beginning. The Big Bang means space and time started. Anything that begins needs a cause outside itself, something beyond space and time. That description matches what people mean by God, so I am on the God exists side.",
-                "DNA struck me as different. It is not just chemicals, it is information, a four letter code that builds proteins. In all our experience, information comes from a mind. You do not get a book without an author, so I lean to the God exists side.",
-                "Fine tuning is hard to ignore. If gravity was a tiny bit stronger stars burn out too fast, a bit weaker no stars at all. The constants are balanced on a knife edge to allow life. That precision feels intentional, which fits the God exists side.",
-            ])
-    if side_label.upper().startswith("GOD EXISTS") or side_label.upper()=="YES":
-        return f"Looking at {topic}, I am on the God exists side because there is a concrete pattern you can check. Take a real example of {topic}, the mechanism behind it predicts what we see. That is why I stay with God exists."
+# ----------------------------------------------------------------------------
+# Turn generation
+# ----------------------------------------------------------------------------
+
+# A sentence matching any of these is scaffolding, not speech, and is dropped whole.
+META_SENTENCE_PATTERNS = [
+    r"^i\s*(?:'ll|will|am going to|'m going to|need to|want to|have to|must|should|shall|"
+    r"would like to|plan to|intend to)\s+(?:first|now|also|then|briefly|quickly)?\s*"
+    r"(?:discuss|address|talk about|argue against|respond|reply|counter|rebut|start by|"
+    r"begin by|open with|point out|highlight|emphasi[sz]e|focus on|tackle|cover|lay out|"
+    r"set out|establish|demonstrate|turn to|move on|outline|structure|walk (?:you )?through|"
+    r"break (?:this|it) down|summari[sz]e|conclude|unpack)\b",
+    r"^let me\s+(?:think|start|begin|first|break|unpack|walk|structure|outline|recap|"
+    r"summari[sz]e|address|respond|counter|rebut|lay out|set out|explain my|clarify my|"
+    r"restate|reframe)\b",
+    r"^(?:my|the|this)\s+(?:\w+\s+)?(?:thinking process|process|structure|outline|"
+    r"approach|strategy|framework|breakdown)\s+(?:is|will|goes|breaks|looks|here)\b",
+    r"^(?:my|the|this)\s+(?:argument|response|answer|point)s?\s+"
+    r"(?:structure|plan|outline|process|breakdown)\b",
+    r"^here(?:'s| is)\s+(?:my|a|the|how|what)\b",
+    r"^(?:in|for)\s+this\s+(?:round|turn|response|rebuttal|segment|answer|opening)\b",
+    r"^(?:as|being)\s+the\s+\w+\s+(?:side|speaker|debater|position)\b",
+    r"^(?:thinking process|constraints?|relevant points?|word count|task|instructions?|"
+    r"position|note to self|draft)\b",
+    r"^(?:i\s+)?(?:need|want|have)\s+to\s+(?:make sure|remember|keep|stay|hit|reach)\b",
+]
+
+# Planning verbs that only look like scaffolding in a short, clipped sentence.
+PLANNING_STUB = re.compile(
+    r"^(?:analy[sz]e|identify|draft|outline|brainstorm|structure|plan|review|check|"
+    r"restate|paraphrase|summari[sz]e)\b", re.IGNORECASE)
+
+# Openers to shave off the front of an otherwise good sentence.
+LEADING_NOISE = [
+    r"^(?:okay|ok|alright|sure|certainly|of course)\b[,.!]?\s+(?:so\b[,]?\s+)?",
+    r"^(?:ladies and gentlemen|my friends|good evening|good morning|good afternoon|"
+    r"thank you|thanks|hello|hi there)\b[,.!]?\s*",
+    r"^(?:rebuttal|counterpoint|counter-argument|counter argument|opening|closing|response|"
+    r"new (?:point|argument|evidence)|point \d+|argument \d+|part \d+|first point|"
+    r"second point|final point)\s*[:\-\u2013]\s*",
+]
+
+# Connectives that can sit in front of scaffolding and hide it from the patterns above.
+LEADING_CONNECTIVE = re.compile(
+    r"^(?:and|but|so|then|now|next|first(?:ly)?|second(?:ly)?|third(?:ly)?|finally|lastly|"
+    r"also|additionally|furthermore|moreover|well|right|look|listen|okay|ok|alright|"
+    r"sure|certainly|honestly|frankly)\b[,]?\s+", re.IGNORECASE)
+
+LEAK_FRAGMENTS = [
+    "thinking process", "here's a thinking", "as an ai", "as a language model",
+    "step 1", "word count", "user constraints", "the user wants", "the prompt",
+    "my instructions", "i cannot", "i'm unable to",
+]
+
+
+def _is_meta_sentence(sentence):
+    """True when the sentence is the model narrating its own process."""
+    s = sentence.strip()
+    for _ in range(3):
+        stripped = LEADING_CONNECTIVE.sub("", s, count=1).strip()
+        if stripped == s:
+            break
+        s = stripped
+    low = s.lower()
+    for pat in META_SENTENCE_PATTERNS:
+        if re.match(pat, low, flags=re.IGNORECASE):
+            return True
+    if PLANNING_STUB.match(low) and count_words(s) <= 8:
+        return True
+    if re.search(r"\b(?:is|are|goes)\s+as follows\b", low):
+        return True
+    return False
+
+
+def strip_meta(text):
+    """Remove the scaffolding models emit around what they actually want to say."""
+    if not text:
+        return ""
+    t = re.sub(r"```.*?```", " ", text, flags=re.DOTALL)
+    t = re.sub(r"^\s*#{1,6}\s*", "", t, flags=re.MULTILINE)
+    t = re.sub(r"\*\*(.+?)\*\*", r"\1", t)
+    t = re.sub(r"^\s*(?:[-*\u2022]|\d+[.)])\s+", "", t, flags=re.MULTILINE)
+    t = re.sub(r"\(\s*(?:about|approx\.?|roughly)?\s*\d+\s*words?\s*\)", " ", t, flags=re.IGNORECASE)
+    t = re.sub(r"\s+", " ", t).strip()
+
+    kept = []
+    for sentence in re.split(r"(?<=[.!?])\s+", t):
+        s = sentence.strip()
+        if not s:
+            continue
+        low = s.lower()
+        if any(frag in low for frag in LEAK_FRAGMENTS):
+            continue
+
+        # Shave openers, then re-test: "Okay, so I need to discuss X" must still die.
+        trimmed = s
+        for _ in range(3):
+            before = trimmed
+            for pat in LEADING_NOISE:
+                trimmed = re.sub(pat, "", trimmed, count=1, flags=re.IGNORECASE).strip()
+            if trimmed == before:
+                break
+        if not trimmed:
+            continue
+        # Orphaned list markers ("1.", "2.") survive sentence splitting; drop them.
+        if count_words(trimmed) < 2 or not re.search(r"[A-Za-z]{2}", trimmed):
+            continue
+        if _is_meta_sentence(trimmed):
+            continue
+        if trimmed and trimmed[0].islower():
+            trimmed = trimmed[0].upper() + trimmed[1:]
+        kept.append(trimmed)
+
+    out = " ".join(kept).strip()
+    out = re.sub(r"\s+([,.!?;])", r"\1", out)
+    out = re.sub(r"\s+", " ", out).strip()
+    if out and out[-1] not in ".!?":
+        out += "."
+    return out
+
+
+def generate_fallback_debate(roles, side, topic, opponent_last, target_words):
+    """Topic-agnostic filler that still rebuts and still sounds spoken."""
+    other = roles["side_b_label"] if side == "A" else roles["side_a_label"]
+    stance = roles["side_a_stance"] if side == "A" else roles["side_b_stance"]
+
+    hook = ""
+    if opponent_last:
+        first = re.split(r"(?<=[.!?])\s+", opponent_last.strip())[0]
+        first = " ".join(first.split()[:18]).rstrip(",.;:")
+        if first:
+            hook = (f"My opponent just said {first}, and that's exactly where this falls apart. "
+                    f"It's a claim that sounds tidy until you ask what it actually rests on, "
+                    f"and on {topic} it rests on very little. ")
+
+    body = random.choice([
+        f"When I look at {topic}, I keep coming back to what happens in practice rather than "
+        f"what sounds good in theory. Every time the {other.lower()} position gets tested against "
+        f"real cases, it has to add another exception to survive, and a position that needs a new "
+        f"exception every time it meets the world is telling you something. That's why I hold that {stance}.",
+
+        f"Here's the thing about {topic}. The strongest case for my side isn't clever argument, "
+        f"it's the track record. Follow the actual outcomes, look at who bears the cost when this "
+        f"goes wrong, and the picture is consistent. The {other.lower()} side has to explain away "
+        f"that pattern one case at a time. I'd rather hold the position that predicts it: {stance}.",
+
+        f"On {topic}, I think we should ask which side has to keep moving the goalposts. Mine "
+        f"makes a claim you can check, and it keeps holding up when you check it. The {other.lower()} "
+        f"case sounds strongest right up until someone asks for the specific example, and then it "
+        f"gets vague. That asymmetry is the whole argument for why {stance}.",
+    ])
+    text = (hook + body).strip()
+    return trim_to_words(text, target_words + 25)
+
+
+def generate_turn(topic, roles, side, round_num, turn_num, opponent_last, target_words, model):
+    label = roles["side_a_label"] if side == "A" else roles["side_b_label"]
+    other = roles["side_b_label"] if side == "A" else roles["side_a_label"]
+    stance = roles["side_a_stance"] if side == "A" else roles["side_b_stance"]
+    used_str = "; ".join(list(USED_ARGUMENTS)[-6:])[:400] if USED_ARGUMENTS else "nothing yet"
+
+    if not opponent_last:
+        prompt = (
+            f"The debate question is: {topic}\n"
+            f"You are arguing the {label} side. You believe that {stance}.\n\n"
+            "This is your opening. Say the one thing that most convinces you, and make it concrete: "
+            "a specific case, study, number, event or story with enough detail that a listener could "
+            "go look it up afterwards. Then say plainly what it means for the question.\n\n"
+            f"Speak for roughly {target_words} words. Talk like a person on a podcast, warm, direct, "
+            "using contractions. Start with the substance in your very first sentence. Do not greet "
+            "anyone, do not name your side, do not describe what you are about to say."
+        )
     else:
-        return f"Looking at {topic}, I am on the God does not exist side because the real world data fits better. Take a concrete case of {topic}, the God exists explanation sounds nice but breaks when tested. God does not exist explains it."
+        prompt = (
+            f"The debate question is: {topic}\n"
+            f"You are arguing the {label} side. You believe that {stance}.\n\n"
+            f"Your opponent on the {other} side just finished saying this:\n"
+            f"\"{opponent_last[:1200]}\"\n\n"
+            "Answer them the way a real debater does, as one flowing spoken paragraph with no "
+            "headings and no numbering:\n"
+            "- Open by repeating back a few of their own words, the specific claim they made, and "
+            "say straight away why it doesn't hold.\n"
+            "- Give the counter-evidence: a specific case, figure or example that cuts against it.\n"
+            "- Then push forward with one fresh reason for your own side that hasn't come up yet.\n\n"
+            f"Points already used in this debate, so find something new: {used_str}\n\n"
+            f"Speak for roughly {target_words} words. Contractions, plain speech, some edge to it. "
+            "Your first sentence must already be engaging what they said. Never announce that you "
+            "are about to respond, counter, address or discuss anything."
+        )
 
-def generate_turn(role_key, topic, round_num, turn_num, prev_history, model, role_label, role_desc, opponent_label, opponent_desc):
-    global USED_ARGUMENTS
-    used_str="; ".join(list(USED_ARGUMENTS)[-5:])[:180] if USED_ARGUMENTS else "none"
-    prev_snip=prev_history[-500:] if prev_history else ""
+    for m in [model] + FALLBACK_MODELS[:4]:
+        resp = query_openrouter(prompt, m, max_tokens=900,
+                                temperature=0.84 + random.random() * 0.08)
+        if not resp:
+            continue
+        cleaned = strip_meta(resp)
+        if count_words(cleaned) < max(60, target_words - 45):
+            continue
+        low = cleaned.lower()
+        if any(frag in low for frag in LEAK_FRAGMENTS):
+            continue
 
-    tl=topic.lower()
-    # Human natural instructions - no leak words
-    if "DOESN'T" in role_label.upper() or "DOESNT" in role_label.upper() or "NO" in role_label.upper():
-        side_name = "God does not exist side"
-        belief = "you believe God does not exist"
-        pronoun = "God does not exist"
-    else:
-        side_name = "God exists side"
-        belief = "you believe God exists"
-        pronoun = "God exists"
+        repeated = False
+        for used in USED_ARGUMENTS:
+            if len(used) > 40 and used.lower() in low:
+                repeated = True
+                break
+        if repeated:
+            continue
 
-    if round_num==1 and turn_num==1:
-        prompt=f"""Question {topic}. {belief}. You are on the {side_name}.
+        cleaned = trim_to_words(cleaned, target_words + 25)
+        for s in re.split(r"(?<=[.!?])\s+", cleaned)[:3]:
+            if len(s) > 40:
+                USED_ARGUMENTS.add(s[:90])
+        return cleaned
 
-Share one personal real example or evidence that convinced you {pronoun}. Make it human, warm, conversational like talking to a friend, with contractions and natural pauses. About {MIN_TURN_WORDS} words. Start directly with your example, no intro like I will explain.
-
-Do not say thinking process, analyze, step 1, task, constraints, relevant points, arguing YES.
-
-Not used before: {used_str}
-"""
-    else:
-        prompt=f"""Question {topic}. {belief}. You are on the {side_name}.
-Other side said: {prev_snip[:400]}
-
-First, reply naturally to what they just said. Mention one thing they said and why you see it differently with a specific fact.
-
-Then add one new piece of evidence for {pronoun} you have not used yet.
-
-Speak like a real person, warm, human, contractions. About {MIN_TURN_WORDS} words. No robotic phrases. No saying thinking process or steps.
-
-Not used: {used_str}
-"""
-
-    for m in [model]+FALLBACK_MODELS[:4]:
-        resp=query_openrouter(prompt,m,max_tokens=780,temperature=0.84+random.random()*0.08)
-        if resp and count_words(resp)>=110:
-            cleaned=strip_filler(resp)
-            cleaned=re.sub(r"\s+"," ",cleaned).strip()
-
-            # Remove thinking aloud and robotic leaks seen in screenshot
-            leak_patterns=[
-                r"Here's a thinking process.*?(\.|$)",
-                r"thinking process.*?(\.|$)",
-                r"1\.\s*Analyze.*?(\.|$)",
-                r"Step 1.*?(\.|$)",
-                r"Let me think.*?(\.|$)",
-                r"I need to.*?(\.|$)",
-                r"My thinking.*?(\.|$)",
-                r"Constraints.*?(\.|$)",
-                r"Relevant points.*?(\.|$)",
-                r"Arguing YES.*?(\.|$)",
-                r"Position\s*\..*?(\.|$)",
-                r"User Constraints.*?(\.|$)",
-                r"As an? (affirmative|negative).*?(\.|$)",
-                r"Points?\s*slash.*?(\.|$)",
-            ]
-            for pat in leak_patterns:
-                cleaned=re.sub(pat,"",cleaned,flags=re.IGNORECASE)
-
-            cleaned=re.sub(r"\s+"," ",cleaned).strip()
-            if not cleaned.endswith(('.', '!', '?')): cleaned+="."
-
-            low=cleaned.lower()
-            if "thinking process" in low or "here's a thinking" in low or "1. analyze" in low:
-                continue
-            if len(low)<90: continue
-            if count_words(cleaned) < MIN_TURN_WORDS-15:
-                continue
-
-            is_rep=False
-            for used in USED_ARGUMENTS:
-                if len(used)>35 and used.lower() in low:
-                    is_rep=True; break
-            if not is_rep:
-                for s in cleaned.split('. ')[:2]:
-                    if len(s)>30: USED_ARGUMENTS.add(s[:80])
-                return cleaned[:1700]
-
-    fb=generate_fallback_debate(role_label, topic, round_num, turn_num)
-    USED_ARGUMENTS.add(fb[:80])
+    fb = generate_fallback_debate(roles, side, topic, opponent_last, target_words)
+    USED_ARGUMENTS.add(fb[:90])
     return fb
 
-def build_round_exchanges(topic, rn, ap_model, sk_model, prev, roles):
-    a_turns=[]; s_turns=[]; hist=prev
-    for tn in range(1,TURNS_PER_SIDE_PER_ROUND+1):
-        a=generate_turn("A", topic, rn, tn, hist, ap_model, roles['side_a_label'], roles['side_a_desc'], roles['side_b_label'], roles['side_b_desc'])
-        a_turns.append(a); hist+=f"\n{roles['side_a_label']}: {a}\n"
-        s=generate_turn("B", topic, rn, tn, hist, sk_model, roles['side_b_label'], roles['side_b_desc'], roles['side_a_label'], roles['side_a_desc'])
-        s_turns.append(s); hist+=f"\n{roles['side_b_label']}: {s}\n"
-    # Balance YES NO same length
-    for i in range(len(a_turns)):
-        aw=count_words(a_turns[i]); bw=count_words(s_turns[i])
-        if abs(aw-bw)>20:
-            avg=(aw+bw)//2
-            if aw>avg+10:
-                a_turns[i]=" ".join(a_turns[i].split()[:avg+5])+"."
-            if bw>avg+10:
-                s_turns[i]=" ".join(s_turns[i].split()[:avg+5])+"."
-    return a_turns,s_turns,hist
+
+# ----------------------------------------------------------------------------
+# Judging
+# ----------------------------------------------------------------------------
 
 def neutral_judge(model):
-    a=random.uniform(53,68); b=random.uniform(53,68)
-    if abs(a-b)<4:
-        if random.random()>0.5: a+=7
-        else: b+=7
-    return {"model":model,"provider":provider_from_model(model),"display_name":get_judge_short_name(model),"A_total":round(a,1),"B_total":round(b,1),"winner":"A" if a>b else "B"}
+    a = random.uniform(53, 68)
+    b = random.uniform(53, 68)
+    if abs(a - b) < 4:
+        if random.random() > 0.5:
+            a += 7
+        else:
+            b += 7
+    return {"model": model, "provider": provider_from_model(model),
+            "display_name": get_judge_short_name(model),
+            "A_total": round(a, 1), "B_total": round(b, 1),
+            "winner": "A" if a > b else "B", "reason": ""}
 
-def judge_round(model,topic,rn,ap,sk,roles):
-    prompt=f'Judge round {rn} about {topic}. {roles["side_a_label"]} says {ap[:600]} vs {roles["side_b_label"]} says {sk[:600]}. Score 0 to 100. Return ONLY JSON {{"A_total":80,"B_total":70,"winner":"A","reason":"one human sentence why"}} Not equal. Be human, not robotic.'
-    for m in [model]+FALLBACK_MODELS[:2]:
-        if ":free" not in m: continue
-        resp=query_openrouter(prompt,m,timeout=35,max_tokens=300,temperature=0.6)
-        if not resp: continue
+
+def judge_round(model, topic, rn, ap, sk, roles):
+    prompt = (
+        f"You are judging round {rn} of a debate on: {topic}\n\n"
+        f"{roles['side_a_label']} argued:\n{ap[:2000]}\n\n"
+        f"{roles['side_b_label']} argued:\n{sk[:2000]}\n\n"
+        "Score each side from 0 to 100 on how well they used evidence and how directly they "
+        "answered the other side. The two scores must not be equal.\n"
+        'Return ONLY JSON: {"A_total": 0, "B_total": 0, "winner": "A", '
+        '"reason": "one spoken sentence naming the specific point that decided it"}'
+    )
+    for m in [model] + FALLBACK_MODELS[:2]:
+        if ":free" not in m:
+            continue
+        resp = query_openrouter(prompt, m, timeout=40, max_tokens=320, temperature=0.5,
+                                system="You return only valid JSON. No commentary.")
+        d = extract_json_object(resp)
+        if not d:
+            continue
         try:
-            mm=re.search(r"\{{.*\}}",resp,re.DOTALL)
-            if not mm: continue
-            d=json.loads(mm.group(0).replace("'",'"'))
-            a=clamp_score(d.get("A_total")); b=clamp_score(d.get("B_total"))
-            if abs(a-b)<1.5:
-                if random.random()>0.5: a+=3
-                else: b+=3
-            return {"model":model,"provider":provider_from_model(model),"display_name":get_judge_short_name(model),"A_total":round(a,1),"B_total":round(b,1),"winner":"A" if a>b else "B","reason":str(d.get("reason",""))[:150]}
-        except: continue
+            a = clamp_score(d.get("A_total"))
+            b = clamp_score(d.get("B_total"))
+        except Exception:
+            continue
+        if abs(a - b) < 1.5:
+            if random.random() > 0.5:
+                a += 3
+            else:
+                b += 3
+            a, b = clamp_score(a), clamp_score(b)
+        return {"model": model, "provider": provider_from_model(model),
+                "display_name": get_judge_short_name(model),
+                "A_total": round(a, 1), "B_total": round(b, 1),
+                "winner": "A" if a > b else "B",
+                "reason": str(d.get("reason", ""))[:200]}
     return neutral_judge(model)
 
-def evaluate_round(judges,topic,rn,ap,sk,roles):
-    results=[]
-    def worker(m): return judge_round(m,topic,rn,ap,sk,roles)
-    with concurrent.futures.ThreadPoolExecutor(max_workers=min(7,len(judges))) as ex:
-        futs={ex.submit(worker,m):m for m in judges}
+
+def evaluate_round(judges, topic, rn, ap, sk, roles):
+    results = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(7, len(judges))) as ex:
+        futs = {ex.submit(judge_round, m, topic, rn, ap, sk, roles): m for m in judges}
         for f in concurrent.futures.as_completed(futs):
-            try: r=f.result(); results.append(r)
-            except: pass
-    if len(results)<3:
+            try:
+                results.append(f.result())
+            except Exception:
+                pass
+    if len(results) < 3:
         for m in FALLBACK_MODELS:
-            if len(results)>=5: break
-            if m not in [x['model'] for x in results]: results.append(neutral_judge(m))
+            if len(results) >= 5:
+                break
+            if m not in [x["model"] for x in results]:
+                results.append(neutral_judge(m))
+    results.sort(key=lambda r: r["display_name"])
     return results
 
+
 def calculate_round_average(res):
-    return round(sum(r["A_total"] for r in res)/len(res),2), round(sum(r["B_total"] for r in res)/len(res),2)
+    return (round(sum(r["A_total"] for r in res) / len(res), 2),
+            round(sum(r["B_total"] for r in res) / len(res), 2))
+
+
+def generate_panel_commentary(model, side, topic, rn, a_text, b_text, roles):
+    """A judge who actually scored `side` ahead explains, briefly, why."""
+    name = get_judge_short_name(model)
+    winner = roles["side_a_label"] if side == "A" else roles["side_b_label"]
+    loser = roles["side_b_label"] if side == "A" else roles["side_a_label"]
+    win_text = a_text if side == "A" else b_text
+    lose_text = b_text if side == "A" else a_text
+
+    def tail(t, mw=220):
+        wl = t.split()
+        return t if len(wl) <= mw else " ".join(wl[-mw:])
+
+    prompt = (
+        f"You are {name}, one of the judges on a debate about: {topic}\n"
+        f"You have just scored round {rn} and you had {winner} ahead of {loser}.\n\n"
+        f"What {winner} said:\n{tail(win_text)}\n\n"
+        f"What {loser} said:\n{tail(lose_text)}\n\n"
+        "Say out loud, in two or three short sentences, why it went that way for you. Name the "
+        "actual thing the winning side said, repeat a phrase of theirs back, and say the specific "
+        "question the other side left sitting there unanswered.\n"
+        f"About {COMMENTARY_WORDS} words. Talk like a person reacting, not like a report. "
+        "No scores, no numbers, no round number, no preamble, no describing what you are doing."
+    )
+    resp = query_openrouter(prompt, model, timeout=40, max_tokens=320, temperature=0.88)
+    if resp:
+        cleaned = strip_meta(resp)
+        if count_words(cleaned) >= 18:
+            key = cleaned.lower()[:80]
+            if key not in USED_JUDGE_EXPLANATIONS:
+                USED_JUDGE_EXPLANATIONS.add(key)
+                return trim_to_words(cleaned, COMMENTARY_WORDS + 30)
+
+    snippet = ""
+    if win_text:
+        s = re.split(r"(?<=[.!?])\s+", win_text.strip())
+        if s:
+            snippet = " ".join(s[-1].split()[:16]).rstrip(",.;:")
+    fallback = (
+        f"What settled it for me was {winner.lower()} putting something concrete on the table, "
+        f"{snippet}. That's checkable, and nobody checked it. "
+        f"{loser.title()} had the better phrasing but never came back to that point, and on a "
+        f"question like {topic} the side that answers wins the round."
+    )
+    USED_JUDGE_EXPLANATIONS.add(fallback.lower()[:80])
+    return fallback
+
+
+# ----------------------------------------------------------------------------
+# Visuals
+# ----------------------------------------------------------------------------
 
 def emoji_to_codepoint(ec):
-    codes=[]
+    codes = []
     for ch in ec:
-        cp=ord(ch)
-        if cp==0xfe0f: continue
+        cp = ord(ch)
+        if cp == 0xfe0f:
+            continue
         codes.append(f"{cp:x}")
     return "-".join(codes)
 
-EMOJI_CACHE_DIR="emoji_cache"
+
+EMOJI_CACHE_DIR = "emoji_cache"
 os.makedirs(EMOJI_CACHE_DIR, exist_ok=True)
+# If the emoji CDN is unreachable, stop retrying it on every later segment.
+EMOJI_CDN_OK = True
+
 
 def create_emoji_asset(ec, idx):
-    fn=f"emoji_{idx}.png"
-    size=500
+    global EMOJI_CDN_OK
+    fn = f"emoji_{idx}.png"
+    size = 500
     try:
-        code=emoji_to_codepoint(ec)
-        url=f"https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/{code}.png"
-        cached=os.path.join(EMOJI_CACHE_DIR, f"{code}.png")
-        img_data=None
+        code = emoji_to_codepoint(ec)
+        url = f"https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/{code}.png"
+        cached = os.path.join(EMOJI_CACHE_DIR, f"{code}.png")
+        img_data = None
         if os.path.exists(cached):
-            try: img_data=Image.open(cached).convert("RGBA")
-            except: pass
-        if img_data is None:
             try:
-                resp=requests.get(url, timeout=8)
-                if resp.status_code==200 and len(resp.content)>500:
-                    img_data=Image.open(BytesIO(resp.content)).convert("RGBA")
+                img_data = Image.open(cached).convert("RGBA")
+            except Exception:
+                pass
+        if img_data is None and EMOJI_CDN_OK:
+            try:
+                resp = requests.get(url, timeout=8)
+                if resp.status_code == 200 and len(resp.content) > 500:
+                    img_data = Image.open(BytesIO(resp.content)).convert("RGBA")
                     img_data.save(cached)
-            except: pass
-        if img_data is not None and img_data.size[0]>10:
-            canvas=Image.new("RGBA",(size,size),(0,0,0,0))
-            resized=img_data.resize((380,380), Image.LANCZOS)
-            x=(size-380)//2; y=(size-380)//2
-            shadow=Image.new("RGBA",(size,size),(0,0,0,0))
-            d=ImageDraw.Draw(shadow)
-            d.ellipse([x+6,y+6,x+380+6,y+380+6], fill=(0,0,0,60))
-            shadow=shadow.filter(ImageFilter.GaussianBlur(6))
-            canvas=Image.alpha_composite(canvas, shadow)
-            canvas.paste(resized, (x,y), resized)
+            except requests.exceptions.RequestException:
+                EMOJI_CDN_OK = False
+                print("Emoji CDN unreachable, using drawn fallbacks for the rest of the build.")
+            except Exception:
+                pass
+        if img_data is not None and img_data.size[0] > 10:
+            canvas = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+            resized = img_data.resize((380, 380), Image.LANCZOS)
+            x = (size - 380) // 2
+            y = (size - 380) // 2
+            shadow = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+            d = ImageDraw.Draw(shadow)
+            d.ellipse([x + 6, y + 6, x + 386, y + 386], fill=(0, 0, 0, 60))
+            shadow = shadow.filter(ImageFilter.GaussianBlur(6))
+            canvas = Image.alpha_composite(canvas, shadow)
+            canvas.paste(resized, (x, y), resized)
             canvas.save(fn)
             return fn
-    except: pass
+    except Exception:
+        pass
     try:
-        canvas=Image.new("RGBA",(size,size),(0,0,0,0))
-        draw=ImageDraw.Draw(canvas)
-        font=load_font(80,bold=True)
-        draw.ellipse([50,50,450,450], fill=(60,60,90,220), outline=(255,215,0,200), width=4)
-        draw.text((250,250), ec[:2], font=font, fill=(255,255,255,255), anchor="mm")
-        canvas.save(fn); return fn
-    except:
-        Image.new("RGBA",(size,size),(0,0,0,0)).save(fn); return fn
+        canvas = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(canvas)
+        font = load_font(80, bold=True)
+        draw.ellipse([50, 50, 450, 450], fill=(60, 60, 90, 220), outline=(255, 215, 0, 200), width=4)
+        draw.text((250, 250), ec[:2], font=font, fill=(255, 255, 255, 255), anchor="mm")
+        canvas.save(fn)
+        return fn
+    except Exception:
+        Image.new("RGBA", (size, size), (0, 0, 0, 0)).save(fn)
+        return fn
 
-def create_background(pos,glow,fn):
-    source=os.path.join(os.path.dirname(os.path.abspath(__file__)),"background.png")
+
+def create_background(pos, glow, fn):
+    source = os.path.join(os.path.dirname(os.path.abspath(__file__)), "background.png")
     if os.path.exists(source):
         try:
-            im=Image.open(source).convert("RGB").resize((VIDEO_W,VIDEO_H),Image.LANCZOS)
+            im = Image.open(source).convert("RGB").resize((VIDEO_W, VIDEO_H), Image.LANCZOS)
             im.save(fn)
             return
-        except: pass
-    img=Image.new("RGBA",(VIDEO_W,VIDEO_H),(8,10,20,255))
-    draw=ImageDraw.Draw(img)
+        except Exception:
+            pass
+    img = Image.new("RGBA", (VIDEO_W, VIDEO_H), (8, 10, 20, 255))
+    draw = ImageDraw.Draw(img)
     for y in range(VIDEO_H):
-        r=int(8+12*y/VIDEO_H); g=int(10+18*y/VIDEO_H); b=int(20+35*y/VIDEO_H)
-        draw.line([0,y,VIDEO_W,y], fill=(r,g,b,255))
-    cx=VIDEO_W*0.22 if pos=="left" else VIDEO_W*0.78 if pos=="right" else VIDEO_W*0.5
-    cy=VIDEO_H*0.72
-    for rad in range(200,20,-20):
-        alpha=int(12*(1-rad/200))
-        draw.ellipse([cx-rad, cy-rad, cx+rad, cy+rad], fill=(*hex_to_rgba(glow, alpha)[:3], alpha))
-    vignette=Image.new("RGBA",(VIDEO_W,VIDEO_H),(0,0,0,0))
-    vd=ImageDraw.Draw(vignette)
+        r = int(8 + 12 * y / VIDEO_H)
+        g = int(10 + 18 * y / VIDEO_H)
+        b = int(20 + 35 * y / VIDEO_H)
+        draw.line([0, y, VIDEO_W, y], fill=(r, g, b, 255))
+    cx = VIDEO_W * 0.22 if pos == "left" else VIDEO_W * 0.78 if pos == "right" else VIDEO_W * 0.5
+    cy = VIDEO_H * 0.72
+    for rad in range(200, 20, -20):
+        alpha = int(12 * (1 - rad / 200))
+        draw.ellipse([cx - rad, cy - rad, cx + rad, cy + rad],
+                     fill=(*hex_to_rgba(glow, alpha)[:3], alpha))
+    vignette = Image.new("RGBA", (VIDEO_W, VIDEO_H), (0, 0, 0, 0))
+    vd = ImageDraw.Draw(vignette)
     for i in range(120):
-        a=int(90*(i/120)**2)
-        vd.rectangle([i,i,VIDEO_W-i,VIDEO_H-i], outline=(0,0,0,a), width=1)
-    img=Image.alpha_composite(img, vignette)
+        a = int(90 * (i / 120) ** 2)
+        vd.rectangle([i, i, VIDEO_W - i, VIDEO_H - i], outline=(0, 0, 0, a), width=1)
+    img = Image.alpha_composite(img, vignette)
     img.filter(ImageFilter.GaussianBlur(0.6)).save(fn)
 
-def create_ui_overlay(name,topic,pos,glow,fn):
-    img=Image.new("RGBA",(VIDEO_W,VIDEO_H),(0,0,0,0))
-    draw=ImageDraw.Draw(img)
-    bold=load_font(44,bold=True); small=load_font(22,bold=True)
-    x=90 if pos=="left" else VIDEO_W-90 if pos=="right" else VIDEO_W//2
-    anchor="lm" if pos=="left" else "rm" if pos=="right" else "mm"
-    y=VIDEO_H-105
-    bbox=draw.textbbox((0,0), name, font=bold, anchor=anchor)
-    pad=18
-    if anchor=="lm": rx0=x-pad; rx1=x+(bbox[2]-bbox[0])+pad*2
-    elif anchor=="rm": rx0=x-(bbox[2]-bbox[0])-pad*2; rx1=x+pad
-    else: rx0=x-(bbox[2]-bbox[0])//2-pad; rx1=x+(bbox[2]-bbox[0])//2+pad
-    ry0=y+bbox[1]-pad; ry1=y+bbox[3]+pad
-    draw.rounded_rectangle([rx0,ry0,rx1,ry1], fill=(0,0,0,185), outline=hex_to_rgba(glow,230), width=2)
-    dot_r=10; dx=rx0-18 if anchor!="rm" else rx1+18; dy=(ry0+ry1)//2
-    draw.ellipse([dx-dot_r-6, dy-dot_r-6, dx+dot_r+6, dy+dot_r+6], fill=hex_to_rgba(glow,70))
-    draw.ellipse([dx-dot_r, dy-dot_r, dx+dot_r, dy+dot_r], fill=hex_to_rgba(glow,255))
-    draw.text((x,y), name, font=bold, fill=(255,255,255,255), anchor=anchor)
-    draw.text((VIDEO_W//2, 70), topic[:90], font=small, fill=(255,255,255,180), anchor="mm")
+
+def create_ui_overlay(name, topic, pos, glow, fn):
+    """Name card with a dedicated strip underneath the text for the audio bar.
+
+    Returns the exact rectangle the waveform must be drawn into, so it can never
+    land on top of the name.
+    """
+    img = Image.new("RGBA", (VIDEO_W, VIDEO_H), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+    name_font = load_font(40, bold=True)
+    topic_font = load_font(24, bold=True)
+
+    label = name if len(name) <= 44 else name[:42].rstrip() + ".."
+    tb = draw.textbbox((0, 0), label, font=name_font)
+    text_w = tb[2] - tb[0]
+    text_h = tb[3] - tb[1]
+
+    pad_x, pad_top, pad_bottom = 26, 20, 18
+    gap = 14                 # clear space between the name and the audio bar
+    wave_h = 26
+    dot_slot = 40            # room for the "live" dot ahead of the name
+
+    inner_w = dot_slot + text_w
+    card_w = max(inner_w + pad_x * 2, 380)
+    card_h = pad_top + text_h + gap + wave_h + pad_bottom
+    card_bottom = VIDEO_H - 56
+    card_top = card_bottom - card_h
+
+    if pos == "left":
+        card_left = 90
+    elif pos == "right":
+        card_left = VIDEO_W - 90 - card_w
+    else:
+        card_left = (VIDEO_W - card_w) // 2
+    card_right = card_left + card_w
+
+    draw.rounded_rectangle([card_left, card_top, card_right, card_bottom],
+                           radius=16, fill=(0, 0, 0, 195),
+                           outline=hex_to_rgba(glow, 235), width=2)
+
+    # Live dot, inside the card so it can never run off the edge of the frame.
+    dot_r = 9
+    dot_cx = card_left + pad_x + dot_r + 2
+    dot_cy = card_top + pad_top + text_h // 2
+    draw.ellipse([dot_cx - dot_r - 6, dot_cy - dot_r - 6, dot_cx + dot_r + 6, dot_cy + dot_r + 6],
+                 fill=hex_to_rgba(glow, 70))
+    draw.ellipse([dot_cx - dot_r, dot_cy - dot_r, dot_cx + dot_r, dot_cy + dot_r],
+                 fill=hex_to_rgba(glow, 255))
+
+    text_x = card_left + pad_x + dot_slot
+    text_y = card_top + pad_top - tb[1]
+    draw.text((text_x, text_y), label, font=name_font, fill=(255, 255, 255, 255))
+
+    # Faint rail the waveform sits on, entirely below the text row.
+    wave_x = card_left + pad_x
+    wave_y = card_top + pad_top + text_h + gap
+    wave_w = card_w - pad_x * 2
+    rail_y = wave_y + wave_h // 2
+    draw.line([wave_x, rail_y, wave_x + wave_w, rail_y], fill=hex_to_rgba(glow, 55), width=2)
+
+    topic_text = topic if len(topic) <= 90 else topic[:88] + ".."
+    draw.text((VIDEO_W // 2, 66), topic_text, font=topic_font, fill=(255, 255, 255, 185), anchor="mm")
+
     img.save(fn)
-    return x,y,rx0,ry0,rx1,ry1
+    return {"wave_x": int(wave_x), "wave_y": int(wave_y),
+            "wave_w": int(wave_w), "wave_h": int(wave_h)}
+
 
 def get_audio_duration(p):
     try:
-        r=subprocess.run(["ffprobe","-v","error","-show_entries","format=duration","-of","default=noprint_wrappers=1:nokey=1",p],stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,timeout=10)
+        r = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                            "-of", "default=noprint_wrappers=1:nokey=1", p],
+                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=15)
         return float(r.stdout.strip())
-    except: return 0.0
+    except Exception:
+        return 0.0
+
 
 def format_ass_time(s):
-    h=int(s//3600); m=int((s%3600)//60); sec=int(s%60); cs=int((s-int(s))*100)
+    h = int(s // 3600)
+    m = int((s % 3600) // 60)
+    sec = int(s % 60)
+    cs = int((s - int(s)) * 100)
     return f"{h}:{m:02d}:{sec:02d}.{cs:02d}"
 
-def ass_escape(t):
-    return t.replace("\\","\\\\").replace("{","\{").replace("}","\}")
 
-def generate_subtitles(words,fn,scorecard=False,audio_file=None,full_text=None):
-    header="[Script Info]\nScriptType: v4.00+\nPlayResX: 1920\nPlayResY: 1080\nWrapStyle: 0\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: DebateSub,DejaVu Sans,42,&H00FFFFFF,&H00FFFFFF,&H00000000,&HAA000000,1,0,0,0,100,100,0,0,1,3,1,2,120,120,80,1\nStyle: ScoreSub,DejaVu Sans,36,&H00FFFFFF,&H00FFFFFF,&H00000000,&HAA000000,1,0,0,0,100,100,0,0,1,2,1,2,80,80,40,1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
-    events=[]
+def ass_escape(t):
+    return t.replace("\\", "\\\\").replace("{", r"\{").replace("}", r"\}")
+
+
+def generate_subtitles(words, fn, scorecard=False, audio_file=None, full_text=None):
+    header = ("[Script Info]\nScriptType: v4.00+\nPlayResX: 1920\nPlayResY: 1080\nWrapStyle: 0\n\n"
+              "[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, "
+              "OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, "
+              "Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, "
+              "Encoding\n"
+              "Style: DebateSub,DejaVu Sans,42,&H00FFFFFF,&H00FFFFFF,&H00000000,&HAA000000,1,0,0,0,"
+              "100,100,0,0,1,3,1,2,120,120,80,1\n"
+              "Style: ScoreSub,DejaVu Sans,36,&H00FFFFFF,&H00FFFFFF,&H00000000,&HAA000000,1,0,0,0,"
+              "100,100,0,0,1,2,1,2,80,80,40,1\n\n"
+              "[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n")
+    events = []
     if scorecard and audio_file and full_text:
-        dur=get_audio_duration(audio_file) or 6.0
+        dur = get_audio_duration(audio_file) or 6.0
         events.append(f"Dialogue: 0,0:00:00.00,{format_ass_time(dur)},ScoreSub,,0,0,0,,{ass_escape(full_text)}")
-        open(fn,"w",encoding="utf-8").write(header+"\n".join(events)+"\n")
+        open(fn, "w", encoding="utf-8").write(header + "\n".join(events) + "\n")
         return
     if not words:
-        open(fn,"w",encoding="utf-8").write(header)
+        open(fn, "w", encoding="utf-8").write(header)
         return
     if audio_file:
         try:
-            actual=get_audio_duration(audio_file)
-            if actual>1 and words:
-                est=words[-1].get("end",actual)
-                if abs(est-actual)>0.5 and est>0:
-                    scale=actual/est
-                    for w in words: w["start"]*=scale; w["end"]*=scale
-        except: pass
-    chunk=[]; last_end=0
+            actual = get_audio_duration(audio_file)
+            if actual > 1 and words:
+                est = words[-1].get("end", actual)
+                if abs(est - actual) > 0.5 and est > 0:
+                    scale = actual / est
+                    for w in words:
+                        w["start"] *= scale
+                        w["end"] *= scale
+        except Exception:
+            pass
+
+    def emit(chunk, end):
+        s = chunk[0]["start"]
+        txt = "\\N".join([" ".join([ass_escape(c["text"]) for c in chunk[i:i + 10]])
+                          for i in range(0, len(chunk), 10)][:4])
+        events.append(f"Dialogue: 0,{format_ass_time(s)},{format_ass_time(end)},DebateSub,,0,0,0,,"
+                      f"{{\\an2\\pos(960,790)\\q2\\fad(120,120)}}{txt}")
+
+    chunk = []
+    last_end = 0
     for w in words:
         if not chunk:
-            chunk=[w]; last_end=w["end"]
-        elif w["start"]-last_end>0.6 or len(chunk)>=7:
-            s=chunk[0]["start"]; e=last_end
-            txt="\\N".join([" ".join([ass_escape(c["text"]) for c in chunk[i:i+10]]) for i in range(0,len(chunk),10)][:4])
-            events.append(f"Dialogue: 0,{format_ass_time(s)},{format_ass_time(e)},DebateSub,,0,0,0,,{{\\an2\\pos(960,800)\\q2\\fad(120,120)}}{txt}")
-            chunk=[w]; last_end=w["end"]
+            chunk = [w]
+            last_end = w["end"]
+        elif w["start"] - last_end > 0.6 or len(chunk) >= 7:
+            emit(chunk, last_end)
+            chunk = [w]
+            last_end = w["end"]
         else:
-            chunk.append(w); last_end=w["end"]
+            chunk.append(w)
+            last_end = w["end"]
     if chunk:
-        s=chunk[0]["start"]; e=last_end
-        txt="\\N".join([" ".join([ass_escape(c["text"]) for c in chunk[i:i+10]]) for i in range(0,len(chunk),10)][:4])
-        events.append(f"Dialogue: 0,{format_ass_time(s)},{format_ass_time(e)},DebateSub,,0,0,0,,{{\\an2\\pos(960,800)\\q2\\fad(120,120)}}{txt}")
-    open(fn,"w",encoding="utf-8").write(header+"\n".join(events)+"\n")
+        emit(chunk, last_end)
+    open(fn, "w", encoding="utf-8").write(header + "\n".join(events) + "\n")
 
-async def generate_audio_async(text,voice,fn):
-    ct=clean_for_speech(text)
+
+async def generate_audio_async(text, voice, fn):
+    ct = clean_for_speech(text)
     if "Brian" in voice:
-        ssml=f"<speak version='1.0' xml:lang='en-US'><voice name='{voice}'><prosody rate='-2%' pitch='-2%'>{ct}</prosody></voice></speak>"
+        ssml = f"<speak version='1.0' xml:lang='en-US'><voice name='{voice}'><prosody rate='-2%' pitch='-2%'>{ct}</prosody></voice></speak>"
     elif "Ava" in voice:
-        ssml=f"<speak version='1.0' xml:lang='en-US'><voice name='{voice}'><prosody rate='+1%' pitch='+1%'>{ct}</prosody></voice></speak>"
+        ssml = f"<speak version='1.0' xml:lang='en-US'><voice name='{voice}'><prosody rate='+1%' pitch='+1%'>{ct}</prosody></voice></speak>"
     else:
-        ssml=f"<speak version='1.0' xml:lang='en-US'><voice name='{voice}'><prosody rate='+0%'>{ct}</prosody></voice></speak>"
+        ssml = f"<speak version='1.0' xml:lang='en-US'><voice name='{voice}'><prosody rate='+0%'>{ct}</prosody></voice></speak>"
     try:
-        com=edge_tts.Communicate(ssml,voice)
-        audio=b""; words=[]
+        com = edge_tts.Communicate(ssml, voice)
+        audio = b""
+        words = []
         async for chunk in com.stream():
-            if chunk["type"]=="audio": audio+=chunk["data"]
-            elif chunk["type"]=="WordBoundary":
-                s=chunk["offset"]/10_000_000; d=chunk["duration"]/10_000_000
-                words.append({"text":chunk["text"],"start":s,"duration":d,"end":s+d})
-        open(fn,"wb").write(audio)
-        if not words: raise Exception("no boundaries")
-        return words
-    except:
-        com=edge_tts.Communicate(ct,voice,rate="+1%")
-        audio=b""; words=[]
-        async for chunk in com.stream():
-            if chunk["type"]=="audio": audio+=chunk["data"]
-            elif chunk["type"]=="WordBoundary":
-                s=chunk["offset"]/10_000_000; d=chunk["duration"]/10_000_000
-                words.append({"text":chunk["text"],"start":s,"duration":d,"end":s+d})
-        open(fn,"wb").write(audio)
+            if chunk["type"] == "audio":
+                audio += chunk["data"]
+            elif chunk["type"] == "WordBoundary":
+                s = chunk["offset"] / 10_000_000
+                d = chunk["duration"] / 10_000_000
+                words.append({"text": chunk["text"], "start": s, "duration": d, "end": s + d})
+        open(fn, "wb").write(audio)
         if not words:
-            t=0
-            for tok in ct.split(): words.append({"text":tok,"start":t,"duration":0.38,"end":t+0.38}); t+=0.42
+            raise RuntimeError("no word boundaries")
+        return words
+    except Exception:
+        com = edge_tts.Communicate(ct, voice, rate="+1%")
+        audio = b""
+        words = []
+        async for chunk in com.stream():
+            if chunk["type"] == "audio":
+                audio += chunk["data"]
+            elif chunk["type"] == "WordBoundary":
+                s = chunk["offset"] / 10_000_000
+                d = chunk["duration"] / 10_000_000
+                words.append({"text": chunk["text"], "start": s, "duration": d, "end": s + d})
+        open(fn, "wb").write(audio)
+        if not words:
+            t = 0
+            for tok in ct.split():
+                words.append({"text": tok, "start": t, "duration": 0.38, "end": t + 0.38})
+                t += 0.42
         return words
 
-def generate_audio(text,role,fn,judge_voice_index=None):
-    role_up = role.upper().strip()
-    if "JUDGE" in role_up:
-        idx=judge_voice_index if judge_voice_index is not None else 0
-        voice=JUDGE_VOICES[idx % len(JUDGE_VOICES)]
-    elif "DOESN'T" in role_up or "DOESNT" in role_up or role_up=="NO" or "GOD DOES" in role_up and "N'T" in role_up:
-        voice=VOICES["GOD DOESN'T EXIST"]
-    elif "GOD EXISTS" in role_up or role_up=="YES":
-        voice=VOICES["GOD EXISTS"]
-    else:
-        voice=VOICES["Moderator"]
-    try: return asyncio.run(generate_audio_async(text,voice,fn))
-    except: return asyncio.run(generate_audio_async(text,VOICES["Moderator"],fn))
 
-def render_video_segment(bg_path,ui_path,audio_path,subs_path,output_path,position,glow,cx,cy,rx0,ry0,rx1,ry1,visual_plan):
-    duration=get_audio_duration(audio_path) or 10.0
-    cmd=["ffmpeg","-y","-loop","1","-i",bg_path,"-loop","1","-i",ui_path,"-i",audio_path]
-    filter_parts=[]
-    filter_parts.append(f"[0:v]scale={VIDEO_W}:{VIDEO_H}:flags=lanczos[bg]")
-    filter_parts.append(f"[1:v]scale={VIDEO_W}:{VIDEO_H}:flags=lanczos[ui]")
-    zoom="[bg]scale=iw*1.3:ih*1.3,crop=1920:1080:(iw-1920)/2-200:(ih-1080)/2[bg_zoom]" if position=="left" else "[bg]scale=iw*1.3:ih*1.3,crop=1920:1080:(iw-1920)/2+200:(ih-1080)/2[bg_zoom]" if position=="right" else "[bg]scale=iw*1.25:ih*1.25,crop=1920:1080:(iw-1920)/2:(ih-1080)/2[bg_zoom]"
-    filter_parts.append(zoom)
-    glow_hex=glow.lstrip('#')
-    wave_w = int((rx1-rx0)*0.85)
-    wave_h = 28
-    wave_x = rx0 + int((rx1-rx0)*0.07)
-    wave_y = cy + 32
-    if wave_y+wave_h > ry1-6: wave_y = ry1 - wave_h - 6
-    filter_parts.append(f"[2:a]aformat=channel_layouts=mono,compand=gain=-6,showwaves=s={wave_w}x{wave_h}:mode=cline:colors=0x{glow_hex}:rate=30:draw=full:scale=sqrt[wave_raw]")
-    filter_parts.append(f"[wave_raw]format=rgba,colorchannelmixer=aa=0.90[wave]")
-    filter_parts.append(f"[bg_zoom][ui]overlay=0:0:shortest=1[bg_ui]")
-    filter_parts.append(f"[bg_ui][wave]overlay={wave_x}:{wave_y}:shortest=1[bg_ui_wave]")
-    last_label="[bg_ui_wave]"
-    visual_inputs=[]
+def voice_for_slot(slot, judge_voice_index=None):
+    if slot == "A":
+        return SIDE_A_VOICE
+    if slot == "B":
+        return SIDE_B_VOICE
+    if slot == "JUDGE":
+        return JUDGE_VOICES[(judge_voice_index or 0) % len(JUDGE_VOICES)]
+    return MODERATOR_VOICE
+
+
+def generate_audio(text, slot, fn, judge_voice_index=None):
+    voice = voice_for_slot(slot, judge_voice_index)
+    try:
+        return asyncio.run(generate_audio_async(text, voice, fn))
+    except Exception:
+        return asyncio.run(generate_audio_async(text, MODERATOR_VOICE, fn))
+
+
+def render_video_segment(bg_path, ui_path, audio_path, subs_path, output_path,
+                         position, glow, wave_box, visual_plan):
+    duration = get_audio_duration(audio_path) or 10.0
+    cmd = ["ffmpeg", "-y", "-loop", "1", "-i", bg_path, "-loop", "1", "-i", ui_path, "-i", audio_path]
+    fp = []
+    fp.append(f"[0:v]scale={VIDEO_W}:{VIDEO_H}:flags=lanczos[bg]")
+    fp.append(f"[1:v]scale={VIDEO_W}:{VIDEO_H}:flags=lanczos[ui]")
+    if position == "left":
+        fp.append("[bg]scale=iw*1.3:ih*1.3,crop=1920:1080:(iw-1920)/2-200:(ih-1080)/2[bg_zoom]")
+    elif position == "right":
+        fp.append("[bg]scale=iw*1.3:ih*1.3,crop=1920:1080:(iw-1920)/2+200:(ih-1080)/2[bg_zoom]")
+    else:
+        fp.append("[bg]scale=iw*1.25:ih*1.25,crop=1920:1080:(iw-1920)/2:(ih-1080)/2[bg_zoom]")
+
+    glow_hex = glow.lstrip("#")
+    ww, wh = wave_box["wave_w"], wave_box["wave_h"]
+    wx, wy = wave_box["wave_x"], wave_box["wave_y"]
+    # showwaves paints on black; key the black out so only the bar itself shows.
+    fp.append(f"[2:a]aformat=channel_layouts=mono,compand=gain=-4,"
+              f"showwaves=s={ww}x{wh}:mode=cline:colors=0x{glow_hex}:rate={FPS}:draw=full:scale=sqrt,"
+              f"format=rgba,colorkey=0x000000:0.32:0.08[wave]")
+    fp.append("[bg_zoom][ui]overlay=0:0:shortest=1[bg_ui]")
+    fp.append(f"[bg_ui][wave]overlay={wx}:{wy}:shortest=1[stage]")
+
+    last = "[stage]"
+    visual_inputs = []
     for idx, vis in enumerate(visual_plan):
         try:
-            ec=vis.get("emoji","💭") if isinstance(vis, dict) else str(vis)
-            st=vis.get("start", idx*2.2) if isinstance(vis, dict) else idx*2.2
-            et=vis.get("end", st+3.2) if isinstance(vis, dict) else st+3.2
-            gp=create_emoji_asset(ec, idx+1000+random.randint(0,9999))
-        except:
-            gp=create_emoji_asset("💭", idx+1000+random.randint(0,9999))
-            st=idx*2.2; et=st+3.2
+            ec = vis.get("emoji", "\U0001F4AD") if isinstance(vis, dict) else str(vis)
+            st = vis.get("start", idx * 2.2) if isinstance(vis, dict) else idx * 2.2
+            et = vis.get("end", st + 3.2) if isinstance(vis, dict) else st + 3.2
+            gp = create_emoji_asset(ec, idx + 1000 + random.randint(0, 9999))
+        except Exception:
+            gp = create_emoji_asset("\U0001F4AD", idx + 1000 + random.randint(0, 9999))
+            st = idx * 2.2
+            et = st + 3.2
         visual_inputs.append((gp, st, et))
     for idx, (gp, st, et) in enumerate(visual_inputs):
-        filter_parts.append(f"[{3+idx}:v]scale={EMOJI_W}:{EMOJI_H}[v{idx}]")
-        vx=(VIDEO_W-EMOJI_W)//2; vy=(VIDEO_H-EMOJI_H)//2 - 50
-        nl=f"[tmp{idx}]"
-        filter_parts.append(f"{last_label}[v{idx}]overlay={vx}:{vy}:enable='between(t,{st:.2f},{et:.2f})'{nl}")
-        last_label=nl
-    safe_subs=subs_path.replace(":", "\\:")
-    filter_parts.append(f"{last_label}format=yuv420p,subtitles={safe_subs}[out]")
-    fc=";".join(filter_parts)
-    input_args=[]
-    for gp,_,_ in visual_inputs: input_args.extend(["-i", gp])
-    cmd.extend(input_args)
-    cmd.extend(["-filter_complex", fc, "-map", "[out]", "-map", "2:a", "-c:v", "libx264", "-c:a", "aac", "-shortest", "-t", str(duration+0.5), output_path])
-    r=subprocess.run(cmd,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
-    if r.returncode!=0:
+        fp.append(f"[{3 + idx}:v]scale={EMOJI_W}:{EMOJI_H}[v{idx}]")
+        vx = (VIDEO_W - EMOJI_W) // 2
+        vy = (VIDEO_H - EMOJI_H) // 2 - 50
+        nl = f"[tmp{idx}]"
+        fp.append(f"{last}[v{idx}]overlay={vx}:{vy}:enable='between(t,{st:.2f},{et:.2f})'{nl}")
+        last = nl
+
+    safe_subs = subs_path.replace(":", "\\:")
+    fp.append(f"{last}format=yuv420p,subtitles={safe_subs}[out]")
+
+    for gp, _, _ in visual_inputs:
+        cmd.extend(["-i", gp])
+    cmd.extend(["-filter_complex", ";".join(fp), "-map", "[out]", "-map", "2:a",
+                "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-r", str(FPS),
+                "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2",
+                "-shortest", "-t", str(duration + 0.5), output_path])
+    r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    if r.returncode != 0:
         print(r.stderr[-8000:])
         raise RuntimeError("Render failed")
-    for gp,_,_ in visual_inputs:
-        try: os.remove(gp)
-        except: pass
+    for gp, _, _ in visual_inputs:
+        try:
+            os.remove(gp)
+        except OSError:
+            pass
+    return duration
 
-def generate_scoreboard(rn,res,avg_a,avg_b,cum_a,cum_b,path,roles):
-    W=VIDEO_W; H=VIDEO_H
-    base=Image.new("RGB",(W,H),(12,16,32))
-    overlay=Image.new("RGBA",(W,H),(0,0,0,180))
-    img=Image.alpha_composite(base.convert("RGBA"),overlay).convert("RGB")
-    draw=ImageDraw.Draw(img)
-    ft=load_font(48,bold=True); fs=load_font(28,bold=True); fh=load_font(22,bold=True); fr=load_font(24)
-    draw.text((W//2,50),f"ROUND {rn} SCORES",font=ft,fill=(255,215,0,255),anchor="mt")
-    draw.text((W//2,115),f"{roles['side_a_label']}  vs  {roles['side_b_label']}",font=fs,fill=(255,255,255,230),anchor="mt")
-    hy=190; cx1=120; cx2=750; cx3=1050; cx4=1350
-    sa=roles['side_a_label'][:14]; sb=roles['side_b_label'][:14]
-    draw.rectangle([60,hy-10,W-60,hy+45],fill=(25,35,70,255),outline=(255,215,0,180),width=2)
-    draw.text((cx1,hy),"Judge",font=fh,fill=(255,255,255,230))
-    draw.text((cx2,hy),sa,font=fh,fill=(0,255,204,255))
-    draw.text((cx3,hy),sb,font=fh,fill=(255,120,255,255))
-    draw.text((cx4,hy),"Winner",font=fh,fill=(255,215,0,255))
-    y=hy+65
-    for idx,r in enumerate(res):
-        if idx%2==0: draw.rectangle([60,y-8,W-60,y+42],fill=(20,28,50,255))
-        else: draw.rectangle([60,y-8,W-60,y+42],fill=(15,22,40,255))
-        jt=f"{r['display_name']} ({r['provider']})"
-        if len(jt)>32: jt=jt[:30]+".."
-        draw.text((cx1,y),jt,font=fr,fill=(255,255,255,240))
-        draw.text((cx2,y),f"{r['A_total']:.1f}",font=fr,fill=(0,255,204,255))
-        draw.text((cx3,y),f"{r['B_total']:.1f}",font=fr,fill=(255,120,255,255))
-        wl=roles['side_a_label'] if r['winner']=="A" else roles['side_b_label']
-        col=(0,255,204,255) if r['winner']=="A" else (255,120,255,255)
-        draw.text((cx4,y),wl,font=fr,fill=col)
-        y+=58
-    draw.line([(60,y+5),(W-60,y+5)],fill=(255,255,255,60),width=2); y+=25
-    draw.text((W//2,y),f"Round Avg: {avg_a:.1f} vs {avg_b:.1f}",font=fs,fill=(255,255,255,255),anchor="mt")
-    draw.text((W//2,y+45),f"Cumulative: {cum_a:.1f} vs {cum_b:.1f}",font=fs,fill=(255,215,0,255),anchor="mt")
+
+def generate_scoreboard(rn, res, avg_a, avg_b, cum_a, cum_b, path, roles):
+    W, H = VIDEO_W, VIDEO_H
+    base = Image.new("RGB", (W, H), (12, 16, 32))
+    overlay = Image.new("RGBA", (W, H), (0, 0, 0, 180))
+    img = Image.alpha_composite(base.convert("RGBA"), overlay).convert("RGB")
+    draw = ImageDraw.Draw(img)
+    ft = load_font(48, bold=True)
+    fs = load_font(28, bold=True)
+    fh = load_font(22, bold=True)
+    fr = load_font(24)
+    draw.text((W // 2, 50), f"ROUND {rn} SCORES", font=ft, fill=(255, 215, 0), anchor="mt")
+    draw.text((W // 2, 115), f"{roles['side_a_label']}  vs  {roles['side_b_label']}",
+              font=fs, fill=(255, 255, 255), anchor="mt")
+    hy = 190
+    cx1, cx2, cx3, cx4 = 120, 750, 1050, 1350
+    sa = roles["side_a_label"][:14]
+    sb = roles["side_b_label"][:14]
+    draw.rectangle([60, hy - 10, W - 60, hy + 45], fill=(25, 35, 70), outline=(255, 215, 0), width=2)
+    draw.text((cx1, hy), "Judge", font=fh, fill=(255, 255, 255))
+    draw.text((cx2, hy), sa, font=fh, fill=(0, 255, 204))
+    draw.text((cx3, hy), sb, font=fh, fill=(255, 120, 255))
+    draw.text((cx4, hy), "Winner", font=fh, fill=(255, 215, 0))
+    y = hy + 65
+    for idx, r in enumerate(res):
+        draw.rectangle([60, y - 8, W - 60, y + 42],
+                       fill=(20, 28, 50) if idx % 2 == 0 else (15, 22, 40))
+        jt = f"{r['display_name']} ({r['provider']})"
+        if len(jt) > 32:
+            jt = jt[:30] + ".."
+        draw.text((cx1, y), jt, font=fr, fill=(255, 255, 255))
+        draw.text((cx2, y), f"{r['A_total']:.1f}", font=fr, fill=(0, 255, 204))
+        draw.text((cx3, y), f"{r['B_total']:.1f}", font=fr, fill=(255, 120, 255))
+        wl = roles["side_a_label"] if r["winner"] == "A" else roles["side_b_label"]
+        col = (0, 255, 204) if r["winner"] == "A" else (255, 120, 255)
+        draw.text((cx4, y), wl, font=fr, fill=col)
+        y += 58
+    draw.line([(60, y + 5), (W - 60, y + 5)], fill=(255, 255, 255), width=2)
+    y += 25
+    draw.text((W // 2, y), f"Round Avg: {avg_a:.1f} vs {avg_b:.1f}", font=fs, fill=(255, 255, 255), anchor="mt")
+    draw.text((W // 2, y + 45), f"Cumulative: {cum_a:.1f} vs {cum_b:.1f}", font=fs, fill=(255, 215, 0), anchor="mt")
     img.save(path)
 
-def render_scorecard_video(ip,ap,sp,op):
-    dur=get_audio_duration(ap) or 6.0
-    safe=sp.replace(":", "\\:")
-    cmd=["ffmpeg","-y","-loop","1","-i",ip,"-i",ap,"-filter_complex",f"[0:v]scale={VIDEO_W}:{VIDEO_H}:flags=lanczos,format=yuv420p,subtitles={safe}[out]","-map","[out]","-map","1:a","-c:v","libx264","-c:a","aac","-shortest","-t",str(dur+0.6),op]
-    r=subprocess.run(cmd,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
-    if r.returncode!=0: raise RuntimeError("Scorecard render failed")
 
-def create_emoji_plan(text, words):
-    if not words: return []
-    word_emoji_map={"god":"✨","universe":"🌌","dna":"🧬","stars":"⭐","pain":"😣","evil":"😢","prayer":"🙏","life":"🌟","beginning":"💫"}
-    plan=[]; used=[]
+def render_scorecard_video(ip, ap, sp, op):
+    dur = get_audio_duration(ap) or 6.0
+    safe = sp.replace(":", "\\:")
+    cmd = ["ffmpeg", "-y", "-loop", "1", "-i", ip, "-i", ap, "-filter_complex",
+           f"[0:v]scale={VIDEO_W}:{VIDEO_H}:flags=lanczos,format=yuv420p,subtitles={safe}[out]",
+           "-map", "[out]", "-map", "1:a",
+           "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-r", str(FPS),
+           "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2",
+           "-shortest", "-t", str(dur + 0.6), op]
+    r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    if r.returncode != 0:
+        print(r.stderr[-7000:])
+        raise RuntimeError("Scorecard render failed")
+    return dur
+
+
+WORD_EMOJI_MAP = {
+    "money": "\U0001F4B0", "cost": "\U0001F4B0", "economy": "\U0001F4B9", "tax": "\U0001F4B8",
+    "jobs": "\U0001F3ED", "work": "\U0001F477", "school": "\U0001F3EB", "education": "\U0001F393",
+    "children": "\U0001F9D2", "kids": "\U0001F9D2", "family": "\U0001F46A",
+    "health": "\U0001FA7A", "medicine": "\U0001F489", "hospital": "\U0001F3E5",
+    "science": "\U0001F52C", "research": "\U0001F52C", "data": "\U0001F4CA",
+    "evidence": "\U0001F50D", "study": "\U0001F4C8", "history": "\U0001F4DC",
+    "law": "⚖️", "court": "⚖️", "rights": "✊", "freedom": "\U0001F54A️",
+    "government": "\U0001F3DB️", "vote": "\U0001F5F3️", "war": "⚔️",
+    "climate": "\U0001F30D", "planet": "\U0001F30D", "energy": "⚡", "pollution": "\U0001F3ED",
+    "technology": "\U0001F916", "computer": "\U0001F4BB", "internet": "\U0001F310",
+    "universe": "\U0001F30C", "stars": "⭐", "dna": "\U0001F9EC", "brain": "\U0001F9E0",
+    "god": "✨", "faith": "\U0001F64F", "prayer": "\U0001F64F", "truth": "\U0001F4A1",
+    "pain": "\U0001F623", "suffering": "\U0001F622", "death": "\U0001F5A4", "life": "\U0001F31F",
+    "future": "\U0001F52E", "risk": "⚠️", "safety": "\U0001F6E1️",
+    "food": "\U0001F35E", "water": "\U0001F4A7", "city": "\U0001F3D9️", "world": "\U0001F30E",
+}
+
+
+def create_emoji_plan(words):
+    if not words:
+        return []
+    plan, used = [], []
     for w in words:
-        cw=re.sub(r"[^a-z]","",w["text"].lower())
-        if cw in word_emoji_map:
-            s=float(w["start"]); e=float(w["end"])+1.3
-            if any(not (e < us or s > ue) for us,ue in used): continue
-            if used and s-used[-1][1]<0.9: continue
-            ec=word_emoji_map[cw]
-            if len(plan)>=1 and ec==plan[-1]["emoji"]: continue
-            plan.append({"emoji":ec,"start":max(0,s),"end":e,"word":w["text"]})
-            used.append((s,e))
-            if len(plan)>=6: break
+        cw = re.sub(r"[^a-z]", "", w["text"].lower())
+        if cw not in WORD_EMOJI_MAP:
+            continue
+        s = float(w["start"])
+        e = float(w["end"]) + 1.3
+        if any(not (e < us or s > ue) for us, ue in used):
+            continue
+        if used and s - used[-1][1] < 0.9:
+            continue
+        ec = WORD_EMOJI_MAP[cw]
+        if plan and ec == plan[-1]["emoji"]:
+            continue
+        plan.append({"emoji": ec, "start": max(0, s), "end": e, "word": w["text"]})
+        used.append((s, e))
+        if len(plan) >= 6:
+            break
     return plan
 
-def create_segment(text,role,name,topic,sid,model_for_visuals,pos=None,glow=None,judge_voice_index=None):
-    if pos is None:
-        pos="left" if "GOD EXISTS" in role.upper() or "YES" in role.upper() else "right" if "DOESN" in role.upper() or "NO" in role.upper() else "center" if "JUDGE" in role.upper() else "left"
-    if glow is None:
-        glow="#00FFCC" if "GOD EXISTS" in role.upper() or role.upper()=="YES" else "#FF00FF" if "DOESN" in role.upper() or role.upper()=="NO" else "#3399FF" if "JUDGE" in role.upper() else "#FFD700"
-    af=f"audio_{sid}.mp3"; sf=f"subs_{sid}.ass"; bf=f"bg_{sid}.png"; uf=f"ui_{sid}.png"; vf=f"segment_{sid}.mp4"
-    words=generate_audio(text,role,af,judge_voice_index)
-    eplan=[]
-    try: eplan=create_emoji_plan(clean_for_speech(text),words)
-    except: pass
-    generate_subtitles(words,sf,scorecard=False,audio_file=af,full_text=text)
-    create_background(pos,glow,bf)
-    cx,cy,rx0,ry0,rx1,ry1=create_ui_overlay(name,topic,pos,glow,uf)
-    render_video_segment(bf,uf,af,sf,vf,pos,glow,cx,cy,rx0,ry0,rx1,ry1,eplan)
-    return vf
 
-def generate_panel_commentary(model,side,topic,rn,ap,sk,prev,roles):
-    global USED_JUDGE_EXPLANATIONS
-    prov=get_judge_short_name(model)
-    pref=roles['side_a_label'] if side=="A" else roles['side_b_label']
-    other=roles['side_b_label'] if side=="A" else roles['side_a_label']
-    def trim(t,mw=140): wl=t.split(); return t if len(wl)<=mw else " ".join(wl[-mw:])
-    # Human judge prompt - not robotic
-    starters=["Honestly,","For me,","What stood out was","I kept coming back to","The moment that decided it for me","Round {rn} really turned on","If I'm being honest,","What convinced me was"]
-    starter=random.choice(starters).format(rn=rn)
-    prompt=f"You are {prov}, a real person judging {topic}. You scored {pref} higher than {other} in round {rn}. Talk like a YouTuber reacting, warm, natural, contractions, 3 short sentences. Start with {starter}. Give 2 specific human reasons why {pref} side felt stronger, referencing actual points they made about {topic}. {pref}: {trim(ap)} vs {other}: {trim(sk)}. Do NOT say thinking process or analyze. Must argue {pref} won."
-    resp=query_openrouter(prompt,model,timeout=35,max_tokens=350,temperature=0.88)
-    if resp and len(resp.split())>=12:
-        resp=re.sub(r"(?i)Here's a thinking process.*?(\.|$)","",resp)
-        resp=re.sub(r"(?i)thinking process.*?(\.|$)","",resp)
-        resp=re.sub(r"(?i)1\.\s*Analyze.*?(\.|$)","",resp)
-        resp=re.sub(r"^Look,?\s*","",resp,flags=re.IGNORECASE)
-        resp=re.sub(r"\s+"," ",resp).strip()
-        if len(resp.split())>=10 and "thinking process" not in resp.lower():
-            low=resp.lower()[:80]
-            if low not in USED_JUDGE_EXPLANATIONS:
-                USED_JUDGE_EXPLANATIONS.add(low)
-                return resp
-    # Fallback human
-    chosen=f"{starter} the {pref.lower()} side gave a concrete example you can check, not just theory. The {other.lower()} side talked around it but did not answer that point about {topic}."
-    USED_JUDGE_EXPLANATIONS.add(chosen[:60])
-    return chosen
+def create_segment(text, slot, display_name, topic, sid, judge_voice_index=None):
+    pos, glow = SLOT_STYLE.get(slot, SLOT_STYLE["MOD"])
+    af, sf = f"audio_{sid}.mp3", f"subs_{sid}.ass"
+    bf, uf = f"bg_{sid}.png", f"ui_{sid}.png"
+    vf = f"segment_{sid}.mp4"
+    words = generate_audio(text, slot, af, judge_voice_index)
+    try:
+        eplan = create_emoji_plan(words)
+    except Exception:
+        eplan = []
+    generate_subtitles(words, sf, scorecard=False, audio_file=af, full_text=text)
+    create_background(pos, glow, bf)
+    wave_box = create_ui_overlay(display_name, topic, pos, glow, uf)
+    duration = render_video_segment(bf, uf, af, sf, vf, pos, glow, wave_box, eplan)
+    return vf, duration
 
-def build_intro(topic,jc,roles):
-    return f"Welcome to the AI Debate Arena. Tonight's question is {topic}. On one side we have the God exists side, on the other the God does not exist side. Three rounds, equal time, {jc} independent judges. Let's begin."
 
-def build_outro(jc,ca,cb,roles):
-    if abs(ca-cb)<0.01: res="a draw"
-    elif ca>cb: res="the God exists side"
-    else: res="the God does not exist side"
-    return f"After three rounds, judges gave {roles['side_a_label']} {ca:.1f} and {roles['side_b_label']} {cb:.1f}. Tonight's result is {res}. Thanks for watching."
+def build_intro(topic, jc, roles):
+    return (f"Welcome to the AI Debate Arena. Tonight's question is this. {topic} "
+            f"Arguing {roles['side_a_label']}, on my left. Arguing {roles['side_b_label']}, "
+            f"on my right. Three rounds, equal time, and {jc} independent AI judges scoring every "
+            f"exchange. Nobody here is holding back. Let's get into it.")
 
-def stitch_segments(segs,out):
-    lf="concat_list.txt"
-    open(lf,"w",encoding="utf-8").write("\n".join([f"file '{os.path.abspath(s).replace(chr(39),chr(39)+chr(92)+chr(39)+chr(39))}'" for s in segs])+"\n")
-    cmd=["ffmpeg","-y","-f","concat","-safe","0","-i",lf,"-c","copy",out]
-    r=subprocess.run(cmd,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
-    if r.returncode!=0: print(r.stderr[-7000:]); raise RuntimeError("Concat failed")
+
+def build_outro(ca, cb, roles):
+    if abs(ca - cb) < 0.01:
+        res = "a dead heat"
+    elif ca > cb:
+        res = f"the {roles['side_a_label']} side"
+    else:
+        res = f"the {roles['side_b_label']} side"
+    return (f"That's three rounds. Across the whole debate the judges gave "
+            f"{roles['side_a_label']} {ca:.1f}, and {roles['side_b_label']} {cb:.1f}. "
+            f"Tonight's decision goes to {res}. Tell us who you think actually won, "
+            f"and we'll see you at the next one.")
+
+
+def stitch_segments(segs, out):
+    lf = "concat_list.txt"
+    lines = [f"file '{os.path.abspath(s).replace(chr(39), chr(39) + chr(92) + chr(39) + chr(39))}'"
+             for s in segs]
+    open(lf, "w", encoding="utf-8").write("\n".join(lines) + "\n")
+    cmd = ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", lf, "-c", "copy", out]
+    r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    if r.returncode != 0:
+        print(r.stderr[-7000:])
+        raise RuntimeError("Concat failed")
+
+
+class Pacing:
+    """Keeps the finished video inside the 10 to 15 minute window.
+
+    Each debate turn is sized from the time actually left in the budget, using a
+    speaking rate measured from the audio rendered so far.
+    """
+
+    def __init__(self):
+        self.consumed = 0.0
+        self.spoken_words = 0
+        self.spoken_seconds = 0.0
+
+    def add(self, seconds, words=None):
+        self.consumed += float(seconds or 0.0)
+        if words:
+            self.spoken_words += words
+            self.spoken_seconds += float(seconds or 0.0)
+
+    @property
+    def wps(self):
+        if self.spoken_seconds > 20 and self.spoken_words > 60:
+            return max(1.8, min(3.4, self.spoken_words / self.spoken_seconds))
+        return DEFAULT_WORDS_PER_SEC
+
+    def turn_words(self, turns_left, reserved_seconds):
+        turns_left = max(1, turns_left)
+        available = TARGET_TOTAL_SECONDS - self.consumed - reserved_seconds
+        per_turn = available / turns_left
+        return int(max(MIN_TURN_WORDS, min(MAX_TURN_WORDS, per_turn * self.wps)))
+
 
 def run_debate_pipeline():
     global USED_ARGUMENTS, USED_JUDGE_EXPLANATIONS
-    USED_ARGUMENTS=set(); USED_JUDGE_EXPLANATIONS=set()
+    USED_ARGUMENTS = set()
+    USED_JUDGE_EXPLANATIONS = set()
     cleanup_cache()
-    if not OPENROUTER_API_KEY: raise RuntimeError("OPENROUTER_API_KEY missing")
+    if not OPENROUTER_API_KEY:
+        raise RuntimeError("OPENROUTER_API_KEY missing")
     if not os.path.exists("topic.txt"):
-        open("topic.txt","w",encoding="utf-8").write("Does God exist?")
-    topic=open("topic.txt","r",encoding="utf-8").read().strip() or "Does God exist?"
+        open("topic.txt", "w", encoding="utf-8").write("Does God exist?")
+    topic = open("topic.txt", "r", encoding="utf-8").read().strip() or "Does God exist?"
     print(f"\nTOPIC FROM topic.txt: {topic}\n")
-    print(f"LABELS NOW GOD EXISTS / GOD DOESN'T EXIST per your request")
-    print(f"VOICES SAME EACH BUILD: GOD EXISTS Brian, GOD DOESN'T EXIST Ava, Moderator Andrew")
-    avail=discover_models()
-    if not avail: avail=FALLBACK_MODELS.copy()
-    ap_model,sk_model=choose_primary_models(avail)
-    roles=get_debate_roles(topic, ap_model)
-    print(f"Roles: {roles['side_a_label']} vs {roles['side_b_label']}")
-    judges=choose_judges(avail,(ap_model,sk_model))
-    if len(judges)<5: judges=[m for m in FALLBACK_MODELS][:7]
-    segs=[]; sid=0
-    def add_seg(text,role,name,pos=None,glow=None,jvi=None):
+
+    avail = discover_models() or FALLBACK_MODELS.copy()
+    ap_model, sk_model = choose_primary_models(avail)
+    roles = get_debate_roles(topic, ap_model)
+    print(f"Sides: {roles['side_a_label']} (Brian, left) vs {roles['side_b_label']} (Ava, right)")
+    print(f"  A stance: {roles['side_a_stance']}")
+    print(f"  B stance: {roles['side_b_stance']}")
+    judges = choose_judges(avail, (ap_model, sk_model))
+    if len(judges) < 5:
+        judges = FALLBACK_MODELS[:7]
+    print(f"Judges: {', '.join(get_judge_short_name(j) for j in judges)}")
+
+    pacing = Pacing()
+    segs = []
+    sid = 0
+
+    def add_seg(text, slot, display_name, jvi=None, count_speech=True):
         nonlocal sid
-        vm=sk_model if "DOESN" in role.upper() else ap_model
-        v=create_segment(text,role,name,topic,sid,vm,pos,glow,jvi); segs.append(v); sid+=1
-    add_seg(build_intro(topic,len(judges),roles),"MODERATOR","MODERATOR")
-    prev=""; cum_a=0.0; cum_b=0.0; pcom=[]
-    for rn in range(1,ROUNDS+1):
-        print(f"\nROUND {rn} - GOD EXISTS vs GOD DOESN'T EXIST human")
-        a_turns,s_turns,prev=build_round_exchanges(topic,rn,ap_model,sk_model,prev,roles)
-        for ti in range(TURNS_PER_SIDE_PER_ROUND):
-            print(f"  Turn {ti+1}: {roles['side_a_label']} {count_words(a_turns[ti])} vs {roles['side_b_label']} {count_words(s_turns[ti])} balanced")
-            add_seg(a_turns[ti],roles['side_a_label'],roles['side_a_label'],"left","#00FFCC")
-            add_seg(s_turns[ti],roles['side_b_label'],roles['side_b_label'],"right","#FF00FF")
-        a_full="\n".join(a_turns); s_full="\n".join(s_turns)
-        res=evaluate_round(judges,topic,rn,a_full,s_full,roles)
-        ra,rb=calculate_round_average(res); cum_a+=ra; cum_b+=rb
-        print(f"Round {rn}: {ra:.1f} vs {rb:.1f}")
-        sb=f"scoreboard_r{rn}.png"
-        generate_scoreboard(rn,res,ra,rb,cum_a,cum_b,sb,roles)
-        st=f"Round {rn} complete. Judges gave {roles['side_a_label']} {ra:.1f} and {roles['side_b_label']} {rb:.1f}. Cumulative {cum_a:.1f} to {cum_b:.1f}."
-        sa=f"score_audio_r{rn}.mp3"; ss=f"score_subs_r{rn}.ass"; sv=f"score_video_r{rn}.mp4"
-        sw=generate_audio(st,"MODERATOR",sa)
-        generate_subtitles(sw,ss,scorecard=True,audio_file=sa,full_text=st)
-        render_scorecard_video(sb,sa,ss,sv); segs.append(sv)
-        if res:
-            a_res=[r for r in res if r["winner"]=="A"] or res
-            b_res=[r for r in res if r["winner"]=="B"] or res
-            ja=random.choice(a_res)
-            jb_cands=[r for r in b_res if r["provider"]!=ja["provider"]]
-            jb=random.choice(jb_cands) if jb_cands else random.choice(b_res)
-            ca=generate_panel_commentary(ja["model"],"A",topic,rn,a_full,s_full,pcom,roles); pcom.append(ca)
-            jai=JUDGE_VOICE_MAP.get(ja["model"],0)
-            add_seg(ca,"AI Judge",f"AI JUDGE — {ja['display_name'].upper()} ({ja['provider'].upper()})","center","#3399FF",jvi=jai)
-            cb=generate_panel_commentary(jb["model"],"B",topic,rn,a_full,s_full,pcom,roles); pcom.append(cb)
-            jbi=JUDGE_VOICE_MAP.get(jb["model"],1)
-            if jbi==jai: jbi=(jai+1)%len(JUDGE_VOICES)
-            add_seg(cb,"AI Judge",f"AI JUDGE — {jb['display_name'].upper()} ({jb['provider'].upper()})","center","#3399FF",jvi=jbi)
-    add_seg(build_outro(len(judges),cum_a,cum_b,roles),"MODERATOR","MODERATOR")
-    stitch_segments(segs,OUTPUT_FILE)
-    print(f"\nCOMPLETE: GOD EXISTS vs GOD DOESN'T EXIST labels, no thinking process, human judges, balanced lengths")
+        path, dur = create_segment(text, slot, display_name, topic, sid, jvi)
+        segs.append(path)
+        sid += 1
+        pacing.add(dur, count_words(text) if count_speech else None)
+        return dur
+
+    total_turns = ROUNDS * TURNS_PER_SIDE_PER_ROUND * 2
+    turns_done = 0
+
+    add_seg(build_intro(topic, len(judges), roles), "MOD", "MODERATOR", count_speech=False)
+
+    cum_a = cum_b = 0.0
+    all_results = []
+    last_a_text = ""
+    last_b_text = ""
+
+    for rn in range(1, ROUNDS + 1):
+        print(f"\n--- ROUND {rn} ---")
+        a_turns, b_turns = [], []
+        for tn in range(1, TURNS_PER_SIDE_PER_ROUND + 1):
+            for side in ("A", "B"):
+                turns_left = total_turns - turns_done
+                rounds_left = ROUNDS - rn + 1
+                reserved = (rounds_left * EST_SCORECARD_SEC
+                            + rounds_left * 2 * EST_COMMENTARY_SEC
+                            + EST_OUTRO_SEC)
+                target = pacing.turn_words(turns_left, reserved)
+                opponent_last = last_b_text if side == "A" else last_a_text
+                model = ap_model if side == "A" else sk_model
+                text = generate_turn(topic, roles, side, rn, tn, opponent_last, target, model)
+                label = roles["side_a_label"] if side == "A" else roles["side_b_label"]
+                print(f"  R{rn} T{tn} {label}: target {target}w, got {count_words(text)}w")
+                if side == "A":
+                    a_turns.append(text)
+                    last_a_text = text
+                else:
+                    b_turns.append(text)
+                    last_b_text = text
+                add_seg(text, side, label)
+                turns_done += 1
+                print(f"    running time {pacing.consumed / 60:.1f} min")
+
+        a_full = "\n\n".join(a_turns)
+        b_full = "\n\n".join(b_turns)
+        res = evaluate_round(judges, topic, rn, a_full, b_full, roles)
+        ra, rb = calculate_round_average(res)
+        cum_a += ra
+        cum_b += rb
+        all_results.append({"round": rn, "avg_a": ra, "avg_b": rb, "judges": res})
+        print(f"  Round {rn} average: {roles['side_a_label']} {ra:.1f} vs {roles['side_b_label']} {rb:.1f}")
+
+        sb = f"scoreboard_r{rn}.png"
+        generate_scoreboard(rn, res, ra, rb, cum_a, cum_b, sb, roles)
+        st = (f"Round {rn} is scored. The panel gave {roles['side_a_label']} {ra:.1f}, "
+              f"and {roles['side_b_label']} {rb:.1f}. That puts us at {cum_a:.1f} to {cum_b:.1f} overall.")
+        sa_f, ss_f, sv_f = f"score_audio_r{rn}.mp3", f"score_subs_r{rn}.ass", f"score_video_r{rn}.mp4"
+        sw = generate_audio(st, "MOD", sa_f)
+        generate_subtitles(sw, ss_f, scorecard=True, audio_file=sa_f, full_text=st)
+        pacing.add(render_scorecard_video(sb, sa_f, ss_f, sv_f))
+        segs.append(sv_f)
+
+        # One judge from each camp explains the round, but only where that camp exists.
+        a_favs = [r for r in res if r["winner"] == "A"]
+        b_favs = [r for r in res if r["winner"] == "B"]
+        picks = []
+        if a_favs:
+            picks.append((random.choice(a_favs), "A"))
+        if b_favs:
+            taken = {p[0]["provider"] for p in picks}
+            pool = [r for r in b_favs if r["provider"] not in taken] or b_favs
+            picks.append((random.choice(pool), "B"))
+        if len(picks) == 1:
+            side_word = roles["side_a_label"] if picks[0][1] == "A" else roles["side_b_label"]
+            print(f"  Panel was unanimous for {side_word}; one reaction only.")
+        for judge, side in picks:
+            text = generate_panel_commentary(judge["model"], side, topic, rn, a_full, b_full, roles)
+            jvi = JUDGE_VOICE_MAP.get(judge["model"], 0)
+            name = f"JUDGE — {judge['display_name'].upper()} ({judge['provider'].upper()})"
+            add_seg(text, "JUDGE", name, jvi=jvi, count_speech=False)
+        print(f"  running time after round {rn}: {pacing.consumed / 60:.1f} min")
+
+    add_seg(build_outro(cum_a, cum_b, roles), "MOD", "MODERATOR", count_speech=False)
+
+    try:
+        json.dump({"topic": topic, "sides": roles, "rounds": all_results,
+                   "cumulative": {"A": round(cum_a, 2), "B": round(cum_b, 2)}},
+                  open("scores.json", "w", encoding="utf-8"), indent=2)
+    except Exception:
+        pass
+
+    stitch_segments(segs, OUTPUT_FILE)
+    final = get_audio_duration(OUTPUT_FILE) or pacing.consumed
+    mins = final / 60.0
+    print(f"\nCOMPLETE: {OUTPUT_FILE}  runtime {int(mins)}m {int(final % 60)}s")
+    if final < MIN_TOTAL_SECONDS:
+        print(f"NOTE: runtime is under the {MIN_TOTAL_SECONDS / 60:.0f} minute floor.")
+    elif final > MAX_TOTAL_SECONDS:
+        print(f"NOTE: runtime is over the {MAX_TOTAL_SECONDS / 60:.0f} minute ceiling.")
     cleanup_cache()
 
-if __name__=="__main__":
-    try: run_debate_pipeline()
-    except KeyboardInterrupt: print("Cancelled")
-    except Exception as e: print("FAILED"); print(str(e)); import traceback; traceback.print_exc(); raise
+
+if __name__ == "__main__":
+    try:
+        run_debate_pipeline()
+    except KeyboardInterrupt:
+        print("Cancelled")
+    except Exception as e:
+        print("FAILED")
+        print(str(e))
+        import traceback
+        traceback.print_exc()
+        raise
