@@ -9,6 +9,7 @@ import subprocess
 import concurrent.futures
 import time
 from io import BytesIO
+import base64
 import edge_tts
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
@@ -44,12 +45,35 @@ EST_INTRO_SEC = 30.0
 EST_OUTRO_SEC = 38.0
 EST_SCORECARD_SEC = 16.0
 EST_COMMENTARY_SEC = 22.0
+EST_POLL_SEC = 40.0        # each of the opening and closing poll segments
 COMMENTARY_WORDS = 55
 
 EMOJI_W = 180
 EMOJI_H = 180
 USED_ARGUMENTS = set()
 USED_JUDGE_EXPLANATIONS = set()
+
+# ---------------------------------------------------------------------------
+# Voice. edge-tts is free and needs no key. Set TTS_PROVIDER=elevenlabs and
+# ELEVENLABS_API_KEY to use ElevenLabs instead; a roughly thirteen minute debate
+# is about eleven thousand characters, so budget accordingly. Voice ids are
+# overridable so you can swap in voices from your own ElevenLabs library.
+# ---------------------------------------------------------------------------
+TTS_PROVIDER = os.environ.get("TTS_PROVIDER", "edge").strip().lower()
+ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY")
+ELEVEN_MODEL = os.environ.get("ELEVEN_MODEL", "eleven_multilingual_v2")
+ELEVEN_VOICE_A = os.environ.get("ELEVEN_VOICE_A", "pNInz6obpgDQGcFmaJgB")    # Adam
+ELEVEN_VOICE_B = os.environ.get("ELEVEN_VOICE_B", "EXAVITQu4vr4xnSDxMaL")    # Bella
+ELEVEN_VOICE_MOD = os.environ.get("ELEVEN_VOICE_MOD", "onwK4e9ZLuTAKqWW03F9")  # Daniel
+ELEVEN_JUDGE_VOICES = [
+    v.strip() for v in os.environ.get(
+        "ELEVEN_JUDGE_VOICES",
+        "21m00Tcm4TlvDq8ikWAM,ErXwobaYiN019PkySvjV,TxGEqnHWrfWFTfGW9XjX,"
+        "AZnzlk1XvdvUeBnXmlld,VR6AewLTigWG4xSOukaG,MF3mGyEYCl7XYWbV9V6O,"
+        "yoZ06aMxZJJ28mgz3iRy,LcfcDJNUP1GQjkzn1xUU,jsCqWAovK2LkecY7zXl4,"
+        "ThT5KcBeYPX3keUQqHPh,XB0fDUnXU5powFXDhCwa,pqHfZKP75CvOlQylNhV4"
+    ).split(",") if v.strip()
+]
 
 # Speaker slots are fixed, so voices stay identical build to build whatever the topic is.
 SIDE_A_VOICE = "en-US-BrianMultilingualNeural"
@@ -79,6 +103,40 @@ SLOT_STYLE = {
     "JUDGE": ("center", "#3399FF"),
     "MOD": ("center", "#FFD700"),
 }
+
+# ---------------------------------------------------------------------------
+# Model roster. With OpenRouter credits, pin the models: the same debaters and
+# the same panel in every video keeps the channel consistent and makes results
+# comparable between videos. Leave PAID_MODELS empty to stay on free models.
+# Set USE_PAID_MODELS=1 (or put ids in DEBATER_MODELS / PANEL_MODELS) to use them.
+# ---------------------------------------------------------------------------
+USE_PAID_MODELS = os.environ.get("USE_PAID_MODELS", "").strip() not in ("", "0", "false", "no")
+
+# The two arguers. These are what the audience actually hears, so this is where
+# quality shows most. Order matters only for which side each starts on.
+DEBATER_MODELS = [m.strip() for m in os.environ.get(
+    "DEBATER_MODELS",
+    "anthropic/claude-sonnet-4.5,openai/gpt-4o"
+).split(",") if m.strip()]
+
+# The panel. Breadth of provider matters more here than raw capability: the
+# point is independent judges, so spread them across labs.
+PANEL_MODELS = [m.strip() for m in os.environ.get(
+    "PANEL_MODELS",
+    "google/gemini-2.5-flash,"
+    "openai/gpt-4o-mini,"
+    "anthropic/claude-3.5-haiku,"
+    "meta-llama/llama-3.3-70b-instruct,"
+    "mistralai/mistral-large,"
+    "deepseek/deepseek-chat,"
+    "qwen/qwen-2.5-72b-instruct,"
+    "x-ai/grok-2-1212,"
+    "cohere/command-r-plus"
+).split(",") if m.strip()]
+
+# Rough per million token prices, only used to print a cost estimate before a
+# run. Unknown models fall back to the default and are marked approximate.
+PRICE_PER_M = {"in": 3.0, "out": 12.0}
 
 FALLBACK_MODELS = [
     "openai/gpt-4o-mini:free",
@@ -136,7 +194,8 @@ INTRO_OPENING = (
 )
 INTRO_RULES = (
     "The models swap sides every round, and the judges score blind, without being told which "
-    "side is which. Let's get into it."
+    "side is which. And before we start, we asked every judge where it already stands, so at "
+    "the end we can see exactly who changed their mind."
 )
 OUTRO_SIGNOFF = (
     "Scored blind, with the sides reversed, and any judge that changed its mind on the running "
@@ -224,6 +283,11 @@ def number_word(n):
     return NUMBER_WORDS.get(n, str(n))
 
 
+def sentence_case(s):
+    """Uppercase the first letter only, leaving side labels like YES intact."""
+    return s[:1].upper() + s[1:] if s else s
+
+
 def count_words(t):
     return len(re.findall(r"\b[\w'-]+\b", t or ""))
 
@@ -264,11 +328,13 @@ def clean_for_speech(t):
     t = re.sub(r"\$\s*([\d][\d,.]*)\s*(billion|million|trillion|thousand|bn|m|k)\b",
                r"\1 \2 dollars", t, flags=re.IGNORECASE)
     t = re.sub(r"\$\s*([\d][\d,.]*)", r"\1 dollars", t)
+    t = re.sub(r"(?<![\w.])-\s*(\d)", r"minus \1", t)
+    t = re.sub(r"\s*\+\s*(\d)", r" plus \1", t)
     t = re.sub(r"\s*\+\s*", " plus ", t)
     t = re.sub(r"\s*=\s*", " equals ", t)
     t = t.replace("(", " ").replace(")", " ").replace("[", " ").replace("]", " ")
     t = t.replace("–", ", ").replace("—", ". ").replace(" - ", ". ")
-    for o, n in {"*": "", "#": "", "_": "", "`": "", "\"": "", ":": " . ", ";": " . ", "&": " and"}.items():
+    for o, n in {"*": "", "#": "", "_": "", "`": "", "\"": "", ":": ", ", ";": ", ", "&": " and"}.items():
         t = t.replace(o, n)
     t = re.sub(r"\s+", " ", t).strip()
     if t and t[-1] not in ".!?":
@@ -324,7 +390,9 @@ def discover_models():
         free = []
         for it in r.json().get("data", []):
             mid = it.get("id", "")
-            if not mid or ":free" not in mid.lower():
+            if not mid:
+                continue
+            if not USE_PAID_MODELS and ":free" not in mid.lower():
                 continue
             if any(x in mid.lower() for x in ["embed", "tts", "whisper", "audio"]):
                 continue
@@ -343,7 +411,9 @@ def discover_models():
 def query_openrouter(prompt, mid, timeout=60, max_tokens=800, temperature=0.82, system=None):
     if not OPENROUTER_API_KEY:
         return None
-    if ":free" not in (mid or "").lower():
+    if not mid:
+        return None
+    if not USE_PAID_MODELS and ":free" not in mid.lower():
         return None
     payload = {
         "model": mid,
@@ -392,7 +462,7 @@ def extract_json_object(text):
 
 
 def choose_primary_models(avail):
-    free = [m for m in avail if ":free" in m] or FALLBACK_MODELS
+    free = [m for m in avail if USE_PAID_MODELS or ":free" in m] or FALLBACK_MODELS
     used = set()
     picks = []
     for m in free:
@@ -412,11 +482,13 @@ def choose_judges(avail, primary):
     primary_providers = set(provider_from_model(m) for m in primary)
     excl = set(primary)
     top_providers = set(PANEL_PROVIDERS)
-    cands = [m for m in avail if m not in excl and ":free" in m
+    cands = [m for m in avail if m not in excl
+             and (USE_PAID_MODELS or ":free" in m)
              and m.split("/")[0].lower() in top_providers
              and provider_from_model(m) not in primary_providers]
     if len(cands) < 4:
-        cands = [m for m in avail if m not in excl and ":free" in m
+        cands = [m for m in avail if m not in excl
+                 and (USE_PAID_MODELS or ":free" in m)
                  and provider_from_model(m) not in primary_providers]
     groups = {}
     for m in cands:
@@ -936,7 +1008,9 @@ def judge_round(model, topic, rn, ap, sk, roles):
     grades the arguing rather than its own opinion of the position. Returns None
     if the judge produced nothing usable; no score is ever invented.
     """
-    if ":free" not in model or is_reasoning_model(model):
+    if is_reasoning_model(model):
+        return None
+    if not USE_PAID_MODELS and ":free" not in model:
         return None
     a_text, b_text = fair_excerpts(ap, sk)
 
@@ -1125,6 +1199,187 @@ def generate_panel_commentary(model, side, topic, rn, a_text, b_text, roles):
         return None
     USED_JUDGE_EXPLANATIONS.add(key)
     return trim_to_words(cleaned, COMMENTARY_WORDS + 30)
+
+
+# ----------------------------------------------------------------------------
+# Consensus poll
+#
+# The scorecards measure who argued better. This measures what the models
+# actually think about the question, asked cold before the debate and again
+# after they have read every word. The movement between the two is the result.
+# ----------------------------------------------------------------------------
+
+POLL_SCALE = 5          # positions run from -5 to +5
+LEAN_THRESHOLD = 0.5    # inside this band a model counts as undecided
+
+
+def _poll_once(model, topic, roles, transcript, flip):
+    """Ask one model where it stands. `flip` reverses the meaning of the scale.
+
+    Asking both ways and averaging cancels any pull toward the positive end of
+    the scale, the same correction the judging uses for running order.
+    """
+    if flip:
+        pos_label, neg_label = roles["side_b_label"], roles["side_a_label"]
+    else:
+        pos_label, neg_label = roles["side_a_label"], roles["side_b_label"]
+
+    preamble = ""
+    if transcript:
+        preamble = (f"Here is the full transcript of a debate on this question.\n\n"
+                    f"{transcript[:14000]}\n\n"
+                    "Having read it, answer for yourself.\n\n")
+
+    prompt = (
+        f"{preamble}"
+        f"Question: {topic}\n\n"
+        f"Where do you personally stand? Give a whole number from -{POLL_SCALE} to "
+        f"+{POLL_SCALE}, where +{POLL_SCALE} means you are confident that "
+        f"{pos_label} is correct, -{POLL_SCALE} means you are confident that "
+        f"{neg_label} is correct, and 0 means you genuinely have no lean either way.\n"
+        "This is your own view, not a summary of what others think.\n"
+        "If you are unwilling to take any position on this question, set position to null "
+        "instead of picking a number. That is a legitimate answer and will be reported "
+        "as such.\n"
+        'Return ONLY JSON: {"position": 0, "confidence": 0, '
+        '"comment": "one plain sentence saying why"}'
+    )
+    resp = query_openrouter(prompt, model, timeout=60, max_tokens=300, temperature=0.0,
+                            system="You return only valid JSON. No commentary.")
+    d = extract_json_object(resp)
+    if d is None:
+        return None
+    if "position" not in d or d.get("position") is None:
+        return {"declined": True, "position": None, "confidence": 0.0,
+                "comment": str(d.get("comment", ""))[:200]}
+    try:
+        pos = float(d.get("position"))
+    except (TypeError, ValueError):
+        return None
+    pos = max(-POLL_SCALE, min(POLL_SCALE, pos))
+    if flip:
+        pos = -pos     # back into side-A-positive terms
+    try:
+        conf = max(0.0, min(100.0, float(d.get("confidence", 0))))
+    except (TypeError, ValueError):
+        conf = 0.0
+    return {"declined": False, "position": pos, "confidence": conf,
+            "comment": str(d.get("comment", ""))[:200]}
+
+
+def poll_panel(models, topic, roles, transcript=None):
+    """Ask the whole panel where it stands, each model independently."""
+    results = []
+
+    def ask(model):
+        answers = []
+        declined = 0
+        comment = ""
+        for flip in (False, True):
+            out = _poll_once(model, topic, roles, transcript, flip)
+            if out is None:
+                continue
+            if out["declined"]:
+                declined += 1
+                comment = comment or out["comment"]
+                continue
+            answers.append(out)
+            comment = comment or out["comment"]
+        if not answers:
+            if declined:
+                return {"model": model, "provider": provider_from_model(model),
+                        "display_name": get_judge_short_name(model),
+                        "position": None, "declined": True,
+                        "confidence": 0.0, "comment": comment}
+            return None
+        pos = sum(a["position"] for a in answers) / len(answers)
+        conf = sum(a["confidence"] for a in answers) / len(answers)
+        # Disagreement between the two scale directions is a sign the answer
+        # was anchored on the scale rather than on the question.
+        spread = 0.0
+        if len(answers) == 2:
+            spread = abs(answers[0]["position"] - answers[1]["position"])
+        return {"model": model, "provider": provider_from_model(model),
+                "display_name": get_judge_short_name(model),
+                "position": round(pos, 2), "declined": False,
+                "confidence": round(conf, 1), "spread": round(spread, 2),
+                "comment": comment}
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(8, max(1, len(models)))) as ex:
+        for f in concurrent.futures.as_completed([ex.submit(ask, m) for m in models]):
+            try:
+                r = f.result()
+            except Exception:
+                r = None
+            if r:
+                results.append(r)
+    results.sort(key=lambda r: r["display_name"])
+    return results
+
+
+def poll_summary(results):
+    """Counts and mean lean, with anyone who declined kept visible."""
+    stated = [r for r in results if not r["declined"] and r["position"] is not None]
+    declined = [r for r in results if r["declined"]]
+    lean_a = sum(1 for r in stated if r["position"] > LEAN_THRESHOLD)
+    lean_b = sum(1 for r in stated if r["position"] < -LEAN_THRESHOLD)
+    undecided = len(stated) - lean_a - lean_b
+    mean = round(sum(r["position"] for r in stated) / len(stated), 2) if stated else 0.0
+    return {"lean_a": lean_a, "lean_b": lean_b, "undecided": undecided,
+            "declined": len(declined), "mean": mean, "stated": len(stated),
+            "asked": len(results)}
+
+
+def describe_poll(summary, roles):
+    parts = []
+    if summary["lean_a"]:
+        parts.append(f"{summary['lean_a']} leaning {roles['side_a_label']}")
+    if summary["lean_b"]:
+        parts.append(f"{summary['lean_b']} leaning {roles['side_b_label']}")
+    if summary["undecided"]:
+        parts.append(f"{summary['undecided']} genuinely on the fence")
+    if summary["declined"]:
+        parts.append(f"{summary['declined']} refusing to take a side at all")
+    if not parts:
+        return "nobody would answer"
+    if len(parts) == 1:
+        return parts[0]
+    return ", ".join(parts[:-1]) + " and " + parts[-1]
+
+
+def build_opening_poll_narration(summary, roles, topic):
+    return (
+        f"Before anybody argues anything, we asked all {summary['asked']} judges the question "
+        f"cold. {topic} Here is where they started. "
+        f"{sentence_case(describe_poll(summary, roles))}. "
+        f"On a scale running from minus five to plus five, the panel average sits at "
+        f"{summary['mean']:+.1f}. "
+        f"That is the number our debaters have to move. Let's find out if they can."
+    )
+
+
+def build_closing_poll_narration(before, after, roles):
+    swing = after["mean"] - before["mean"]
+    moved_a = after["lean_a"] - before["lean_a"]
+    moved_b = after["lean_b"] - before["lean_b"]
+    if abs(swing) < 0.15:
+        movement = ("the panel did not move at all. Whatever was said in those two rounds, "
+                    "not one position shifted in a way we can measure")
+    else:
+        toward = roles["side_a_label"] if swing > 0 else roles["side_b_label"]
+        movement = (f"the panel moved {abs(swing):.1f} points toward {toward}")
+    detail = ""
+    if moved_a > 0:
+        detail = f" {moved_a} model or models crossed over to {roles['side_a_label']}."
+    elif moved_b > 0:
+        detail = f" {moved_b} model or models crossed over to {roles['side_b_label']}."
+    return (
+        f"Now the part that matters. We put the same question to the same judges again, this "
+        f"time with the full transcript in front of them. "
+        f"They finished {describe_poll(after, roles)}. "
+        f"The average went from {before['mean']:+.1f} to {after['mean']:+.1f}, which means "
+        f"{movement}.{detail}"
+    )
 
 
 # ----------------------------------------------------------------------------
@@ -1391,65 +1646,137 @@ def generate_subtitles(words, fn, scorecard=False, audio_file=None, full_text=No
     open(fn, "w", encoding="utf-8").write(header + "\n".join(events) + "\n")
 
 
-async def generate_audio_async(text, voice, fn):
+async def _edge_synthesize(text, spec, fn):
+    """Speak via edge-tts, using its native prosody parameters.
+
+    edge-tts XML escapes whatever text it is given and drops it inside its own
+    <prosody> element, so hand written SSML is read out loud as words rather
+    than applied. Rate, pitch and volume must be passed as arguments instead.
+    """
+    com = edge_tts.Communicate(
+        text, spec["edge_voice"],
+        rate=spec.get("rate", "+0%"),
+        pitch=spec.get("pitch", "+0Hz"),
+        volume=spec.get("volume", "+0%"),
+    )
+    audio = b""
+    words = []
+    async for chunk in com.stream():
+        if chunk["type"] == "audio":
+            audio += chunk["data"]
+        elif chunk["type"] == "WordBoundary":
+            s = chunk["offset"] / 10_000_000
+            d = chunk["duration"] / 10_000_000
+            words.append({"text": chunk["text"], "start": s, "duration": d, "end": s + d})
+    open(fn, "wb").write(audio)
+    return words
+
+
+def _eleven_synthesize(text, spec, fn):
+    """Speak via ElevenLabs, with character timings folded up into words."""
+    voice_id = spec.get("eleven_voice")
+    if not voice_id:
+        raise RuntimeError("no ElevenLabs voice id configured for this speaker")
+    url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}/with-timestamps"
+    payload = {
+        "text": text,
+        "model_id": ELEVEN_MODEL,
+        "voice_settings": {
+            "stability": spec.get("stability", 0.45),
+            "similarity_boost": 0.75,
+            "style": spec.get("style", 0.35),
+            "use_speaker_boost": True,
+        },
+    }
+    r = requests.post(url, headers={"xi-api-key": ELEVENLABS_API_KEY,
+                                    "Content-Type": "application/json"},
+                      json=payload, timeout=180)
+    if r.status_code != 200:
+        raise RuntimeError(f"ElevenLabs returned {r.status_code}: {r.text[:200]}")
+    data = r.json()
+    open(fn, "wb").write(base64.b64decode(data["audio_base64"]))
+
+    align = data.get("alignment") or {}
+    chars = align.get("characters") or []
+    starts = align.get("character_start_times_seconds") or []
+    ends = align.get("character_end_times_seconds") or []
+    words = []
+    buf, w_start, w_end = "", None, None
+    for ch, cs, ce in zip(chars, starts, ends):
+        if ch.isspace():
+            if buf:
+                words.append({"text": buf, "start": w_start,
+                              "duration": w_end - w_start, "end": w_end})
+                buf, w_start = "", None
+            continue
+        if w_start is None:
+            w_start = cs
+        buf += ch
+        w_end = ce
+    if buf and w_start is not None:
+        words.append({"text": buf, "start": w_start,
+                      "duration": w_end - w_start, "end": w_end})
+    return words
+
+
+def _even_word_timings(text, fn):
+    """Last resort timings, spread across the real audio duration."""
+    toks = text.split()
+    dur = get_audio_duration(fn) or max(1.0, len(toks) / DEFAULT_WORDS_PER_SEC)
+    step = dur / max(1, len(toks))
+    return [{"text": t, "start": i * step, "duration": step * 0.85,
+             "end": i * step + step * 0.85} for i, t in enumerate(toks)]
+
+
+async def generate_audio_async(text, spec, fn):
     ct = clean_for_speech(text)
-    if "Brian" in voice:
-        ssml = f"<speak version='1.0' xml:lang='en-US'><voice name='{voice}'><prosody rate='-2%' pitch='-2%'>{ct}</prosody></voice></speak>"
-    elif "Ava" in voice:
-        ssml = f"<speak version='1.0' xml:lang='en-US'><voice name='{voice}'><prosody rate='+1%' pitch='+1%'>{ct}</prosody></voice></speak>"
-    else:
-        ssml = f"<speak version='1.0' xml:lang='en-US'><voice name='{voice}'><prosody rate='+0%'>{ct}</prosody></voice></speak>"
-    try:
-        com = edge_tts.Communicate(ssml, voice)
-        audio = b""
-        words = []
-        async for chunk in com.stream():
-            if chunk["type"] == "audio":
-                audio += chunk["data"]
-            elif chunk["type"] == "WordBoundary":
-                s = chunk["offset"] / 10_000_000
-                d = chunk["duration"] / 10_000_000
-                words.append({"text": chunk["text"], "start": s, "duration": d, "end": s + d})
-        open(fn, "wb").write(audio)
-        if not words:
-            raise RuntimeError("no word boundaries")
-        return words
-    except Exception:
-        com = edge_tts.Communicate(ct, voice, rate="+1%")
-        audio = b""
-        words = []
-        async for chunk in com.stream():
-            if chunk["type"] == "audio":
-                audio += chunk["data"]
-            elif chunk["type"] == "WordBoundary":
-                s = chunk["offset"] / 10_000_000
-                d = chunk["duration"] / 10_000_000
-                words.append({"text": chunk["text"], "start": s, "duration": d, "end": s + d})
-        open(fn, "wb").write(audio)
-        if not words:
-            t = 0
-            for tok in ct.split():
-                words.append({"text": tok, "start": t, "duration": 0.38, "end": t + 0.38})
-                t += 0.42
-        return words
+    if TTS_PROVIDER == "elevenlabs" and ELEVENLABS_API_KEY:
+        try:
+            words = _eleven_synthesize(ct, spec, fn)
+            if words:
+                return words
+            return _even_word_timings(ct, fn)
+        except Exception as e:
+            print(f"    ElevenLabs failed ({type(e).__name__}: {str(e)[:120]}); "
+                  f"falling back to edge-tts for this segment.")
+    words = await _edge_synthesize(ct, spec, fn)
+    if not words:
+        words = _even_word_timings(ct, fn)
+    return words
 
 
 def voice_for_slot(slot, judge_voice_index=None):
+    """Voice plus delivery settings for a speaker slot.
+
+    Slight differences in rate and pitch give each speaker a distinct delivery
+    and stop the debate sounding like one voice reading both sides.
+    """
     if slot == "A":
-        return SIDE_A_VOICE
+        return {"edge_voice": SIDE_A_VOICE, "eleven_voice": ELEVEN_VOICE_A,
+                "rate": "-3%", "pitch": "-2Hz", "stability": 0.42, "style": 0.40}
     if slot == "B":
-        return SIDE_B_VOICE
+        return {"edge_voice": SIDE_B_VOICE, "eleven_voice": ELEVEN_VOICE_B,
+                "rate": "+3%", "pitch": "+4Hz", "stability": 0.40, "style": 0.45}
     if slot == "JUDGE":
-        return JUDGE_VOICES[(judge_voice_index or 0) % len(JUDGE_VOICES)]
-    return MODERATOR_VOICE
+        idx = (judge_voice_index or 0) % len(JUDGE_VOICES)
+        return {"edge_voice": JUDGE_VOICES[idx],
+                "eleven_voice": ELEVEN_JUDGE_VOICES[idx % len(ELEVEN_JUDGE_VOICES)],
+                # Nudge each judge slightly differently so the panel sounds
+                # like several people rather than one.
+                "rate": f"{-4 + (idx % 5) * 2:+d}%",
+                "pitch": f"{-3 + (idx % 4) * 2:+d}Hz",
+                "stability": 0.50, "style": 0.30}
+    return {"edge_voice": MODERATOR_VOICE, "eleven_voice": ELEVEN_VOICE_MOD,
+            "rate": "-1%", "pitch": "+0Hz", "stability": 0.55, "style": 0.25}
 
 
 def generate_audio(text, slot, fn, judge_voice_index=None):
-    voice = voice_for_slot(slot, judge_voice_index)
+    spec = voice_for_slot(slot, judge_voice_index)
     try:
-        return asyncio.run(generate_audio_async(text, voice, fn))
+        return asyncio.run(generate_audio_async(text, spec, fn))
     except Exception:
-        return asyncio.run(generate_audio_async(text, MODERATOR_VOICE, fn))
+        fallback = {"edge_voice": MODERATOR_VOICE, "eleven_voice": ELEVEN_VOICE_MOD}
+        return asyncio.run(generate_audio_async(text, fallback, fn))
 
 
 def render_video_segment(bg_path, ui_path, audio_path, subs_path, output_path,
@@ -1576,6 +1903,84 @@ def generate_scoreboard(rn, res, avg_a, avg_b, cum_a, cum_b, path, roles,
               f"{cum_a / rn:.1f} vs {cum_b / rn:.1f}",
               font=fs, fill=(255, 215, 0), anchor="mt")
     img.save(path)
+
+
+def generate_poll_board(results, summary, roles, path, title, before=None):
+    """Where each model stands, drawn as a lean from one side to the other."""
+    W, H = VIDEO_W, VIDEO_H
+    img = Image.alpha_composite(
+        Image.new("RGB", (W, H), (12, 16, 32)).convert("RGBA"),
+        Image.new("RGBA", (W, H), (0, 0, 0, 180))).convert("RGB")
+    draw = ImageDraw.Draw(img)
+    ft = load_font(46, bold=True)
+    fs = load_font(26, bold=True)
+    fr = load_font(23)
+
+    draw.text((W // 2, 44), title, font=ft, fill=(255, 215, 0), anchor="mt")
+    draw.text((W // 2, 104), f"{roles['side_b_label']}  \u2190   lean   \u2192  "
+                             f"{roles['side_a_label']}",
+              font=fs, fill=(255, 255, 255), anchor="mt")
+
+    left, right = 430, W - 430
+    mid = (left + right) // 2
+    top = 168
+    row_h = 52
+    rows = results[:14]
+
+    # Scale gridline
+    draw.line([(mid, top - 14), (mid, top + row_h * len(rows) + 6)],
+              fill=(255, 255, 255, 60), width=1)
+
+    for i, r in enumerate(rows):
+        y = top + i * row_h
+        if i % 2 == 0:
+            draw.rectangle([60, y - 6, W - 60, y + row_h - 12], fill=(20, 28, 50))
+        name = f"{r['display_name']} ({r['provider']})"
+        draw.text((80, y), name[:34], font=fr, fill=(255, 255, 255))
+
+        if r["declined"] or r["position"] is None:
+            draw.text((mid, y), "declined to answer", font=fr,
+                      fill=(150, 150, 150), anchor="mt")
+            continue
+        pos = r["position"]
+        x = int(mid + (pos / POLL_SCALE) * (right - mid))
+        colour = (0, 255, 204) if pos > LEAN_THRESHOLD else \
+                 (255, 120, 255) if pos < -LEAN_THRESHOLD else (220, 220, 220)
+        draw.line([(mid, y + 14), (x, y + 14)], fill=colour, width=5)
+        draw.ellipse([x - 9, y + 5, x + 9, y + 23], fill=colour)
+        draw.text((right + 26, y), f"{pos:+.1f}", font=fr, fill=colour)
+
+    y = top + row_h * len(rows) + 24
+    draw.line([(60, y), (W - 60, y)], fill=(255, 255, 255), width=2)
+    y += 18
+    line = (f"{summary['lean_a']} {roles['side_a_label']}   |   "
+            f"{summary['lean_b']} {roles['side_b_label']}   |   "
+            f"{summary['undecided']} undecided   |   {summary['declined']} declined")
+    draw.text((W // 2, y), line, font=fs, fill=(255, 255, 255), anchor="mt")
+    y += 44
+    if before is None:
+        draw.text((W // 2, y), f"Panel average: {summary['mean']:+.2f}",
+                  font=fs, fill=(255, 215, 0), anchor="mt")
+    else:
+        swing = summary["mean"] - before["mean"]
+        draw.text((W // 2, y),
+                  f"Panel average: {before['mean']:+.2f}  \u2192  {summary['mean']:+.2f}"
+                  f"   (swing {swing:+.2f})",
+                  font=fs, fill=(255, 215, 0), anchor="mt")
+    img.save(path)
+
+
+def prepare_poll_segment(results, summary, roles, narration, sid, title, before=None):
+    """Poll graphic plus its spoken read. Rendered later with the rest."""
+    spec = {"kind": "scorecard", "sid": sid,
+            "image": f"poll_{sid}.png", "audio": f"poll_audio_{sid}.mp3",
+            "subs": f"poll_subs_{sid}.ass", "video": f"poll_video_{sid}.mp4"}
+    generate_poll_board(results, summary, roles, spec["image"], title, before)
+    words = generate_audio(narration, "MOD", spec["audio"])
+    generate_subtitles(words, spec["subs"], scorecard=True,
+                       audio_file=spec["audio"], full_text=narration)
+    spec["duration"] = get_audio_duration(spec["audio"])
+    return spec
 
 
 def render_scorecard_video(ip, ap, sp, op):
@@ -1705,7 +2110,7 @@ def build_intro(topic, jc, roles):
     )
 
 
-def build_outro(cum_a, cum_b, votes_a, votes_b, votes_t, votes_u, roles):
+def build_outro(cum_a, cum_b, votes_a, votes_b, votes_t, votes_u, roles, swing=None):
     """Variable result sentence, then the fixed branded sign off.
 
     The verdict is stated against the number of judgements that actually held
@@ -1742,14 +2147,19 @@ def build_outro(cum_a, cum_b, votes_a, votes_b, votes_t, votes_u, roles):
         split_line = (f"Across {total} judgements, the panel came down "
                       f"{spoken_split(votes_a, votes_b, votes_t, votes_u, roles)}. ")
 
-    return (
-        f"That is {number_word(ROUNDS).lower()} rounds. {split_line}"
-        f"Averaged over every round, {roles['side_a_label']} scored "
-        f"{cum_a / max(1, ROUNDS):.1f} out of a hundred, and {roles['side_b_label']} "
-        f"{cum_b / max(1, ROUNDS):.1f}. And so {verdict}. "
-        f"The panel scores which side argued it better, not which side is right. "
-        f"{OUTRO_SIGNOFF}"
-    )
+    lines = []
+    if swing is not None:
+        if abs(swing) < 0.15:
+            lines.append("So nobody moved on the question itself.")
+        else:
+            toward = roles["side_a_label"] if swing > 0 else roles["side_b_label"]
+            lines.append(f"So the question moved {abs(swing):.1f} points toward {toward}.")
+    lines.append(f"On the arguing, separately, {roles['side_a_label']} averaged "
+                 f"{cum_a / max(1, ROUNDS):.1f} out of a hundred and "
+                 f"{roles['side_b_label']} {cum_b / max(1, ROUNDS):.1f}, so {verdict}. "
+                 f"{split_line.strip()}")
+    lines.append(OUTRO_SIGNOFF)
+    return " ".join(lines)
 
 
 def stitch_segments(segs, out):
@@ -1793,6 +2203,48 @@ class Pacing:
         available = TARGET_TOTAL_SECONDS - self.consumed - reserved_seconds
         per_turn = available / turns_left
         return int(max(MIN_TURN_WORDS, min(MAX_TURN_WORDS, per_turn * self.wps)))
+
+
+def pin_panel(models, debaters):
+    """Use the configured panel as given, minus anything arguing the debate."""
+    global JUDGE_VOICE_MAP
+    debater_providers = {provider_from_model(m) for m in debaters}
+    panel, seen = [], set()
+    for m in models:
+        if m in debaters or is_reasoning_model(m):
+            continue
+        if provider_from_model(m) in debater_providers:
+            print(f"  {get_judge_short_name(m)} shares a provider with a debater; "
+                  f"left off the panel.")
+            continue
+        if m in seen:
+            continue
+        seen.add(m)
+        panel.append(m)
+        if len(panel) >= MAX_JUDGES:
+            break
+    JUDGE_VOICE_MAP = {mid: idx % len(JUDGE_VOICES) for idx, mid in enumerate(panel)}
+    return panel
+
+
+def print_cost_estimate(panel_size):
+    """Rough spend for one build, printed before anything is generated."""
+    if not USE_PAID_MODELS:
+        print("Using free models; no OpenRouter spend.")
+        return
+    turns = ROUNDS * TURNS_PER_SIDE_PER_ROUND * 2
+    judge_calls = panel_size * 2 * ROUNDS          # two order passes per judge
+    poll_calls = panel_size * 2 * 2                # pre and post, both scale directions
+    tokens_in = (turns * 700 + judge_calls * 1150 + poll_calls * 1200
+                 + ROUNDS * 2 * 850 + 2000)
+    tokens_out = turns * 220 + judge_calls * 130 + poll_calls * 120 + ROUNDS * 2 * 160
+    cost = (tokens_in / 1e6) * PRICE_PER_M["in"] + (tokens_out / 1e6) * PRICE_PER_M["out"]
+    chars = int(tokens_out * 4.2)
+    print(f"Estimated spend: about {tokens_in/1000:.0f}k input and {tokens_out/1000:.0f}k "
+          f"output tokens, roughly ${cost:.2f} at {PRICE_PER_M['in']:.0f} and "
+          f"{PRICE_PER_M['out']:.0f} dollars per million. Adjust PRICE_PER_M for your roster.")
+    if TTS_PROVIDER == "elevenlabs":
+        print(f"Plus roughly {chars/1000:.0f}k ElevenLabs characters for the narration.")
 
 
 def preflight_environment():
@@ -1906,15 +2358,27 @@ def run_debate_pipeline():
     print(f"\nTOPIC FROM topic.txt: {topic}\n")
 
     global AVAILABLE_MODELS
-    avail = discover_models() or FALLBACK_MODELS.copy()
+    if USE_PAID_MODELS:
+        # A pinned roster: the same debaters and panel in every video.
+        avail = [m for m in DEBATER_MODELS + PANEL_MODELS if not is_reasoning_model(m)]
+        print(f"Paid roster: {len(DEBATER_MODELS)} debaters, {len(PANEL_MODELS)} panel models.")
+    else:
+        avail = discover_models() or FALLBACK_MODELS.copy()
     AVAILABLE_MODELS = [m for m in avail if not is_reasoning_model(m)]
+    print_cost_estimate(len(PANEL_MODELS) if USE_PAID_MODELS else MAX_JUDGES)
     preflight_models(AVAILABLE_MODELS or avail, MIN_PANEL_SIZE)
-    ap_model, sk_model = choose_primary_models(AVAILABLE_MODELS or avail)
+    if USE_PAID_MODELS and len(DEBATER_MODELS) >= 2:
+        ap_model, sk_model = DEBATER_MODELS[0], DEBATER_MODELS[1]
+    else:
+        ap_model, sk_model = choose_primary_models(AVAILABLE_MODELS or avail)
     roles = get_debate_roles(topic, ap_model)
     print(f"Sides: {roles['side_a_label']} (Brian, left) vs {roles['side_b_label']} (Ava, right)")
     print(f"  A stance: {roles['side_a_stance']}")
     print(f"  B stance: {roles['side_b_stance']}")
-    judges = choose_judges(AVAILABLE_MODELS or avail, (ap_model, sk_model))
+    if USE_PAID_MODELS and PANEL_MODELS:
+        judges = pin_panel(PANEL_MODELS, (ap_model, sk_model))
+    else:
+        judges = choose_judges(AVAILABLE_MODELS or avail, (ap_model, sk_model))
     if len(judges) < MIN_PANEL_SIZE:
         raise DebateGenerationError(
             f"Only {len(judges)} usable judge model(s) were found. A scorecard needs a real "
@@ -1945,12 +2409,32 @@ def run_debate_pipeline():
 
     add_seg(build_intro(topic, len(judges), roles), "MOD", "MODERATOR", count_speech=False)
 
+    # Where the panel stands before hearing a word. This is the consensus
+    # measurement; the round scorecards measure who argued better.
+    print("\nOpening poll: asking the panel where it stands, cold.")
+    poll_before = poll_panel(judges, topic, roles)
+    if not poll_before:
+        raise DebateGenerationError(
+            "No model answered the opening poll, so there is no consensus to measure and "
+            "nothing would be gained by inventing one.")
+    sum_before = poll_summary(poll_before)
+    for r in poll_before:
+        stance = "declined" if r["declined"] else f"{r['position']:+.1f}"
+        print(f"    {r['display_name']}: {stance}")
+    print(f"  Opening: {describe_poll(sum_before, roles)}; mean {sum_before['mean']:+.2f}")
+    specs.append(prepare_poll_segment(
+        poll_before, sum_before, roles,
+        build_opening_poll_narration(sum_before, roles, topic),
+        "opening", "WHERE THE PANEL STANDS - BEFORE"))
+    pacing.add(specs[-1]["duration"])
+
     cum_a = cum_b = 0.0
     all_results = []
     last_a_text = ""
     last_b_text = ""
 
     turn_attribution = []
+    turn_transcript = []
     votes_a = votes_b = votes_t = votes_u = 0
     for rn in range(1, ROUNDS + 1):
         print(f"\n--- ROUND {rn} ---")
@@ -1977,7 +2461,7 @@ def run_debate_pipeline():
                 rounds_left = ROUNDS - rn + 1
                 reserved = (rounds_left * EST_SCORECARD_SEC
                             + rounds_left * 2 * EST_COMMENTARY_SEC
-                            + EST_OUTRO_SEC)
+                            + EST_POLL_SEC + EST_OUTRO_SEC)
                 target = pacing.turn_words(turns_left, reserved)
                 if opener_words is not None:
                     # Answer at the length the other side actually spoke, so
@@ -1992,6 +2476,7 @@ def run_debate_pipeline():
                 round_writers.add(wrote)
                 turn_attribution.append({"round": rn, "turn": tn, "side": label,
                                          "model": wrote, "words": count_words(text)})
+                turn_transcript.append({"side": label, "text": text})
                 substitute = " (substitute)" if wrote != model else ""
                 print(f"  R{rn} T{tn} {label}: {count_words(text)}w / target {target}w "
                       f"- written by {get_judge_short_name(wrote)} [{wrote}]{substitute}")
@@ -2064,10 +2549,29 @@ def run_debate_pipeline():
             add_seg(text, "JUDGE", name, jvi=jvi, count_speech=False)
         print(f"  written and voiced so far: {pacing.consumed / 60:.1f} min")
 
+    # The same question, to the same models, now having read the whole thing.
+    print("\nClosing poll: asking the same panel again, with the transcript.")
+    transcript = "\n\n".join(
+        f"{t['side']}: {t['text']}" for t in turn_transcript)
+    poll_after = poll_panel(judges, topic, roles, transcript=transcript)
+    sum_after = poll_summary(poll_after) if poll_after else sum_before
+    for r in poll_after:
+        stance = "declined" if r["declined"] else f"{r['position']:+.1f}"
+        print(f"    {r['display_name']}: {stance}")
+    swing = sum_after["mean"] - sum_before["mean"]
+    print(f"  Closing: {describe_poll(sum_after, roles)}; mean {sum_after['mean']:+.2f} "
+          f"(swing {swing:+.2f})")
+    specs.append(prepare_poll_segment(
+        poll_after, sum_after, roles,
+        build_closing_poll_narration(sum_before, sum_after, roles),
+        "closing", "WHERE THE PANEL STANDS - AFTER", before=sum_before))
+    pacing.add(specs[-1]["duration"])
+
     print(f"\nPanel consensus across all rounds: {votes_a} to {votes_b}"
           f"{f' with {votes_t} even' if votes_t else ''}"
           f"{f', {votes_u} abstained as order driven' if votes_u else ''}.")
-    add_seg(build_outro(cum_a, cum_b, votes_a, votes_b, votes_t, votes_u, roles),
+    add_seg(build_outro(cum_a, cum_b, votes_a, votes_b, votes_t, votes_u, roles,
+                        swing=swing),
             "MOD", "MODERATOR", count_speech=False)
 
     try:
@@ -2078,7 +2582,10 @@ def run_debate_pipeline():
                    "rounds": all_results,
                    "cumulative": {"A": round(cum_a, 2), "B": round(cum_b, 2)},
                    "consensus_votes": {"A": votes_a, "B": votes_b, "TIE": votes_t,
-                                       "UNSTABLE": votes_u}},
+                                       "UNSTABLE": votes_u},
+                   "poll": {"before": {"summary": sum_before, "models": poll_before},
+                            "after": {"summary": sum_after, "models": poll_after},
+                            "swing": round(sum_after["mean"] - sum_before["mean"], 3)}},
                   open("scores.json", "w", encoding="utf-8"), indent=2)
     except Exception:
         pass
