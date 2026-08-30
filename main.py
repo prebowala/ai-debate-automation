@@ -31,6 +31,9 @@ MAX_TOTAL_SECONDS = 900.0
 DEFAULT_WORDS_PER_SEC = 2.55        # edge-tts neural voices run ~150-160 wpm
 MIN_TURN_WORDS = 95
 MAX_TURN_WORDS = 175
+# A real turn shorter than the pacing target is still a real turn. Below this
+# it is too thin to use, and nothing is ever substituted for it.
+MIN_ACCEPTABLE_TURN_WORDS = 70
 
 # Estimates used to reserve room for the non-debate segments while pacing.
 EST_INTRO_SEC = 26.0
@@ -112,6 +115,20 @@ SPEECH_SYSTEM_PROMPT = (
     "write 'and' not '/', 'percent' not '%'. Use contractions and plain language, and start "
     "with the substance."
 )
+
+
+class DebateGenerationError(RuntimeError):
+    """Raised when real content could not be generated. Nothing is faked."""
+
+
+# Every model the build may fall back to for one turn, in order, deduplicated.
+AVAILABLE_MODELS = []
+
+
+def turn_model_chain(preferred):
+    chain = [preferred] + [m for m in AVAILABLE_MODELS if m != preferred]
+    chain += [m for m in FALLBACK_MODELS if m not in chain]
+    return [m for m in dict.fromkeys(chain) if m and not is_reasoning_model(m)]
 
 
 def provider_from_model(mid):
@@ -693,40 +710,6 @@ def strip_meta(text):
     return clean_response(text)[0]
 
 
-def generate_fallback_debate(roles, side, topic, opponent_last, target_words):
-    """Topic-agnostic filler that still rebuts and still sounds spoken."""
-    other = roles["side_b_label"] if side == "A" else roles["side_a_label"]
-    stance = roles["side_a_stance"] if side == "A" else roles["side_b_stance"]
-
-    hook = ""
-    if opponent_last:
-        first = re.split(r"(?<=[.!?])\s+", opponent_last.strip())[0]
-        first = " ".join(first.split()[:18]).rstrip(",.;:")
-        if first:
-            hook = (f"My opponent just said {first}, and that's exactly where this falls apart. "
-                    f"It's a claim that sounds tidy until you ask what it actually rests on, "
-                    f"and on {topic} it rests on very little. ")
-
-    body = random.choice([
-        f"When I look at {topic}, I keep coming back to what happens in practice rather than "
-        f"what sounds good in theory. Every time the {other.lower()} position gets tested against "
-        f"real cases, it has to add another exception to survive, and a position that needs a new "
-        f"exception every time it meets the world is telling you something. That's why I hold that {stance}.",
-
-        f"Here's the thing about {topic}. The strongest case for my side isn't clever argument, "
-        f"it's the track record. Follow the actual outcomes, look at who bears the cost when this "
-        f"goes wrong, and the picture is consistent. The {other.lower()} side has to explain away "
-        f"that pattern one case at a time. I'd rather hold the position that predicts it: {stance}.",
-
-        f"On {topic}, I think we should ask which side has to keep moving the goalposts. Mine "
-        f"makes a claim you can check, and it keeps holding up when you check it. The {other.lower()} "
-        f"case sounds strongest right up until someone asks for the specific example, and then it "
-        f"gets vague. That asymmetry is the whole argument for why {stance}.",
-    ])
-    text = (hook + body).strip()
-    return trim_to_words(text, target_words + 25)
-
-
 def generate_turn(topic, roles, side, round_num, turn_num, opponent_last, target_words, model):
     label = roles["side_a_label"] if side == "A" else roles["side_b_label"]
     other = roles["side_b_label"] if side == "A" else roles["side_a_label"]
@@ -764,7 +747,10 @@ def generate_turn(topic, roles, side, round_num, turn_num, opponent_last, target
             "out loud. Choose your evidence silently and state it with conviction."
         )
 
-    for m in [model] + FALLBACK_MODELS[:4]:
+    attempted = []
+    best = ""
+    for m in turn_model_chain(model):
+        attempted.append(get_judge_short_name(m))
         resp = query_openrouter(prompt, m, max_tokens=900,
                                 temperature=0.84 + random.random() * 0.08)
         if not resp:
@@ -773,10 +759,10 @@ def generate_turn(topic, roles, side, round_num, turn_num, opponent_last, target
         if is_deliberating(deliberation, sentence_count):
             # The model talked itself through the answer instead of giving it.
             continue
-        if count_words(cleaned) < max(60, target_words - 45):
-            continue
         low = cleaned.lower()
         if any(frag in low for frag in LEAK_FRAGMENTS):
+            continue
+        if count_words(cleaned) < MIN_ACCEPTABLE_TURN_WORDS:
             continue
 
         repeated = False
@@ -787,87 +773,110 @@ def generate_turn(topic, roles, side, round_num, turn_num, opponent_last, target
         if repeated:
             continue
 
+        # Short of the pacing target but genuine: hold it, and keep looking for
+        # a fuller one rather than discarding real content.
+        if count_words(cleaned) < target_words - 40:
+            if count_words(cleaned) > count_words(best):
+                best = cleaned
+            continue
+
         cleaned = trim_to_words(cleaned, target_words + 25)
         for s in re.split(r"(?<=[.!?])\s+", cleaned)[:3]:
             if len(s) > 40:
                 USED_ARGUMENTS.add(s[:90])
         return cleaned
 
-    fb = generate_fallback_debate(roles, side, topic, opponent_last, target_words)
-    USED_ARGUMENTS.add(fb[:90])
-    return fb
+    if best:
+        print(f"    {label} turn came in at {count_words(best)} words against a "
+              f"{target_words} target; using it as spoken rather than padding.")
+        for s in re.split(r"(?<=[.!?])\s+", best)[:3]:
+            if len(s) > 40:
+                USED_ARGUMENTS.add(s[:90])
+        return best
+
+    raise DebateGenerationError(
+        f"No model produced a usable {label} turn for round {round_num}, turn {turn_num}. "
+        f"Tried: {', '.join(attempted)}. Every reply was empty, too short, or was the model "
+        f"reasoning out loud rather than arguing. Nothing was substituted - rerun, or widen "
+        f"FALLBACK_MODELS."
+    )
 
 
 # ----------------------------------------------------------------------------
 # Judging
 # ----------------------------------------------------------------------------
 
-def neutral_judge(model):
-    a = random.uniform(53, 68)
-    b = random.uniform(53, 68)
-    if abs(a - b) < 4:
-        if random.random() > 0.5:
-            a += 7
-        else:
-            b += 7
-    return {"model": model, "provider": provider_from_model(model),
-            "display_name": get_judge_short_name(model),
-            "A_total": round(a, 1), "B_total": round(b, 1),
-            "winner": "A" if a > b else "B", "reason": ""}
-
-
 def judge_round(model, topic, rn, ap, sk, roles):
+    """Return this judge's real scores, or None if it did not return any.
+
+    A judge that fails is left out of the panel. No score is ever invented,
+    and a genuine tie is recorded as a tie rather than nudged into a winner.
+    """
     prompt = (
         f"You are judging round {rn} of a debate on: {topic}\n\n"
         f"{roles['side_a_label']} argued:\n{ap[:2000]}\n\n"
         f"{roles['side_b_label']} argued:\n{sk[:2000]}\n\n"
         "Score each side from 0 to 100 on how well they used evidence and how directly they "
-        "answered the other side. The two scores must not be equal.\n"
+        "answered the other side. Judge only what was actually said above.\n"
         'Return ONLY JSON: {"A_total": 0, "B_total": 0, "winner": "A", '
-        '"reason": "one spoken sentence naming the specific point that decided it"}'
+        '"reason": "one spoken sentence naming the specific point that decided it"}\n'
+        'Use "winner": "TIE" only if the two sides were genuinely inseparable.'
     )
-    for m in [model] + FALLBACK_MODELS[:2]:
-        if ":free" not in m:
-            continue
-        resp = query_openrouter(prompt, m, timeout=40, max_tokens=320, temperature=0.5,
+    if ":free" not in model or is_reasoning_model(model):
+        return None
+    # Only this judge may produce this judge's verdict. Substituting another
+    # model here would put a score on the scorecard under the wrong name.
+    for _ in range(2):
+        resp = query_openrouter(prompt, model, timeout=40, max_tokens=320, temperature=0.5,
                                 system="You return only valid JSON. No commentary.")
         d = extract_json_object(resp)
-        if not d:
+        if not d or d.get("A_total") is None or d.get("B_total") is None:
             continue
         try:
             a = clamp_score(d.get("A_total"))
             b = clamp_score(d.get("B_total"))
         except Exception:
             continue
-        if abs(a - b) < 1.5:
-            if random.random() > 0.5:
-                a += 3
-            else:
-                b += 3
-            a, b = clamp_score(a), clamp_score(b)
+        if a > b:
+            winner = "A"
+        elif b > a:
+            winner = "B"
+        else:
+            winner = "TIE"
         return {"model": model, "provider": provider_from_model(model),
                 "display_name": get_judge_short_name(model),
                 "A_total": round(a, 1), "B_total": round(b, 1),
-                "winner": "A" if a > b else "B",
+                "winner": winner,
                 "reason": str(d.get("reason", ""))[:200]}
-    return neutral_judge(model)
+    return None
 
 
 def evaluate_round(judges, topic, rn, ap, sk, roles):
+    """Score a round with the judges that actually responded.
+
+    The panel is never padded. A model that fails to return scores simply does
+    not appear on the scorecard for that round.
+    """
     results = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=min(7, len(judges))) as ex:
         futs = {ex.submit(judge_round, m, topic, rn, ap, sk, roles): m for m in judges}
         for f in concurrent.futures.as_completed(futs):
             try:
-                results.append(f.result())
+                r = f.result()
             except Exception:
-                pass
-    if len(results) < 3:
-        for m in FALLBACK_MODELS:
-            if len(results) >= 5:
-                break
-            if m not in [x["model"] for x in results]:
-                results.append(neutral_judge(m))
+                r = None
+            if r:
+                results.append(r)
+
+    missing = len(judges) - len(results)
+    if missing:
+        print(f"    {missing} of {len(judges)} judges returned no score and were left off "
+              f"the round {rn} scorecard.")
+    if not results:
+        raise DebateGenerationError(
+            f"No judge returned a usable score for round {rn}. The scorecard would have been "
+            f"invented, so the build stops here instead."
+        )
     results.sort(key=lambda r: r["display_name"])
     return results
 
@@ -902,29 +911,18 @@ def generate_panel_commentary(model, side, topic, rn, a_text, b_text, roles):
         "and no thinking out loud about what you might say. Just say it."
     )
     resp = query_openrouter(prompt, model, timeout=40, max_tokens=320, temperature=0.88)
-    if resp:
-        cleaned, deliberation, sentence_count = clean_response(resp)
-        if is_deliberating(deliberation, sentence_count):
-            cleaned = ""
-        if count_words(cleaned) >= 18:
-            key = cleaned.lower()[:80]
-            if key not in USED_JUDGE_EXPLANATIONS:
-                USED_JUDGE_EXPLANATIONS.add(key)
-                return trim_to_words(cleaned, COMMENTARY_WORDS + 30)
-
-    snippet = ""
-    if win_text:
-        s = re.split(r"(?<=[.!?])\s+", win_text.strip())
-        if s:
-            snippet = " ".join(s[-1].split()[:16]).rstrip(",.;:")
-    fallback = (
-        f"What settled it for me was {winner.lower()} putting something concrete on the table, "
-        f"{snippet}. That's checkable, and nobody checked it. "
-        f"{loser.title()} had the better phrasing but never came back to that point, and on a "
-        f"question like {topic} the side that answers wins the round."
-    )
-    USED_JUDGE_EXPLANATIONS.add(fallback.lower()[:80])
-    return fallback
+    if not resp:
+        return None
+    cleaned, deliberation, sentence_count = clean_response(resp)
+    if is_deliberating(deliberation, sentence_count):
+        return None
+    if count_words(cleaned) < 18:
+        return None
+    key = cleaned.lower()[:80]
+    if key in USED_JUDGE_EXPLANATIONS:
+        return None
+    USED_JUDGE_EXPLANATIONS.add(key)
+    return trim_to_words(cleaned, COMMENTARY_WORDS + 30)
 
 
 # ----------------------------------------------------------------------------
@@ -1350,8 +1348,12 @@ def generate_scoreboard(rn, res, avg_a, avg_b, cum_a, cum_b, path, roles):
         draw.text((cx1, y), jt, font=fr, fill=(255, 255, 255))
         draw.text((cx2, y), f"{r['A_total']:.1f}", font=fr, fill=(0, 255, 204))
         draw.text((cx3, y), f"{r['B_total']:.1f}", font=fr, fill=(255, 120, 255))
-        wl = roles["side_a_label"] if r["winner"] == "A" else roles["side_b_label"]
-        col = (0, 255, 204) if r["winner"] == "A" else (255, 120, 255)
+        if r["winner"] == "A":
+            wl, col = roles["side_a_label"], (0, 255, 204)
+        elif r["winner"] == "B":
+            wl, col = roles["side_b_label"], (255, 120, 255)
+        else:
+            wl, col = "TIE", (220, 220, 220)
         draw.text((cx4, y), wl, font=fr, fill=col)
         y += 58
     draw.line([(60, y + 5), (W - 60, y + 5)], fill=(255, 255, 255), width=2)
@@ -1500,6 +1502,28 @@ class Pacing:
         return int(max(MIN_TURN_WORDS, min(MAX_TURN_WORDS, per_turn * self.wps)))
 
 
+def preflight_check(models):
+    """Confirm a model will actually answer before anything is rendered.
+
+    Without this, a bad key or an empty model list only surfaces after the
+    first turns have been generated, and the old code hid it behind canned
+    text. Now it fails in seconds, loudly.
+    """
+    for m in models[:4]:
+        resp = query_openrouter(
+            "Reply with exactly the word: ready",
+            m, timeout=30, max_tokens=20, temperature=0,
+            system="You reply with one word.")
+        if resp:
+            print(f"Preflight OK via {get_judge_short_name(m)}.")
+            return True
+    raise DebateGenerationError(
+        "No model answered a trivial preflight prompt. Check OPENROUTER_API_KEY and that the "
+        "free models in FALLBACK_MODELS are still available. Stopping before anything is "
+        "rendered rather than filling the video with placeholder content."
+    )
+
+
 def run_debate_pipeline():
     global USED_ARGUMENTS, USED_JUDGE_EXPLANATIONS
     USED_ARGUMENTS = set()
@@ -1512,15 +1536,22 @@ def run_debate_pipeline():
     topic = open("topic.txt", "r", encoding="utf-8").read().strip() or "Does God exist?"
     print(f"\nTOPIC FROM topic.txt: {topic}\n")
 
+    global AVAILABLE_MODELS
     avail = discover_models() or FALLBACK_MODELS.copy()
-    ap_model, sk_model = choose_primary_models(avail)
+    AVAILABLE_MODELS = [m for m in avail if not is_reasoning_model(m)]
+    preflight_check(AVAILABLE_MODELS or avail)
+    ap_model, sk_model = choose_primary_models(AVAILABLE_MODELS or avail)
     roles = get_debate_roles(topic, ap_model)
     print(f"Sides: {roles['side_a_label']} (Brian, left) vs {roles['side_b_label']} (Ava, right)")
     print(f"  A stance: {roles['side_a_stance']}")
     print(f"  B stance: {roles['side_b_stance']}")
-    judges = choose_judges(avail, (ap_model, sk_model))
-    if len(judges) < 5:
-        judges = FALLBACK_MODELS[:7]
+    judges = choose_judges(AVAILABLE_MODELS or avail, (ap_model, sk_model))
+    if len(judges) < 2:
+        raise DebateGenerationError(
+            f"Only {len(judges)} usable judge model(s) were found. A scorecard needs a real "
+            f"panel, and padding it with invented scores is exactly what this build refuses "
+            f"to do."
+        )
     print(f"Judges: {', '.join(get_judge_short_name(j) for j in judges)}")
 
     pacing = Pacing()
@@ -1605,6 +1636,10 @@ def run_debate_pipeline():
             print(f"  Panel was unanimous for {side_word}; one reaction only.")
         for judge, side in picks:
             text = generate_panel_commentary(judge["model"], side, topic, rn, a_full, b_full, roles)
+            if not text:
+                # Nothing this judge actually said; better silent than scripted.
+                print(f"  {judge['display_name']} gave no usable reasoning; reaction skipped.")
+                continue
             jvi = JUDGE_VOICE_MAP.get(judge["model"], 0)
             name = f"JUDGE — {judge['display_name'].upper()} ({judge['provider'].upper()})"
             add_seg(text, "JUDGE", name, jvi=jvi, count_speech=False)
