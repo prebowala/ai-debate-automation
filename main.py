@@ -74,10 +74,23 @@ FALLBACK_MODELS = [
     "google/gemini-flash-1.5-8b:free",
     "meta-llama/llama-3.2-3b-instruct:free",
     "mistralai/mistral-7b-instruct:free",
-    "deepseek/deepseek-r1:free",
+    "deepseek/deepseek-chat:free",
     "qwen/qwen-2.5-7b-instruct:free",
     "nvidia/llama-3.1-nemotron-70b-instruct:free",
 ]
+
+# Models that narrate their own deliberation instead of answering. They are
+# never used for debate turns, judging or commentary.
+REASONING_MODEL_MARKERS = [
+    "deepseek-r1", "/r1", "-r1:", "qwq", "o1-", "o3-", "-thinking", "thinking-",
+    "reasoner", "reasoning",
+]
+
+
+def is_reasoning_model(mid):
+    low = (mid or "").lower()
+    return any(marker in low for marker in REASONING_MODEL_MARKERS)
+
 
 PROVIDER_ALIASES = {
     "openai": "OpenAI", "anthropic": "Anthropic", "google": "Google",
@@ -87,11 +100,17 @@ PROVIDER_ALIASES = {
 
 SPEECH_SYSTEM_PROMPT = (
     "You are a person speaking out loud on a live debate stage. Everything you produce is "
-    "spoken word that goes straight to a text to speech engine. Never describe what you are "
-    "about to do, never announce your structure, never say you will address or discuss "
-    "something, never write headings, numbered lists, bullet points, stage directions or word "
-    "counts. No markdown. Just talk, using contractions and plain language, and get straight "
-    "into the substance."
+    "spoken word that goes straight to a text to speech engine, so it is heard, never read.\n"
+    "Give only the finished speech. Never think out loud on the page: no weighing of options, "
+    "no 'maybe I could use this', no 'that's too technical', no considering an example and then "
+    "rejecting it, no commentary on your own wording or length. Decide silently, then say the "
+    "one thing you decided on.\n"
+    "Never describe what you are about to do, never announce your structure, never say you will "
+    "address or discuss something. No headings, numbered lists, bullet points, stage directions, "
+    "word counts or markdown.\n"
+    "Write it the way it should sound. No slashes, no emoji, no symbols, no abbreviations: "
+    "write 'and' not '/', 'percent' not '%'. Use contractions and plain language, and start "
+    "with the substance."
 )
 
 
@@ -158,6 +177,17 @@ def clean_for_speech(t):
     t = re.sub(r"www\.\S+", " ", t)
     t = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", t)
     t = re.sub(r"```.*?```", " ", t, flags=re.DOTALL)
+    t = EMOJI_RE.sub(" ", t)
+    # The voice reads these literally ("slash", "percent sign"), so spell them out.
+    t = re.sub(r"(\d)\s*/\s*(\d)", r"\1 out of \2", t)
+    t = re.sub(r"\s*/\s*", " or ", t)
+    t = re.sub(r"(\d)\s*%", r"\1 percent", t)
+    t = t.replace("%", " percent")
+    t = re.sub(r"\$\s*([\d][\d,.]*)\s*(billion|million|trillion|thousand|bn|m|k)\b",
+               r"\1 \2 dollars", t, flags=re.IGNORECASE)
+    t = re.sub(r"\$\s*([\d][\d,.]*)", r"\1 dollars", t)
+    t = re.sub(r"\s*\+\s*", " plus ", t)
+    t = re.sub(r"\s*=\s*", " equals ", t)
     t = t.replace("(", " ").replace(")", " ").replace("[", " ").replace("]", " ")
     t = t.replace("–", ", ").replace("—", ". ").replace(" - ", ". ")
     for o, n in {"*": "", "#": "", "_": "", "`": "", "\"": "", ":": " . ", ";": " . ", "&": " and"}.items():
@@ -210,6 +240,8 @@ def discover_models():
             if not mid or ":free" not in mid.lower():
                 continue
             if any(x in mid.lower() for x in ["embed", "tts", "whisper", "audio"]):
+                continue
+            if is_reasoning_model(mid):
                 continue
             top = ["openai", "anthropic", "google", "meta-llama", "mistralai", "deepseek", "qwen", "nvidia"]
             if not any(p in mid.lower() for p in top):
@@ -466,6 +498,40 @@ META_SENTENCE_PATTERNS = [
     r"^(?:i\s+)?(?:need|want|have)\s+to\s+(?:make sure|remember|keep|stay|hit|reach)\b",
 ]
 
+# The model weighing its own options out loud: "Option 2. Maybe I could use the
+# 2008 crash, but that's too technical." These are dropped AND counted, because
+# a response full of them is deliberation, not an answer.
+DELIBERATION_PATTERNS = [
+    r"^options?\s*\d*\s*[:.\-]",
+    r"^option\s+(?:one|two|three|a|b|c)\b",
+    r"^(?:i|we)\s+(?:have|see|could go with|am considering)\s+(?:a few|some|two|three|several)\s+"
+    r"(?:options|ideas|angles|choices|possibilities|directions)\b",
+    r"^(?:maybe|perhaps|possibly)\s+(?:i|we)\s+(?:could|should|can|might|ought to)\b",
+    r"^(?:i|we)\s+(?:could|might|can)\s+(?:say|use|mention|cite|go with|talk about|start with|"
+    r"try|pick|choose|open with|lead with|bring up)\b",
+    r"^(?:but|and|though|however)?\s*(?:that|this|it)\s*(?:'s|s\b| is| was| would be| might be|"
+    r"| may be| sounds| seems| feels| gets)\s+(?:\w+\s+){0,3}?(?:too|overly|a bit|a little|"
+    r"kind of|sort of|rather)\s+(?:technical|scientific|academic|scholarly|niche|obscure|"
+    r"complex|complicated|convoluted|dry|dense|nerdy|wonky|jargon\w*|abstract|theoretical|"
+    r"wordy|verbose|long|short|formal|informal|casual|stiff|aggressive|harsh|weak|generic|"
+    r"vague|bland|obvious|on the nose|cliche\w*|preachy|dark|heavy|controversial|much)\b",
+    r"^(?:hmm+|wait|hold on|actually,? no|on second thought|scratch that|let'?s see|"
+    r"let me see|okay let'?s|alright let'?s)\b",
+    r"^alternatively\b",
+    r"^(?:i|we)\s+(?:should|need to|must|want to|ought to)\s+(?:avoid|steer clear|not use|"
+    r"stay away|keep away)\b",
+    r"^(?:that|this|the (?:first|second|third|last) one)\s+"
+    r"(?:works|is good|is better|is best|sounds good|is fine|is stronger|feels right)\b",
+    r"^(?:another|one more|a better|a different)\s+(?:option|idea|angle|approach|choice|way)\b",
+    r"^(?:for|as)\s+(?:the|my|an?)\s+(?:evidence|example|statistic|number|point|hook|opener),?\s+"
+    r"(?:i|we)\s+(?:could|might|should|will)\b",
+    r"^(?:i|we)\s*(?:'ll|will)\s+(?:go|run|stick)\s+with\b",
+    r"^(?:that|this)\s+(?:covers|hits|checks)\s+(?:the|all|both)\b",
+    r"^(?:word count|length)\s*[:\-]",
+    r"^(?:good|great|perfect|nice|okay|ok)[.,!]?\s*(?:that|this|now)\b.*"
+    r"(?:next|move on|now for|then i)\b",
+]
+
 # Planning verbs that only look like scaffolding in a short, clipped sentence.
 PLANNING_STUB = re.compile(
     r"^(?:analy[sz]e|identify|draft|outline|brainstorm|structure|plan|review|check|"
@@ -494,6 +560,18 @@ LEAK_FRAGMENTS = [
 ]
 
 
+def _is_deliberation_sentence(sentence):
+    """True when the sentence is the model weighing options rather than arguing."""
+    s = sentence.strip()
+    for _ in range(3):
+        stripped = LEADING_CONNECTIVE.sub("", s, count=1).strip()
+        if stripped == s:
+            break
+        s = stripped
+    low = s.lower()
+    return any(re.match(pat, low, flags=re.IGNORECASE) for pat in DELIBERATION_PATTERNS)
+
+
 def _is_meta_sentence(sentence):
     """True when the sentence is the model narrating its own process."""
     s = sentence.strip()
@@ -513,11 +591,49 @@ def _is_meta_sentence(sentence):
     return False
 
 
-def strip_meta(text):
-    """Remove the scaffolding models emit around what they actually want to say."""
+# Pictographs and dingbats: DejaVu has no glyphs for these, so anything that
+# survives into a subtitle renders as a blank rectangle. They are also read
+# aloud by the voice ("sparkles"), so they come out of the spoken text too.
+EMOJI_RE = re.compile(
+    "["
+    "\U0001F000-\U0001FAFF"
+    "\U0001F1E6-\U0001F1FF"
+    "\U00002190-\U000021FF"
+    "\U00002300-\U000023FF"
+    "\U00002460-\U000024FF"
+    "\U000025A0-\U000027BF"
+    "\U00002B00-\U00002BFF"
+    "\U00002600-\U000026FF"
+    "\U0000FE00-\U0000FE0F"
+    "\U0000200D"
+    "]+"
+)
+
+# Reasoning models wrap their scratchpad in these before answering.
+REASONING_BLOCK_RE = re.compile(
+    r"<\s*(?:think|thinking|thought|scratchpad|reasoning)\s*>.*?"
+    r"<\s*/\s*(?:think|thinking|thought|scratchpad|reasoning)\s*>",
+    re.DOTALL | re.IGNORECASE,
+)
+# An unclosed opener means everything after it is scratchpad.
+REASONING_OPEN_RE = re.compile(
+    r"<\s*(?:think|thinking|thought|scratchpad|reasoning)\s*>.*",
+    re.DOTALL | re.IGNORECASE,
+)
+
+
+def clean_response(text):
+    """Strip scaffolding and deliberation from a model reply.
+
+    Returns (spoken_text, deliberation_count, sentence_count) so the caller can
+    reject a reply that was mostly the model thinking out loud.
+    """
     if not text:
-        return ""
-    t = re.sub(r"```.*?```", " ", text, flags=re.DOTALL)
+        return "", 0, 0
+    t = REASONING_BLOCK_RE.sub(" ", text)
+    t = REASONING_OPEN_RE.sub(" ", t)
+    t = re.sub(r"```.*?```", " ", t, flags=re.DOTALL)
+    t = EMOJI_RE.sub(" ", t)
     t = re.sub(r"^\s*#{1,6}\s*", "", t, flags=re.MULTILINE)
     t = re.sub(r"\*\*(.+?)\*\*", r"\1", t)
     t = re.sub(r"^\s*(?:[-*\u2022]|\d+[.)])\s+", "", t, flags=re.MULTILINE)
@@ -525,12 +641,13 @@ def strip_meta(text):
     t = re.sub(r"\s+", " ", t).strip()
 
     kept = []
-    for sentence in re.split(r"(?<=[.!?])\s+", t):
+    deliberation = 0
+    sentences = [s for s in re.split(r"(?<=[.!?])\s+", t) if s.strip()]
+    for sentence in sentences:
         s = sentence.strip()
-        if not s:
-            continue
         low = s.lower()
         if any(frag in low for frag in LEAK_FRAGMENTS):
+            deliberation += 1
             continue
 
         # Shave openers, then re-test: "Okay, so I need to discuss X" must still die.
@@ -546,7 +663,11 @@ def strip_meta(text):
         # Orphaned list markers ("1.", "2.") survive sentence splitting; drop them.
         if count_words(trimmed) < 2 or not re.search(r"[A-Za-z]{2}", trimmed):
             continue
+        if _is_deliberation_sentence(trimmed):
+            deliberation += 1
+            continue
         if _is_meta_sentence(trimmed):
+            deliberation += 1
             continue
         if trimmed and trimmed[0].islower():
             trimmed = trimmed[0].upper() + trimmed[1:]
@@ -557,7 +678,19 @@ def strip_meta(text):
     out = re.sub(r"\s+", " ", out).strip()
     if out and out[-1] not in ".!?":
         out += "."
-    return out
+    return out, deliberation, len(sentences)
+
+
+def is_deliberating(deliberation, sentence_count):
+    """A reply that is mostly the model weighing options is not usable."""
+    if deliberation >= 4:
+        return True
+    return sentence_count > 0 and deliberation / sentence_count > 0.34
+
+
+def strip_meta(text):
+    """Spoken text only, with the scaffolding and deliberation removed."""
+    return clean_response(text)[0]
 
 
 def generate_fallback_debate(roles, side, topic, opponent_last, target_words):
@@ -609,7 +742,8 @@ def generate_turn(topic, roles, side, round_num, turn_num, opponent_last, target
             "go look it up afterwards. Then say plainly what it means for the question.\n\n"
             f"Speak for roughly {target_words} words. Talk like a person on a podcast, warm, direct, "
             "using contractions. Start with the substance in your very first sentence. Do not greet "
-            "anyone, do not name your side, do not describe what you are about to say."
+            "anyone, do not name your side, do not describe what you are about to say, and do not "
+            "reason about which example to pick. Pick one and say it as if you always meant to."
         )
     else:
         prompt = (
@@ -626,7 +760,8 @@ def generate_turn(topic, roles, side, round_num, turn_num, opponent_last, target
             f"Points already used in this debate, so find something new: {used_str}\n\n"
             f"Speak for roughly {target_words} words. Contractions, plain speech, some edge to it. "
             "Your first sentence must already be engaging what they said. Never announce that you "
-            "are about to respond, counter, address or discuss anything."
+            "are about to respond, counter, address or discuss anything, and never weigh options "
+            "out loud. Choose your evidence silently and state it with conviction."
         )
 
     for m in [model] + FALLBACK_MODELS[:4]:
@@ -634,7 +769,10 @@ def generate_turn(topic, roles, side, round_num, turn_num, opponent_last, target
                                 temperature=0.84 + random.random() * 0.08)
         if not resp:
             continue
-        cleaned = strip_meta(resp)
+        cleaned, deliberation, sentence_count = clean_response(resp)
+        if is_deliberating(deliberation, sentence_count):
+            # The model talked itself through the answer instead of giving it.
+            continue
         if count_words(cleaned) < max(60, target_words - 45):
             continue
         low = cleaned.lower()
@@ -760,11 +898,14 @@ def generate_panel_commentary(model, side, topic, rn, a_text, b_text, roles):
         "actual thing the winning side said, repeat a phrase of theirs back, and say the specific "
         "question the other side left sitting there unanswered.\n"
         f"About {COMMENTARY_WORDS} words. Talk like a person reacting, not like a report. "
-        "No scores, no numbers, no round number, no preamble, no describing what you are doing."
+        "No scores, no numbers, no round number, no preamble, no describing what you are doing, "
+        "and no thinking out loud about what you might say. Just say it."
     )
     resp = query_openrouter(prompt, model, timeout=40, max_tokens=320, temperature=0.88)
     if resp:
-        cleaned = strip_meta(resp)
+        cleaned, deliberation, sentence_count = clean_response(resp)
+        if is_deliberating(deliberation, sentence_count):
+            cleaned = ""
         if count_words(cleaned) >= 18:
             key = cleaned.lower()[:80]
             if key not in USED_JUDGE_EXPLANATIONS:
@@ -804,59 +945,72 @@ EMOJI_CACHE_DIR = "emoji_cache"
 os.makedirs(EMOJI_CACHE_DIR, exist_ok=True)
 # If the emoji CDN is unreachable, stop retrying it on every later segment.
 EMOJI_CDN_OK = True
+# Codepoints the CDN has no artwork for; never requested twice in one build.
+EMOJI_MISSING = set()
 
 
 def create_emoji_asset(ec, idx):
+    """Fetch a Twemoji PNG for `ec`. Returns a path, or None if unavailable.
+
+    There is deliberately no drawn fallback: DejaVu has no emoji glyphs, so
+    drawing the character produced a blank .notdef rectangle on screen. A cue we
+    cannot render properly is simply dropped instead.
+    """
     global EMOJI_CDN_OK
-    fn = f"emoji_{idx}.png"
-    size = 500
-    try:
-        code = emoji_to_codepoint(ec)
-        url = f"https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/{code}.png"
-        cached = os.path.join(EMOJI_CACHE_DIR, f"{code}.png")
-        img_data = None
-        if os.path.exists(cached):
+    code = emoji_to_codepoint(ec)
+    if not code or code in EMOJI_MISSING:
+        return None
+
+    cached = os.path.join(EMOJI_CACHE_DIR, f"{code}.png")
+    img_data = None
+    if os.path.exists(cached):
+        try:
+            img_data = Image.open(cached).convert("RGBA")
+        except Exception:
             try:
-                img_data = Image.open(cached).convert("RGBA")
-            except Exception:
+                os.remove(cached)
+            except OSError:
                 pass
-        if img_data is None and EMOJI_CDN_OK:
+
+    if img_data is None and EMOJI_CDN_OK:
+        for version in ("14.0.2", "15.1.0"):
+            url = (f"https://cdn.jsdelivr.net/gh/twitter/twemoji@{version}"
+                   f"/assets/72x72/{code}.png")
             try:
                 resp = requests.get(url, timeout=8)
-                if resp.status_code == 200 and len(resp.content) > 500:
-                    img_data = Image.open(BytesIO(resp.content)).convert("RGBA")
-                    img_data.save(cached)
             except requests.exceptions.RequestException:
                 EMOJI_CDN_OK = False
-                print("Emoji CDN unreachable, using drawn fallbacks for the rest of the build.")
-            except Exception:
-                pass
-        if img_data is not None and img_data.size[0] > 10:
-            canvas = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-            resized = img_data.resize((380, 380), Image.LANCZOS)
-            x = (size - 380) // 2
-            y = (size - 380) // 2
-            shadow = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-            d = ImageDraw.Draw(shadow)
-            d.ellipse([x + 6, y + 6, x + 386, y + 386], fill=(0, 0, 0, 60))
-            shadow = shadow.filter(ImageFilter.GaussianBlur(6))
-            canvas = Image.alpha_composite(canvas, shadow)
-            canvas.paste(resized, (x, y), resized)
-            canvas.save(fn)
-            return fn
-    except Exception:
-        pass
+                print("Emoji CDN unreachable; visual cues disabled for this build.")
+                return None
+            if resp.status_code == 200 and len(resp.content) > 500:
+                try:
+                    img_data = Image.open(BytesIO(resp.content)).convert("RGBA")
+                    img_data.save(cached)
+                    break
+                except Exception:
+                    img_data = None
+
+    if img_data is None or img_data.size[0] <= 10:
+        # No artwork for this codepoint; never ask for it again this build.
+        EMOJI_MISSING.add(code)
+        return None
+
     try:
+        size = 500
         canvas = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-        draw = ImageDraw.Draw(canvas)
-        font = load_font(80, bold=True)
-        draw.ellipse([50, 50, 450, 450], fill=(60, 60, 90, 220), outline=(255, 215, 0, 200), width=4)
-        draw.text((250, 250), ec[:2], font=font, fill=(255, 255, 255, 255), anchor="mm")
+        resized = img_data.resize((380, 380), Image.LANCZOS)
+        x = y = (size - 380) // 2
+        shadow = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+        d = ImageDraw.Draw(shadow)
+        d.ellipse([x + 6, y + 6, x + 386, y + 386], fill=(0, 0, 0, 60))
+        shadow = shadow.filter(ImageFilter.GaussianBlur(6))
+        canvas = Image.alpha_composite(canvas, shadow)
+        canvas.paste(resized, (x, y), resized)
+        fn = f"emoji_{idx}.png"
         canvas.save(fn)
         return fn
     except Exception:
-        Image.new("RGBA", (size, size), (0, 0, 0, 0)).save(fn)
-        return fn
+        return None
 
 
 def create_background(pos, glow, fn):
@@ -1126,15 +1280,15 @@ def render_video_segment(bg_path, ui_path, audio_path, subs_path, output_path,
     visual_inputs = []
     for idx, vis in enumerate(visual_plan):
         try:
-            ec = vis.get("emoji", "\U0001F4AD") if isinstance(vis, dict) else str(vis)
+            ec = vis.get("emoji", "") if isinstance(vis, dict) else str(vis)
             st = vis.get("start", idx * 2.2) if isinstance(vis, dict) else idx * 2.2
             et = vis.get("end", st + 3.2) if isinstance(vis, dict) else st + 3.2
             gp = create_emoji_asset(ec, idx + 1000 + random.randint(0, 9999))
         except Exception:
-            gp = create_emoji_asset("\U0001F4AD", idx + 1000 + random.randint(0, 9999))
-            st = idx * 2.2
-            et = st + 3.2
-        visual_inputs.append((gp, st, et))
+            gp = None
+        # No artwork means no cue; drawing a placeholder yields a blank box.
+        if gp:
+            visual_inputs.append((gp, st, et))
     for idx, (gp, st, et) in enumerate(visual_inputs):
         fp.append(f"[{3 + idx}:v]scale={EMOJI_W}:{EMOJI_H}[v{idx}]")
         vx = (VIDEO_W - EMOJI_W) // 2
