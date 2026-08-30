@@ -24,7 +24,7 @@ FPS = 30
 # once. Three exchanges per side per round preserves the total runtime.
 ROUNDS = 2
 TURNS_PER_SIDE_PER_ROUND = 3
-MAX_JUDGES = 7
+MAX_JUDGES = 11
 
 # ---- Runtime budget: the finished video should land between 10 and 15 minutes.
 TARGET_TOTAL_SECONDS = 780.0        # aim for 13:00
@@ -41,7 +41,7 @@ MIN_PANEL_SIZE = 2
 
 # Estimates used to reserve room for the non-debate segments while pacing.
 EST_INTRO_SEC = 30.0
-EST_OUTRO_SEC = 22.0
+EST_OUTRO_SEC = 38.0
 EST_SCORECARD_SEC = 16.0
 EST_COMMENTARY_SEC = 22.0
 COMMENTARY_WORDS = 55
@@ -64,6 +64,11 @@ JUDGE_VOICES = [
     "en-US-DavisNeural",
     "en-AU-WilliamNeural",
     "en-CA-ClaraNeural",
+    "en-GB-SoniaNeural",
+    "en-IE-ConnorNeural",
+    "en-AU-NatashaNeural",
+    "en-NZ-MitchellNeural",
+    "en-US-AriaNeural",
 ]
 JUDGE_VOICE_MAP = {}
 
@@ -103,7 +108,20 @@ PROVIDER_ALIASES = {
     "openai": "OpenAI", "anthropic": "Anthropic", "google": "Google",
     "x-ai": "xAI", "deepseek": "DeepSeek", "mistralai": "Mistral",
     "meta-llama": "Meta", "qwen": "Qwen", "nvidia": "Nvidia",
+    "cohere": "Cohere", "microsoft": "Microsoft", "ai21": "AI21",
+    "amazon": "Amazon", "perplexity": "Perplexity", "01-ai": "Yi",
+    "gryphe": "Gryphe", "sao10k": "Sao10K", "liquid": "Liquid",
+    "thudm": "THUDM", "moonshotai": "Moonshot",
 }
+
+# Providers eligible for the panel. A wider pool means a more independent
+# panel; the ordering only decides who is picked first when there are more
+# candidates than seats.
+PANEL_PROVIDERS = [
+    "openai", "anthropic", "google", "meta-llama", "mistralai", "deepseek",
+    "qwen", "nvidia", "x-ai", "cohere", "microsoft", "ai21", "amazon",
+    "01-ai", "liquid", "moonshotai", "thudm",
+]
 
 # ---------------------------------------------------------------------------
 # Branding. These lines are identical in every video, so the channel opens and
@@ -121,9 +139,9 @@ INTRO_RULES = (
     "side is which. Let's get into it."
 )
 OUTRO_SIGNOFF = (
-    "That is the panel's verdict, scored blind and averaged across every judge. If there is "
-    "a question you want put through the arena, leave it in the comments. Subscribe for the "
-    "next debate, and we will see you in the ring."
+    "Scored blind, with the sides reversed, and any judge that changed its mind on the running "
+    "order thrown out. Drop the question you want settled next in the comments, subscribe, and "
+    "we will see you in the ring."
 )
 
 SPEECH_SYSTEM_PROMPT = (
@@ -259,6 +277,15 @@ def clean_for_speech(t):
     return t
 
 
+def clamp_half(v):
+    """One rubric dimension, scored out of fifty."""
+    try:
+        v = float(v)
+    except (TypeError, ValueError):
+        v = 25.0
+    return max(0.0, min(50.0, v))
+
+
 def clamp_score(v):
     try:
         v = float(v)
@@ -303,8 +330,7 @@ def discover_models():
                 continue
             if is_reasoning_model(mid):
                 continue
-            top = ["openai", "anthropic", "google", "meta-llama", "mistralai", "deepseek", "qwen", "nvidia"]
-            if not any(p in mid.lower() for p in top):
+            if mid.split("/", 1)[0].lower() not in PANEL_PROVIDERS:
                 continue
             free.append(mid)
         if free:
@@ -385,7 +411,7 @@ def choose_judges(avail, primary):
     global JUDGE_VOICE_MAP
     primary_providers = set(provider_from_model(m) for m in primary)
     excl = set(primary)
-    top_providers = {"openai", "anthropic", "google", "meta-llama", "mistralai", "deepseek", "qwen", "nvidia"}
+    top_providers = set(PANEL_PROVIDERS)
     cands = [m for m in avail if m not in excl and ":free" in m
              and m.split("/")[0].lower() in top_providers
              and provider_from_model(m) not in primary_providers]
@@ -397,7 +423,7 @@ def choose_judges(avail, primary):
         prov = provider_from_model(m)
         if prov not in groups:
             groups[prov] = m
-    order = ["OpenAI", "Anthropic", "Google", "Meta", "Mistral", "DeepSeek", "Qwen", "Nvidia"]
+    order = [PROVIDER_ALIASES[p] for p in PANEL_PROVIDERS if p in PROVIDER_ALIASES]
     sel = []
     for name in order:
         if name in groups:
@@ -851,6 +877,10 @@ def generate_turn(topic, roles, side, round_num, turn_num, opponent_last, target
 # ----------------------------------------------------------------------------
 
 JUDGE_TEXT_LIMIT = 6000
+# A margin swing this large between the two orderings is reported as a warning
+# in the log. It does not by itself disqualify a judge: what disqualifies a
+# judge is actually changing its mind when the sides are swapped.
+ORDER_GAP_WARN = 25.0
 
 
 def fair_excerpts(a_text, b_text):
@@ -865,23 +895,33 @@ def _score_once(model, topic, rn, first_text, second_text):
         f"You are judging round {rn} of a debate on this question: {topic}\n\n"
         f"Debater One said:\n{first_text}\n\n"
         f"Debater Two said:\n{second_text}\n\n"
-        "Score each debater from 0 to 100 on the quality of their evidence and how directly "
-        "they answered the other debater.\n"
-        "Judge the argument as it was actually made. Do not score based on whether you agree "
-        "with the position being defended, only on how well it was argued.\n"
+        "Score each debater on two things separately.\n"
+        "Evidence, 0 to 50: how specific, checkable and relevant their support was.\n"
+        "Rebuttal, 0 to 50: how directly they engaged what the other debater actually said.\n"
+        "Judge the argument as it was made. Do not score based on whether you agree with the "
+        "position being defended, only on how well it was argued.\n"
         "Length is not quality. Do not reward a debater for saying more, only for saying "
         "something better supported.\n"
-        'Return ONLY JSON: {"one_total": 0, "two_total": 0, '
+        'Return ONLY JSON: {"one_evidence": 0, "one_rebuttal": 0, "two_evidence": 0, '
+        '"two_rebuttal": 0, '
         '"reason": "one spoken sentence naming the specific point that decided it"}'
     )
     resp = query_openrouter(prompt, model, timeout=40, max_tokens=320, temperature=0.0,
                             system="You return only valid JSON. No commentary.")
     d = extract_json_object(resp)
-    if not d or d.get("one_total") is None or d.get("two_total") is None:
+    if not d:
         return None
     try:
-        one = clamp_score(d.get("one_total"))
-        two = clamp_score(d.get("two_total"))
+        if d.get("one_evidence") is not None and d.get("one_rebuttal") is not None:
+            one = clamp_score(clamp_half(d.get("one_evidence"))
+                              + clamp_half(d.get("one_rebuttal")))
+            two = clamp_score(clamp_half(d.get("two_evidence"))
+                              + clamp_half(d.get("two_rebuttal")))
+        elif d.get("one_total") is not None and d.get("two_total") is not None:
+            one = clamp_score(d.get("one_total"))
+            two = clamp_score(d.get("two_total"))
+        else:
+            return None
     except Exception:
         return None
     return one, two, str(d.get("reason", ""))[:200]
@@ -925,17 +965,32 @@ def judge_round(model, topic, rn, ap, sk, roles):
 
     a = round(sum(a_scores) / len(a_scores), 1)
     b = round(sum(b_scores) / len(b_scores), 1)
-    if a > b:
-        winner = "A"
-    elif b > a:
-        winner = "B"
-    else:
-        winner = "TIE"
     # How far the two orderings disagreed: a large gap means this judge's score
     # was driven by presentation order more than by the arguments.
     order_gap = 0.0
     if len(a_scores) == 2:
         order_gap = round(abs((a_scores[0] - b_scores[0]) - (a_scores[1] - b_scores[1])), 1)
+
+    # The real test of a judge: did swapping the sides change who it picked?
+    # A judge that reverses has scores but no verdict, so it abstains.
+    reversed_verdict = False
+    if len(a_scores) == 2:
+        per_pass = set()
+        for i in (0, 1):
+            if a_scores[i] > b_scores[i]:
+                per_pass.add("A")
+            elif b_scores[i] > a_scores[i]:
+                per_pass.add("B")
+        reversed_verdict = {"A", "B"} <= per_pass
+
+    if reversed_verdict:
+        winner = "UNSTABLE"
+    elif a > b:
+        winner = "A"
+    elif b > a:
+        winner = "B"
+    else:
+        winner = "TIE"
     return {"model": model, "provider": provider_from_model(model),
             "display_name": get_judge_short_name(model),
             "A_total": a, "B_total": b, "winner": winner,
@@ -987,7 +1042,7 @@ def evaluate_round(judges, topic, rn, ap, sk, roles, recused=()):
     results.sort(key=lambda r: r["display_name"])
     for r in results:
         note = "" if r["passes"] == 2 else f", {r['passes']} of 2 passes only"
-        flag = "  <-- order sensitive" if r["order_gap"] >= 15 else ""
+        flag = "  <-- order sensitive" if r["order_gap"] >= ORDER_GAP_WARN else ""
         print(f"    judge {r['display_name']} [{r['model']}]: "
               f"{roles['side_a_label']} {r['A_total']:.1f}, "
               f"{roles['side_b_label']} {r['B_total']:.1f} -> {r['winner']}"
@@ -996,14 +1051,19 @@ def evaluate_round(judges, topic, rn, ap, sk, roles, recused=()):
 
 
 def round_votes(res):
-    """How the panel split, independent of each judge's private scoring scale."""
+    """How the panel split, independent of each judge's private scoring scale.
+
+    Judges whose verdict reversed when the sides were swapped are counted as
+    abstentions, not as votes: an order driven result is not an opinion.
+    """
     a = sum(1 for r in res if r["winner"] == "A")
     b = sum(1 for r in res if r["winner"] == "B")
     t = sum(1 for r in res if r["winner"] == "TIE")
-    return a, b, t
+    u = sum(1 for r in res if r["winner"] == "UNSTABLE")
+    return a, b, t, u
 
 
-def spoken_split(a, b, t, roles):
+def spoken_split(a, b, t, u, roles):
     parts = []
     if a:
         parts.append(f"{a} for {roles['side_a_label']}")
@@ -1012,10 +1072,15 @@ def spoken_split(a, b, t, roles):
     if t:
         parts.append(f"{t} calling it even")
     if not parts:
-        return "no judge reached a verdict"
-    if len(parts) == 1:
-        return parts[0]
-    return ", ".join(parts[:-1]) + " and " + parts[-1]
+        base = "no judge reached a stable verdict"
+    elif len(parts) == 1:
+        base = parts[0]
+    else:
+        base = ", ".join(parts[:-1]) + " and " + parts[-1]
+    if u:
+        base += (f", with {u} thrown out for scoring the running order rather than "
+                 f"the argument")
+    return base
 
 
 def calculate_round_average(res):
@@ -1454,7 +1519,7 @@ def render_video_segment(bg_path, ui_path, audio_path, subs_path, output_path,
 
 
 def generate_scoreboard(rn, res, avg_a, avg_b, cum_a, cum_b, path, roles,
-                        va=None, vb=None, vt=None):
+                        va=None, vb=None, vt=None, vu=None):
     W, H = VIDEO_W, VIDEO_H
     base = Image.new("RGB", (W, H), (12, 16, 32))
     overlay = Image.new("RGBA", (W, H), (0, 0, 0, 180))
@@ -1490,14 +1555,18 @@ def generate_scoreboard(rn, res, avg_a, avg_b, cum_a, cum_b, path, roles,
             wl, col = roles["side_a_label"], (0, 255, 204)
         elif r["winner"] == "B":
             wl, col = roles["side_b_label"], (255, 120, 255)
-        else:
+        elif r["winner"] == "TIE":
             wl, col = "TIE", (220, 220, 220)
+        else:
+            wl, col = "ABSTAIN", (150, 150, 150)
         draw.text((cx4, y), wl, font=fr, fill=col)
         y += 58
     draw.line([(60, y + 5), (W - 60, y + 5)], fill=(255, 255, 255), width=2)
     y += 25
     if va is not None:
         split = f"Panel: {va} - {vb}" + (f" ({vt} even)" if vt else "")
+        if vu:
+            split += f"   {vu} abstained"
         draw.text((W // 2, y), split, font=fs, fill=(255, 255, 255), anchor="mt")
         y += 45
     draw.text((W // 2, y), f"Round Avg: {avg_a:.1f} vs {avg_b:.1f}",
@@ -1595,15 +1664,15 @@ def prepare_segment(text, slot, display_name, topic, sid, judge_voice_index=None
     return spec
 
 
-def prepare_scorecard(rn, res, ra, rb, cum_a, cum_b, va, vb, vt, roles):
+def prepare_scorecard(rn, res, ra, rb, cum_a, cum_b, va, vb, vt, vu, roles):
     """Scoreboard image, spoken summary and subtitles. No render yet."""
     spec = {
         "kind": "scorecard", "sid": f"r{rn}",
         "image": f"scoreboard_r{rn}.png", "audio": f"score_audio_r{rn}.mp3",
         "subs": f"score_subs_r{rn}.ass", "video": f"score_video_r{rn}.mp4",
     }
-    generate_scoreboard(rn, res, ra, rb, cum_a, cum_b, spec["image"], roles, va, vb, vt)
-    text = (f"Round {rn} is scored. The panel came down {spoken_split(va, vb, vt, roles)}. "
+    generate_scoreboard(rn, res, ra, rb, cum_a, cum_b, spec["image"], roles, va, vb, vt, vu)
+    text = (f"Round {rn} is scored. The panel came down {spoken_split(va, vb, vt, vu, roles)}. "
             f"On points, {roles['side_a_label']} {ra:.1f}, and {roles['side_b_label']} {rb:.1f}. "
             f"Averaged so far, {cum_a / rn:.1f} to {cum_b / rn:.1f}.")
     words = generate_audio(text, "MOD", spec["audio"])
@@ -1636,10 +1705,20 @@ def build_intro(topic, jc, roles):
     )
 
 
-def build_outro(cum_a, cum_b, votes_a, votes_b, votes_t, roles):
-    """Variable result sentence, then the fixed branded sign off."""
-    total = votes_a + votes_b + votes_t
-    if votes_a > votes_b:
+def build_outro(cum_a, cum_b, votes_a, votes_b, votes_t, votes_u, roles):
+    """Variable result sentence, then the fixed branded sign off.
+
+    The verdict is stated against the number of judgements that actually held
+    up, so a result resting on a handful of stable votes is not presented as if
+    the whole panel agreed.
+    """
+    total = votes_a + votes_b + votes_t + votes_u
+    counted = votes_a + votes_b + votes_t
+
+    if counted == 0:
+        verdict = ("not one judge reached a verdict that survived reversing the sides, so "
+                   "this one is officially unresolved")
+    elif votes_a > votes_b:
         verdict = f"the {roles['side_a_label']} side takes it"
     elif votes_b > votes_a:
         verdict = f"the {roles['side_b_label']} side takes it"
@@ -1652,12 +1731,23 @@ def build_outro(cum_a, cum_b, votes_a, votes_b, votes_t, roles):
     else:
         verdict = "this one is a genuine draw"
 
+    if counted == 0:
+        split_line = (f"Across {total} judgements, every single one flipped when we reversed "
+                      f"the running order. ")
+    elif votes_u and counted <= total / 2:
+        split_line = (f"Of {total} judgements, only {counted} held up when we reversed the "
+                      f"running order, and those came down "
+                      f"{spoken_split(votes_a, votes_b, votes_t, 0, roles)}. ")
+    else:
+        split_line = (f"Across {total} judgements, the panel came down "
+                      f"{spoken_split(votes_a, votes_b, votes_t, votes_u, roles)}. ")
+
     return (
-        f"That is {number_word(ROUNDS).lower()} rounds. Across {total} judgements, the panel came "
-        f"down {spoken_split(votes_a, votes_b, votes_t, roles)}. "
+        f"That is {number_word(ROUNDS).lower()} rounds. {split_line}"
         f"Averaged over every round, {roles['side_a_label']} scored "
         f"{cum_a / max(1, ROUNDS):.1f} out of a hundred, and {roles['side_b_label']} "
         f"{cum_b / max(1, ROUNDS):.1f}. And so {verdict}. "
+        f"The panel scores which side argued it better, not which side is right. "
         f"{OUTRO_SIGNOFF}"
     )
 
@@ -1861,7 +1951,7 @@ def run_debate_pipeline():
     last_b_text = ""
 
     turn_attribution = []
-    votes_a = votes_b = votes_t = 0
+    votes_a = votes_b = votes_t = votes_u = 0
     for rn in range(1, ROUNDS + 1):
         print(f"\n--- ROUND {rn} ---")
         a_turns, b_turns = [], []
@@ -1881,6 +1971,7 @@ def run_debate_pipeline():
               f"{roles['side_a_label' if speaking_order[0] == 'A' else 'side_b_label']} opens")
 
         for tn in range(1, TURNS_PER_SIDE_PER_ROUND + 1):
+            opener_words = None
             for side in speaking_order:
                 turns_left = total_turns - turns_done
                 rounds_left = ROUNDS - rn + 1
@@ -1888,6 +1979,11 @@ def run_debate_pipeline():
                             + rounds_left * 2 * EST_COMMENTARY_SEC
                             + EST_OUTRO_SEC)
                 target = pacing.turn_words(turns_left, reserved)
+                if opener_words is not None:
+                    # Answer at the length the other side actually spoke, so
+                    # neither side gains from simply saying more.
+                    target = max(MIN_ACCEPTABLE_TURN_WORDS,
+                                 min(MAX_TURN_WORDS, opener_words))
                 opponent_last = last_b_text if side == "A" else last_a_text
                 model = a_model if side == "A" else b_model
                 text, wrote = generate_turn(topic, roles, side, rn, tn, opponent_last,
@@ -1905,6 +2001,8 @@ def run_debate_pipeline():
                 else:
                     b_turns.append(text)
                     last_b_text = text
+                if opener_words is None:
+                    opener_words = count_words(text)
                 add_seg(text, side, label)
                 turns_done += 1
 
@@ -1924,20 +2022,22 @@ def run_debate_pipeline():
         ra, rb = calculate_round_average(res)
         cum_a += ra
         cum_b += rb
-        va, vb, vt = round_votes(res)
+        va, vb, vt, vu = round_votes(res)
         votes_a += va
         votes_b += vb
         votes_t += vt
+        votes_u += vu
         all_results.append({"round": rn, "avg_a": ra, "avg_b": rb,
-                            "votes": {"A": va, "B": vb, "TIE": vt},
+                            "votes": {"A": va, "B": vb, "TIE": vt, "UNSTABLE": vu},
                             "words": {"A": wa, "B": wb, "gap": round(gap, 3)},
                             "debater_models": {"A": a_model, "B": b_model},
                             "judges": res})
         print(f"  Round {rn}: panel split {va}-{vb}"
-              f"{f' with {vt} even' if vt else ''}; "
+              f"{f' with {vt} even' if vt else ''}"
+              f"{f', {vu} abstaining' if vu else ''}; "
               f"average {roles['side_a_label']} {ra:.1f} vs {roles['side_b_label']} {rb:.1f}")
 
-        score_spec = prepare_scorecard(rn, res, ra, rb, cum_a, cum_b, va, vb, vt, roles)
+        score_spec = prepare_scorecard(rn, res, ra, rb, cum_a, cum_b, va, vb, vt, vu, roles)
         specs.append(score_spec)
         pacing.add(score_spec["duration"])
 
@@ -1965,8 +2065,9 @@ def run_debate_pipeline():
         print(f"  written and voiced so far: {pacing.consumed / 60:.1f} min")
 
     print(f"\nPanel consensus across all rounds: {votes_a} to {votes_b}"
-          f"{f' with {votes_t} even' if votes_t else ''}.")
-    add_seg(build_outro(cum_a, cum_b, votes_a, votes_b, votes_t, roles),
+          f"{f' with {votes_t} even' if votes_t else ''}"
+          f"{f', {votes_u} abstained as order driven' if votes_u else ''}.")
+    add_seg(build_outro(cum_a, cum_b, votes_a, votes_b, votes_t, votes_u, roles),
             "MOD", "MODERATOR", count_speech=False)
 
     try:
@@ -1976,7 +2077,8 @@ def run_debate_pipeline():
                    "turns": turn_attribution,
                    "rounds": all_results,
                    "cumulative": {"A": round(cum_a, 2), "B": round(cum_b, 2)},
-                   "consensus_votes": {"A": votes_a, "B": votes_b, "TIE": votes_t}},
+                   "consensus_votes": {"A": votes_a, "B": votes_b, "TIE": votes_t,
+                                       "UNSTABLE": votes_u}},
                   open("scores.json", "w", encoding="utf-8"), indent=2)
     except Exception:
         pass
