@@ -29,11 +29,14 @@ jobs:
     - name: Run Debate Video Pipeline
       env:
         OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-        # Everything below is optional. With none of it set the build uses free
-        # OpenRouter models, free edge-tts narration and free emoji cues, and
-        # costs nothing beyond the OpenRouter calls themselves.
+        # The roster now resolves to the strongest model each lab offers on your
+        # account, so a run spends OpenRouter credit (roughly a dollar). Voice
+        # and cues are still free: edge-tts narration and emoji.
         #
-        # USE_PAID_MODELS: "1"                     # pinned paid roster
+        # USE_PAID_MODELS: "0"                     # back to the free tier
+        # DEBATER_LABS: anthropic,openai           # which two labs argue
+        # DEBATER_MODELS: a/b,c/d                  # pin exact debaters
+        # PANEL_MODELS: a/b,c/d                    # pin the exact panel
         # TTS_PROVIDER: elevenlabs                 # needs ELEVENLABS_API_KEY
         # ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
         # CUE_STYLE: illustration                  # generated stills, needs IMAGE_PROVIDER

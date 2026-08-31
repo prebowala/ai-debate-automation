@@ -109,7 +109,36 @@ SLOT_STYLE = {
 # comparable between videos. Leave PAID_MODELS empty to stay on free models.
 # Set USE_PAID_MODELS=1 (or put ids in DEBATER_MODELS / PANEL_MODELS) to use them.
 # ---------------------------------------------------------------------------
-USE_PAID_MODELS = os.environ.get("USE_PAID_MODELS", "").strip() not in ("", "0", "false", "no")
+# Paid models are the default now. Set USE_PAID_MODELS=0 to fall back to the
+# free tier, which is thin and produces frequent substitutions.
+USE_PAID_MODELS = os.environ.get("USE_PAID_MODELS", "1").strip() not in ("0", "false", "no")
+
+# Model ids churn constantly, so the roster is resolved at run time instead of
+# hardcoded: these are name fragments in rough capability order within each lab,
+# matched against whatever the account can actually see. Anything not matched
+# still qualifies through its lab's catch-all at the end of each list.
+STRONGEST_BY_LAB = {
+    "anthropic": ["claude-opus-5", "claude-opus", "claude-fable", "claude-sonnet-5",
+                  "claude-sonnet", "claude"],
+    "openai": ["gpt-5.6-sol", "gpt-5.6", "gpt-5", "o4", "gpt-4.1", "gpt-4o", "gpt"],
+    "google": ["gemini-3.1-pro", "gemini-3-pro", "gemini-pro", "gemini-3.6",
+               "gemini-3", "gemini"],
+    "x-ai": ["grok-4.6", "grok-4", "grok"],
+    "deepseek": ["deepseek-v4", "deepseek-v3", "deepseek-chat", "deepseek"],
+    "meta-llama": ["llama-4", "llama-3.3", "llama"],
+    "mistralai": ["mistral-large", "mistral-medium", "mistral"],
+    "qwen": ["qwen3-max", "qwen3", "qwen-2.5-72b", "qwen"],
+    "nvidia": ["nemotron-3-ultra", "nemotron-3", "nemotron"],
+    "cohere": ["command-a", "command-r-plus", "command"],
+    "amazon": ["nova-pro", "nova"],
+    "ai21": ["jamba-large", "jamba"],
+    "moonshotai": ["kimi-k2", "kimi"],
+    "01-ai": ["yi-large", "yi"],
+}
+
+# The two labs that argue, in order. The rest of the labs make up the panel.
+DEBATER_LABS = [l.strip() for l in os.environ.get(
+    "DEBATER_LABS", "anthropic,openai").split(",") if l.strip()]
 
 # The two arguers. These are what the audience actually hears, so this is where
 # quality shows most. Order matters only for which side each starts on.
@@ -153,8 +182,9 @@ POLL_EXTRA_MODELS = [m.strip() for m in os.environ.get(
 MAX_POLL_PER_PROVIDER = int(os.environ.get("MAX_POLL_PER_PROVIDER", "1"))
 
 # Rough per million token prices, only used to print a cost estimate before a
-# run. Unknown models fall back to the default and are marked approximate.
-PRICE_PER_M = {"in": 3.0, "out": 12.0}
+# run. Set to a frontier tier since that is what the default roster resolves to.
+PRICE_PER_M = {"in": float(os.environ.get("PRICE_IN", "6.0")),
+               "out": float(os.environ.get("PRICE_OUT", "24.0"))}
 
 FALLBACK_MODELS = [
     "openai/gpt-4o-mini:free",
@@ -306,26 +336,57 @@ def provider_from_model(mid):
 
 
 def get_judge_short_name(mid):
+    """A short label for the scorecard, specific enough to tell variants apart."""
     low = (mid or "").lower()
-    if "o4-mini" in low: return "o4-mini"
-    if "o3" in low: return "o3"
-    if "gpt" in low and "mini" in low: return "GPT-4o mini"
-    if "gpt" in low: return "ChatGPT"
-    if "claude" in low and "opus" in low: return "Claude Opus"
-    if "claude" in low and "sonnet" in low: return "Claude Sonnet"
-    if "claude" in low and "haiku" in low: return "Claude Haiku"
-    if "claude-3-5" in low: return "Claude 3.5"
-    if "claude" in low: return "Claude"
-    if "gemini" in low and "pro" in low: return "Gemini Pro"
-    if "gemini" in low and "flash" in low: return "Gemini Flash"
-    if "gemini-2.0" in low: return "Gemini 2.0"
-    if "gemini" in low: return "Gemini"
-    if "deepseek" in low and "r1" in low: return "DeepSeek R1"
-    if "deepseek" in low: return "DeepSeek"
-    if "mistral" in low: return "Mistral"
-    if "nemotron" in low: return "Nemotron"
-    if "llama" in low: return "Llama"
-    if "qwen" in low: return "Qwen"
+    name = low.split("/", 1)[1] if "/" in low else low
+
+    if "claude" in name:
+        for tier in ("opus", "fable", "mythos", "sonnet", "haiku"):
+            if tier in name:
+                ver = re.search(r"(\d+(?:\.\d+)?)", name)
+                return f"Claude {tier.title()}" + (f" {ver.group(1)}" if ver else "")
+        return "Claude"
+    if name.startswith("o1") or name.startswith("o3") or name.startswith("o4"):
+        return name.split("-")[0]
+    if "gpt" in name:
+        ver = re.search(r"gpt-?(\d+(?:\.\d+)?o?)", name)
+        track = next((t for t in ("sol", "luna", "terra", "mini", "nano") if t in name), "")
+        base = f"GPT-{ver.group(1)}" if ver else "GPT"
+        return f"{base} {track.title()}".strip()
+    if "gemini" in name:
+        ver = re.search(r"gemini-?(\d+(?:\.\d+)?)", name)
+        track = next((t for t in ("pro", "flash", "ultra") if t in name), "")
+        base = f"Gemini {ver.group(1)}" if ver else "Gemini"
+        return f"{base} {track.title()}".strip()
+    if "grok" in name:
+        ver = re.search(r"grok-?(\d+(?:\.\d+)?)", name)
+        return f"Grok {ver.group(1)}" if ver else "Grok"
+    if "nemotron" in name:
+        ver = re.search(r"nemotron-?(\d+(?:\.\d+)?)", name)
+        return f"Nemotron {ver.group(1)}" if ver else "Nemotron"
+    if "deepseek" in name:
+        if "r1" in name:
+            return "DeepSeek R1"
+        ver = re.search(r"v(\d+(?:\.\d+)?)", name)
+        return f"DeepSeek V{ver.group(1)}" if ver else "DeepSeek"
+    if "llama" in name:
+        ver = re.search(r"llama-?(\d+(?:\.\d+)?)", name)
+        return f"Llama {ver.group(1)}" if ver else "Llama"
+    if "qwen" in name:
+        ver = re.search(r"qwen-?(\d+(?:\.\d+)?)", name)
+        return ("Qwen Max" if "max" in name
+                else f"Qwen {ver.group(1)}" if ver else "Qwen")
+    if "mistral" in name or "magistral" in name:
+        return ("Mistral Large" if "large" in name
+                else "Mistral Medium" if "medium" in name else "Mistral")
+    if "command" in name:
+        return "Command A" if re.search(r"command-a\b", name) else "Command R"
+    if "nova" in name:
+        return "Nova Pro" if "pro" in name else "Nova"
+    if "jamba" in name:
+        return "Jamba"
+    if "kimi" in name:
+        return "Kimi"
     return provider_from_model(mid)
 
 
@@ -3003,6 +3064,51 @@ class Pacing:
         return int(max(MIN_TURN_WORDS, min(MAX_TURN_WORDS, per_turn * self.wps)))
 
 
+def strongest_for_lab(lab, available, exclude=()):
+    """The best model this account can see from one lab, by the tier list."""
+    lab_models = [m for m in available
+                  if m.split("/", 1)[0].lower() == lab and m not in exclude]
+    if not lab_models:
+        return None
+    for fragment in STRONGEST_BY_LAB.get(lab, []):
+        for m in lab_models:
+            if fragment in m.split("/", 1)[1].lower():
+                return m
+    return sorted(lab_models)[0]
+
+
+def resolve_roster(available):
+    """Pick the strongest model per lab, then split into debaters and panel.
+
+    Explicit DEBATER_MODELS or PANEL_MODELS always win. Otherwise the two
+    debate labs supply the arguers and every other lab supplies one judge, so
+    the panel stays one seat per lab without any lab being counted twice.
+    """
+    usable = [m for m in available if not is_reasoning_model(m)]
+    chosen = {}
+    for lab in STRONGEST_BY_LAB:
+        best = strongest_for_lab(lab, usable)
+        if best:
+            chosen[lab] = best
+
+    debaters = [m.strip() for m in os.environ.get("DEBATER_MODELS", "").split(",") if m.strip()]
+    if not debaters:
+        debaters = [chosen[lab] for lab in DEBATER_LABS if lab in chosen]
+        # If a preferred debate lab is missing, borrow the next best lab.
+        for lab, m in chosen.items():
+            if len(debaters) >= 2:
+                break
+            if m not in debaters:
+                debaters.append(m)
+    debaters = debaters[:2]
+
+    panel = [m.strip() for m in os.environ.get("PANEL_MODELS", "").split(",") if m.strip()]
+    if not panel:
+        debater_labs = {m.split("/", 1)[0].lower() for m in debaters}
+        panel = [m for lab, m in chosen.items() if lab not in debater_labs]
+    return debaters, panel[:MAX_JUDGES]
+
+
 def pin_panel(models, debaters):
     """Use the configured panel as given, minus anything arguing the debate."""
     global JUDGE_VOICE_MAP
@@ -3164,25 +3270,31 @@ def run_debate_pipeline():
     print(f"\nTOPIC FROM topic.txt: {topic}\n")
 
     global AVAILABLE_MODELS
+    catalogue = discover_models() or FALLBACK_MODELS.copy()
+    resolved_debaters, resolved_panel = [], []
     if USE_PAID_MODELS:
-        # A pinned roster: the same debaters and panel in every video.
-        avail = [m for m in DEBATER_MODELS + PANEL_MODELS if not is_reasoning_model(m)]
-        print(f"Paid roster: {len(DEBATER_MODELS)} debaters, {len(PANEL_MODELS)} panel models.")
+        resolved_debaters, resolved_panel = resolve_roster(catalogue)
+        avail = resolved_debaters + resolved_panel
+        print(f"Roster resolved from {len(catalogue)} available models:")
+        for m in resolved_debaters:
+            print(f"  debater  {get_judge_short_name(m):16} {m}")
+        for m in resolved_panel:
+            print(f"  panel    {get_judge_short_name(m):16} {m}")
     else:
-        avail = discover_models() or FALLBACK_MODELS.copy()
+        avail = catalogue
     AVAILABLE_MODELS = [m for m in avail if not is_reasoning_model(m)]
-    print_cost_estimate(len(PANEL_MODELS) if USE_PAID_MODELS else MAX_JUDGES)
+    print_cost_estimate(len(resolved_panel) if USE_PAID_MODELS else MAX_JUDGES)
     preflight_models(AVAILABLE_MODELS or avail, MIN_PANEL_SIZE)
-    if USE_PAID_MODELS and len(DEBATER_MODELS) >= 2:
-        ap_model, sk_model = DEBATER_MODELS[0], DEBATER_MODELS[1]
+    if len(resolved_debaters) >= 2:
+        ap_model, sk_model = resolved_debaters[0], resolved_debaters[1]
     else:
         ap_model, sk_model = choose_primary_models(AVAILABLE_MODELS or avail)
     roles = get_debate_roles(topic, ap_model)
     print(f"Sides: {roles['side_a_label']} (Brian, left) vs {roles['side_b_label']} (Ava, right)")
     print(f"  A stance: {roles['side_a_stance']}")
     print(f"  B stance: {roles['side_b_stance']}")
-    if USE_PAID_MODELS and PANEL_MODELS:
-        judges = pin_panel(PANEL_MODELS, (ap_model, sk_model))
+    if resolved_panel:
+        judges = pin_panel(resolved_panel, (ap_model, sk_model))
     else:
         judges = choose_judges(AVAILABLE_MODELS or avail, (ap_model, sk_model))
     if len(judges) < MIN_PANEL_SIZE:
@@ -3217,7 +3329,15 @@ def run_debate_pipeline():
 
     # Where the panel stands before hearing a word. This is the consensus
     # measurement; the round scorecards measure who argued better.
-    poll_roster = build_poll_roster((ap_model, sk_model), judges)
+    poll_extra = []
+    if USE_PAID_MODELS:
+        seen_labs = {provider_from_model(m) for m in list(judges) + [ap_model, sk_model]}
+        for lab in STRONGEST_BY_LAB:
+            best = strongest_for_lab(lab, catalogue)
+            if best and provider_from_model(best) not in seen_labs:
+                poll_extra.append(best)
+                seen_labs.add(provider_from_model(best))
+    poll_roster = build_poll_roster((ap_model, sk_model), list(judges) + poll_extra)
     print(f"\nOpening poll: {len(poll_roster)} models from "
           f"{len({provider_from_model(m) for m in poll_roster})} labs, asked cold.")
     poll_before = poll_panel(poll_roster, topic, roles)
