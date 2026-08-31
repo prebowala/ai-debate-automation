@@ -684,6 +684,9 @@ def choose_judges(avail, primary):
 # Topic -> sides. Nothing below is tied to any particular subject.
 # ----------------------------------------------------------------------------
 
+QUESTION_OPENERS = {"is", "are", "was", "were", "do", "does", "did", "should",
+                    "can", "could", "will", "would", "has", "have", "must", "shall"}
+
 STOP_WORDS = {"a", "an", "the", "is", "are", "was", "were", "be", "been", "do", "does",
               "did", "should", "would", "could", "can", "will", "shall", "must", "has",
               "have", "had", "there", "really", "actually", "ever"}
@@ -721,16 +724,29 @@ def fallback_roles(topic):
             }
 
     for sep in [" versus ", " vs. ", " vs ", " or "]:
-        if sep in low:
-            left, right = low.split(sep, 1)
-            la, lb = _titlecase_label(left), _titlecase_label(right)
-            if la and lb and la != lb:
-                return {
-                    "side_a_label": la,
-                    "side_a_stance": f"{la.title()} is the right answer to this question",
-                    "side_b_label": lb,
-                    "side_b_stance": f"{lb.title()} is the right answer to this question",
-                }
+        if sep not in low:
+            continue
+        left, right = low.split(sep, 1)
+        left_words, right_words = left.split(), right.split()
+
+        # "Is Christianity true or false" splits into "is christianity true"
+        # and "false". Drop the question word and keep only as many trailing
+        # words as the other side has, so the two labels match: TRUE / FALSE.
+        if left_words and left_words[0] in QUESTION_OPENERS:
+            left_words = left_words[1:]
+        if len(left_words) > len(right_words):
+            tail = left_words[-len(right_words):]
+            if tail and not any(w in STOP_WORDS for w in tail):
+                left_words = tail
+
+        la, lb = _titlecase_label(" ".join(left_words)), _titlecase_label(right)
+        if la and lb and la != lb:
+            return {
+                "side_a_label": la,
+                "side_a_stance": f"the answer to this question is {la.lower()}",
+                "side_b_label": lb,
+                "side_b_stance": f"the answer to this question is {lb.lower()}",
+            }
 
     if re.match(r"^(should|is|are|was|were|does|do|did|can|could|will|would|has|have|must|shall)\b", low):
         return {
