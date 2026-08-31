@@ -78,9 +78,16 @@ ELEVEN_JUDGE_VOICES = [
 ]
 
 # Speaker slots are fixed, so voices stay identical build to build whatever the topic is.
-SIDE_A_VOICE = "en-US-BrianMultilingualNeural"
-SIDE_B_VOICE = "en-US-AvaMultilingualNeural"
-MODERATOR_VOICE = "en-US-AndrewMultilingualNeural"
+# Plain English voices, never the Multilingual variants. Those detect language
+# per phrase and switch accent mid sentence, so "Adam ate" and "serpent" came
+# out in French. The ordinary voices stay in English whatever the word.
+SIDE_A_VOICE = os.environ.get("SIDE_A_VOICE", "en-US-BrianNeural")
+SIDE_B_VOICE = os.environ.get("SIDE_B_VOICE", "en-US-AvaNeural")
+MODERATOR_VOICE = os.environ.get("MODERATOR_VOICE", "en-US-AndrewNeural")
+
+# Used only if a configured voice turns out not to exist on the service.
+VOICE_FALLBACKS = ["en-US-GuyNeural", "en-US-JennyNeural", "en-GB-RyanNeural",
+                   "en-US-AriaNeural", "en-US-DavisNeural"]
 
 JUDGE_VOICES = [
     "en-US-JennyNeural",
@@ -3630,6 +3637,54 @@ def print_cost_estimate(panel_size):
               f"CUE_CLIP_SECONDS to cut it.")
 
 
+def verify_voices():
+    """Check every configured voice exists, and that none code-switch.
+
+    A Multilingual voice decides the language phrase by phrase, which is how
+    English lines ended up part spoken in French. Any that slip in are replaced,
+    as is any name the service does not recognise.
+    """
+    global SIDE_A_VOICE, SIDE_B_VOICE, MODERATOR_VOICE, JUDGE_VOICES
+    try:
+        available = {v["ShortName"] for v in asyncio.run(edge_tts.list_voices())}
+    except Exception as e:
+        print(f"Could not list voices ({type(e).__name__}); using them as configured.")
+        available = set()
+
+    def ok(name):
+        if "multilingual" in name.lower():
+            return False
+        return not available or name in available
+
+    spare = [v for v in VOICE_FALLBACKS if ok(v)] or VOICE_FALLBACKS
+    swapped = []
+
+    def fix(name, taken):
+        if ok(name):
+            return name
+        for cand in spare:
+            if cand not in taken:
+                swapped.append(f"{name} -> {cand}")
+                return cand
+        return spare[0]
+
+    taken = set()
+    SIDE_A_VOICE = fix(SIDE_A_VOICE, taken); taken.add(SIDE_A_VOICE)
+    SIDE_B_VOICE = fix(SIDE_B_VOICE, taken); taken.add(SIDE_B_VOICE)
+    MODERATOR_VOICE = fix(MODERATOR_VOICE, taken); taken.add(MODERATOR_VOICE)
+    fixed_judges = []
+    for v in JUDGE_VOICES:
+        nv = fix(v, taken)
+        taken.add(nv)
+        fixed_judges.append(nv)
+    JUDGE_VOICES = fixed_judges
+
+    if swapped:
+        print("Voice substitutions: " + ", ".join(swapped))
+    else:
+        print("Voices: all present and English only.")
+
+
 def preflight_environment():
     """Prove the toolchain works before any content is generated.
 
@@ -3653,6 +3708,8 @@ def preflight_environment():
     font = load_font(40, bold=True)
     if not isinstance(font, ImageFont.FreeTypeFont):
         print("DejaVu fonts not found; text will fall back to a bitmap font.")
+
+    verify_voices()
 
     # Text to speech: the network dependency most likely to be blocked.
     probe_audio = "preflight_probe.mp3"
