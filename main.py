@@ -1886,38 +1886,56 @@ def render_video_segment(bg_path, ui_path, audio_path, subs_path, output_path,
     for vis in visual_plan:
         try:
             scene = vis.get("scene", "") if isinstance(vis, dict) else str(vis)
+            motion = vis.get("motion", "") if isinstance(vis, dict) else ""
             st = float(vis.get("start", 0.0)) if isinstance(vis, dict) else 0.0
             et = float(vis.get("end", st + 4.0)) if isinstance(vis, dict) else st + 4.0
-            path = make_illustration(scene)
+            clip = make_cue_clip(scene, motion)
+            if clip:
+                visual_inputs.append((clip, st, et, "video"))
+                continue
+            still = make_illustration(scene)
         except Exception:
-            path = None
+            still = None
         # No artwork means no cue. Nothing is ever drawn as a placeholder.
-        if path:
-            visual_inputs.append((path, st, et))
+        if still:
+            visual_inputs.append((still, st, et, "image"))
 
-    for idx, (path, st, et) in enumerate(visual_inputs):
+    for idx, (path, st, et, kind) in enumerate(visual_inputs):
         span = max(0.8, et - st)
-        # Gentle drift and a soft fade in and out, so a still drawing reads as
-        # a moving element rather than a sticker cut onto the frame.
-        fp.append(
-            f"[{3 + idx}:v]scale={CUE_W}:{CUE_H}:force_original_aspect_ratio=decrease,"
-            f"format=rgba,"
-            f"fade=t=in:st=0:d=0.45:alpha=1,"
-            f"fade=t=out:st={max(0.0, span - 0.5):.2f}:d=0.5:alpha=1,"
-            f"setpts=PTS-STARTPTS[v{idx}]")
+        fade_out = max(0.0, span - 0.5)
         vx = (VIDEO_W - CUE_W) // 2
         vy = 210
-        drift = f"{vy}+18*sin((t-{st:.2f})*0.7)"
-        nl = f"[tmp{idx}]"
-        fp.append(f"{last}[v{idx}]overlay={vx}:'{drift}'"
-                  f":enable='between(t,{st:.2f},{et:.2f})'{nl}")
-        last = nl
+        if kind == "video":
+            # Key the paper white out of every frame so the animation sits on
+            # the stage rather than inside a white card.
+            fp.append(
+                f"[{3 + idx}:v]scale={CUE_W}:-2:force_original_aspect_ratio=decrease,"
+                f"format=rgba,colorkey=0xFFFFFF:0.16:0.05,"
+                f"fade=t=in:st=0:d=0.4:alpha=1,"
+                f"fade=t=out:st={fade_out:.2f}:d=0.5:alpha=1,"
+                f"setpts=PTS-STARTPTS+{st:.2f}/TB[v{idx}]")
+            fp.append(f"{last}[v{idx}]overlay={vx}:{vy}:eof_action=pass"
+                      f":enable='between(t,{st:.2f},{et:.2f})'[tmp{idx}]")
+        else:
+            fp.append(
+                f"[{3 + idx}:v]scale={CUE_W}:{CUE_H}:force_original_aspect_ratio=decrease,"
+                f"format=rgba,"
+                f"fade=t=in:st=0:d=0.45:alpha=1,"
+                f"fade=t=out:st={fade_out:.2f}:d=0.5:alpha=1,"
+                f"setpts=PTS-STARTPTS[v{idx}]")
+            drift = f"{vy}+18*sin((t-{st:.2f})*0.7)"
+            fp.append(f"{last}[v{idx}]overlay={vx}:'{drift}'"
+                      f":enable='between(t,{st:.2f},{et:.2f})'[tmp{idx}]")
+        last = f"[tmp{idx}]"
 
     safe_subs = subs_path.replace(":", "\\:")
     fp.append(f"{last}format=yuv420p,subtitles={safe_subs}[out]")
 
-    for gp, st, et in visual_inputs:
-        cmd.extend(["-loop", "1", "-t", f"{max(0.8, et - st):.2f}", "-i", gp])
+    for gp, st, et, kind in visual_inputs:
+        if kind == "video":
+            cmd.extend(["-i", gp])
+        else:
+            cmd.extend(["-loop", "1", "-t", f"{max(0.8, et - st):.2f}", "-i", gp])
     cmd.extend(["-filter_complex", ";".join(fp), "-map", "[out]", "-map", "2:a",
                 "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-r", str(FPS),
                 "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2",
@@ -2099,9 +2117,20 @@ REPLICATE_API_TOKEN = os.environ.get("REPLICATE_API_TOKEN")
 REPLICATE_IMAGE_MODEL = os.environ.get(
     "REPLICATE_IMAGE_MODEL", "black-forest-labs/flux-schnell")
 CUES_PER_TURN = int(os.environ.get("CUES_PER_TURN", "2"))
+
+# Animate cues into short clips instead of drifting a still. The still is
+# generated first and used as the opening frame, so the clip inherits the same
+# drawn style. Check Replicate for the current image to video models; the model
+# and its image input key are both configurable because they change often.
+ANIMATE_CUES = os.environ.get("ANIMATE_CUES", "").strip() not in ("", "0", "false", "no")
+REPLICATE_VIDEO_MODEL = os.environ.get("REPLICATE_VIDEO_MODEL",
+                                       "wan-video/wan-2.1-i2v-480p")
+REPLICATE_VIDEO_IMAGE_KEY = os.environ.get("REPLICATE_VIDEO_IMAGE_KEY", "image")
+CUE_CLIP_SECONDS = float(os.environ.get("CUE_CLIP_SECONDS", "5"))
 ILLUSTRATION_DIR = "illustration_cache"
 os.makedirs(ILLUSTRATION_DIR, exist_ok=True)
 IMAGE_GEN_OK = True
+VIDEO_GEN_OK = True
 
 # Held constant so every illustration in every video looks like the same hand.
 ILLUSTRATION_STYLE = (
@@ -2124,9 +2153,12 @@ def plan_illustration_cues(text, words, model):
         "as a simple illustration. Concrete means a physical thing, place, person or "
         "action, never an abstract idea.\n"
         "For each one give the exact phrase from the passage it belongs to, copied word "
-        "for word, and a short plain description of the picture.\n"
-        'Return ONLY JSON: {"cues": [{"phrase": "...", "scene": "a person picking an '
-        'apple from a branch"}]}'
+        "for word, a short plain description of the opening picture, and the small "
+        "movement that happens over the next few seconds. Keep the movement simple and "
+        "physical: one subject doing one thing, camera still.\n"
+        'Return ONLY JSON: {"cues": [{"phrase": "...", '
+        '"scene": "a person standing under a branch heavy with apples", '
+        '"motion": "the person reaches up and picks one apple from the branch"}]}'
     )
     resp = query_openrouter(prompt, model, timeout=40, max_tokens=400, temperature=0.4,
                             system="You return only valid JSON. No commentary.")
@@ -2141,6 +2173,7 @@ def plan_illustration_cues(text, words, model):
             continue
         phrase = str(cue.get("phrase", "")).lower()
         scene = str(cue.get("scene", "")).strip()
+        motion = str(cue.get("motion", "")).strip()
         if not scene:
             continue
         keys = [w.strip(".,;:!?") for w in phrase.split() if len(w) > 3]
@@ -2152,10 +2185,12 @@ def plan_illustration_cues(text, words, model):
         if idx is None:
             continue
         s = float(words[idx]["start"])
-        e = min(s + 4.5, float(words[-1]["end"]))
+        span = CUE_CLIP_SECONDS if ANIMATE_CUES else 4.5
+        e = min(s + span, float(words[-1]["end"]))
         if any(not (e < p["start"] or s > p["end"]) for p in plan):
             continue
-        plan.append({"scene": scene, "start": max(0.0, s - 0.3), "end": e})
+        plan.append({"scene": scene, "motion": motion,
+                     "start": max(0.0, s - 0.3), "end": e})
     return plan
 
 
@@ -2210,7 +2245,68 @@ def drop_white_background(src_path, out_path):
     im.save(out_path)
 
 
-def make_illustration(scene):
+def _replicate_video(image_path, prompt, out_path):
+    """Animate a still into a short clip with a Replicate image to video model."""
+    with open(image_path, "rb") as fh:
+        data_uri = "data:image/png;base64," + base64.b64encode(fh.read()).decode()
+    payload = {"input": {REPLICATE_VIDEO_IMAGE_KEY: data_uri, "prompt": prompt}}
+    r = requests.post(
+        f"https://api.replicate.com/v1/models/{REPLICATE_VIDEO_MODEL}/predictions",
+        headers={"Authorization": f"Bearer {REPLICATE_API_TOKEN}",
+                 "Content-Type": "application/json", "Prefer": "wait"},
+        json=payload, timeout=600)
+    if r.status_code not in (200, 201):
+        raise RuntimeError(f"{r.status_code}: {r.text[:160]}")
+    body = r.json()
+    out = body.get("output")
+    # Some models keep working past the wait window; poll until it settles.
+    if not out and body.get("urls", {}).get("get"):
+        for _ in range(40):
+            time.sleep(6)
+            p = requests.get(body["urls"]["get"],
+                             headers={"Authorization": f"Bearer {REPLICATE_API_TOKEN}"},
+                             timeout=60).json()
+            if p.get("status") == "succeeded":
+                out = p.get("output")
+                break
+            if p.get("status") in ("failed", "canceled"):
+                raise RuntimeError(f"prediction {p.get('status')}")
+    url = out[0] if isinstance(out, list) else out
+    if not url:
+        raise RuntimeError("no clip returned")
+    open(out_path, "wb").write(requests.get(url, timeout=300).content)
+
+
+def make_cue_clip(scene, motion):
+    """A short animated clip for a cue.
+
+    The still is drawn first and handed to the video model as its opening
+    frame, so the motion inherits the same drawn style rather than arriving in
+    some unrelated look. Returns a path to an mp4, or None.
+    """
+    if not ANIMATE_CUES or not VIDEO_GEN_OK or not REPLICATE_API_TOKEN:
+        return None
+    still_raw = make_illustration(scene, keep_raw=True)
+    if not still_raw:
+        return None
+    prompt = (f"{motion or scene}. The drawing comes to life with one small natural "
+              f"movement. Camera completely still, plain white background, "
+              f"{ILLUSTRATION_STYLE}")
+    key = hashlib.md5(f"{REPLICATE_VIDEO_MODEL}|{prompt}".encode()).hexdigest()[:16]
+    cached = os.path.join(ILLUSTRATION_DIR, f"{key}.mp4")
+    if not os.path.exists(cached):
+        try:
+            _replicate_video(still_raw, prompt, cached)
+        except Exception as e:
+            print(f"    Animation failed ({type(e).__name__}: {str(e)[:100]}); "
+                  f"using the still instead.")
+            return None
+    if not os.path.exists(cached) or os.path.getsize(cached) < 2000:
+        return None
+    return cached
+
+
+def make_illustration(scene, keep_raw=False):
     """Draw one cue. Returns a path with alpha, or None if unavailable."""
     global IMAGE_GEN_OK
     if IMAGE_PROVIDER == "none" or not IMAGE_GEN_OK:
@@ -2219,8 +2315,10 @@ def make_illustration(scene):
     key = hashlib.md5(f"{IMAGE_PROVIDER}|{prompt}".encode()).hexdigest()[:16]
     cached = os.path.join(ILLUSTRATION_DIR, f"{key}.png")
 
-    if not os.path.exists(cached):
-        raw = os.path.join(ILLUSTRATION_DIR, f"{key}_raw.png")
+    raw = os.path.join(ILLUSTRATION_DIR, f"{key}_raw.png")
+    if keep_raw and os.path.exists(raw):
+        return raw
+    if not os.path.exists(cached) or (keep_raw and not os.path.exists(raw)):
         try:
             if IMAGE_PROVIDER == "openai" and OPENAI_API_KEY:
                 _openai_image(prompt, raw)
@@ -2235,9 +2333,10 @@ def make_illustration(scene):
             return None
         try:
             drop_white_background(raw, cached)
-            os.remove(raw)
         except Exception:
             return None
+    if keep_raw:
+        return raw if os.path.exists(raw) else None
     try:
         if Image.open(cached).size[0] < 32:
             return None
