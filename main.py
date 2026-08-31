@@ -236,58 +236,51 @@ PANEL_PROVIDERS = [
 # ---------------------------------------------------------------------------
 CHANNEL_NAME = "the AI Debate Arena"
 INTRO_OPENING = (
-    "Welcome to the AI Debate Arena, where rival artificial intelligences argue opposite "
-    "sides of one question, and a separate panel of AI judges decides who actually made "
-    "the better case."
+    "Welcome to the AI Debate Arena, where two artificial intelligences argue opposite "
+    "sides of the same question, and a jury of other AIs decides who made the better case."
 )
 INTRO_RULES = (
-    "The models swap sides every round, and the judges score blind, without being told which "
-    "side is which. And before we start, we asked every judge where it already stands, so at "
-    "the end we can see exactly who changed their mind."
+    "The two debaters swap sides halfway through, so neither one gets the easier job. And "
+    "before a word is said, we ask the jury what they already think, so at the end we can "
+    "see who changed their mind. Let's get into it."
 )
+OUTRO_SIGNOFF = (
+    "Every round is marked twice, once each way round, and any juror who flip flops is "
+    "thrown out. Tell us what you want settled next in the comments, subscribe, and we "
+    "will see you in the ring."
+)
+
 # ---------------------------------------------------------------------------
-# What this video actually measures. Every clause here is something the
-# pipeline genuinely does; nothing in it is aspirational. build_method_note()
-# fills in the real numbers from the run and writes it to video_description.txt
-# so the claim published with the video matches the claim the code can support.
+# What this video actually shows, in plain words. Every line here is something
+# the pipeline genuinely does. build_method_note() fills in the real numbers and
+# writes it to video_description.txt.
 # ---------------------------------------------------------------------------
 METHOD_CLAIMS = [
-    "Two AI models argue assigned sides of the question. They are told which side to "
-    "take, so their arguments are not their own views. They swap sides every round, so "
-    "neither position is carried by whichever model is stronger.",
+    "Two AIs argue the question, one on each side. They are told which side to take, so "
+    "what they say is not what they personally think. They swap sides halfway through, so "
+    "neither side gets carried by the better arguer.",
 
-    "Argument quality is scored by a separate panel. Judges never see which side is "
-    "which, they score every round twice with the two sides swapped, and any judge whose "
-    "verdict reverses when the order is swapped is dropped from the count rather than "
-    "averaged in.",
+    "A separate jury of AIs marks the arguing. They are never told which side is which. "
+    "Every round is marked twice, with the two sides swapped round, and any juror who "
+    "picks a different winner the second time is thrown out instead of counted.",
 
-    "Separately, one model from each participating lab states its own position on the "
-    "question, before the debate and again after reading the full transcript. Each model "
-    "is asked twice with the scale reversed. That before and after change is the headline "
-    "result.",
+    "Separately, one AI from each company is asked what it personally thinks, once before "
+    "the debate and once after reading the whole thing. How many of them changed their "
+    "mind is the main result.",
 
-    "Nothing is scripted or filled in. If a model returns no usable answer, it is left "
-    "out and reported as absent. No score, argument or verdict in this video was written "
-    "by a human or generated as placeholder text.",
+    "Nothing here is scripted or made up. If an AI gives no usable answer it is left out "
+    "and we say so. No argument, score or verdict in this video was written by a person.",
 ]
 
 METHOD_LIMITS = [
-    "This measures how a specific set of models responded to a specific debate. It is "
-    "not a measure of whether the position is true.",
+    "This shows how these particular AIs reacted to this particular debate. It does not "
+    "show whether the answer is true.",
 
-    "These models are not independent voices. They are trained on overlapping material "
-    "and tuned in similar ways, so agreement between them is weaker evidence than the "
-    "number of models suggests.",
+    "These AIs are not really separate opinions. They are built and trained in similar "
+    "ways, so when they agree it means less than the number of them suggests.",
 
-    "A model declining to take a position is reported as declining. It is never counted "
-    "as agreement or filled in.",
+    "If an AI refuses to pick a side, we report that. It is never counted as agreement.",
 ]
-
-OUTRO_SIGNOFF = (
-    "Scored blind, with the sides reversed, and any judge that changed its mind on the running "
-    "order thrown out. Drop the question you want settled next in the comments, subscribe, and "
-    "we will see you in the ring."
-)
 
 SPEECH_SYSTEM_PROMPT = (
     "You are a person speaking out loud on a live debate stage. Everything you produce is "
@@ -439,6 +432,33 @@ def trim_to_words(text, max_words):
     return out
 
 
+# All-caps words a voice should keep spelling out. Everything else in capitals
+# gets softened, because a voice reads a bare "NO" as the two letters N, O.
+SPOKEN_ACRONYMS = {
+    "AI", "DNA", "RNA", "US", "USA", "UK", "EU", "UN", "NASA", "NHS", "GDP",
+    "IQ", "CO2", "HIV", "AIDS", "FBI", "CIA", "NATO", "CEO", "TV", "PC", "GPT",
+    "LGBT", "PTSD", "ADHD", "COVID", "UFO", "USB", "GPS", "PHD", "MP", "MRI",
+}
+
+
+def soften_caps(t):
+    """Turn shouted words into ordinary ones so the voice says them, not spells them.
+
+    Side labels are stored in capitals for the on-screen cards. Left as they
+    are, a text to speech engine treats a short all-caps word as an initialism,
+    so "NO" comes out as "en oh".
+    """
+    def fix(m):
+        w = m.group(0)
+        if w.upper() in SPOKEN_ACRONYMS:
+            return w
+        if any(ch.isdigit() for ch in w):
+            return w
+        return w.capitalize()
+
+    return re.sub(r"\b[A-Z][A-Z'’]{1,}\b", fix, t)
+
+
 def clean_for_speech(t):
     if not t:
         return ""
@@ -447,6 +467,7 @@ def clean_for_speech(t):
     t = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", t)
     t = re.sub(r"```.*?```", " ", t, flags=re.DOTALL)
     t = EMOJI_RE.sub(" ", t)
+    t = soften_caps(t)
     # The voice reads these literally ("slash", "percent sign"), so spell them out.
     t = re.sub(r"(\d)\s*/\s*(\d)", r"\1 out of \2", t)
     t = re.sub(r"\s*/\s*", " or ", t)
@@ -785,6 +806,17 @@ META_SENTENCE_PATTERNS = [
     r"^(?:thinking process|constraints?|relevant points?|word count|task|instructions?|"
     r"position|note to self|draft)\b",
     r"^(?:i\s+)?(?:need|want|have)\s+to\s+(?:make sure|remember|keep|stay|hit|reach)\b",
+    # The model describing the job it was given rather than doing it:
+    # "I should score this as a person would", "I need to sound natural".
+    r"^i\s*(?:'ll|will|should|need to|must|have to|want to|am going to|'m going to)\s+"
+    r"(?:now\s+|just\s+|also\s+)?"
+    r"(?:score|judge|rate|grade|evaluate|assess|weigh|mark|react|sound|come across|"
+    r"speak|talk|write|phrase|word|keep|avoid|remember|ensure|make sure|be careful|"
+    r"stay|stick|aim|try to)\b",
+    r"^(?:my|the)\s+(?:job|task|role|brief|instruction|goal)\s+(?:here\s+)?is\b",
+    r"^(?:the\s+)?(?:prompt|instructions?|brief|user|question)\s+(?:says|asks|wants|"
+    r"tells|requires)\b",
+    r"^(?:i\s+)?(?:should|need to|must)\s+(?:sound|seem|appear|come across)\b",
 ]
 
 # The model weighing its own options out loud: "Option 2. Maybe I could use the
@@ -846,6 +878,14 @@ LEAK_FRAGMENTS = [
     "thinking process", "here's a thinking", "as an ai", "as a language model",
     "step 1", "word count", "user constraints", "the user wants", "the prompt",
     "my instructions", "i cannot", "i'm unable to",
+    # Describing the performance instead of performing it.
+    "i should score", "i should judge", "i should rate", "i should sound",
+    "i need to sound", "i should react", "i should speak", "i should talk",
+    "sound like a person", "sound like a human", "sound natural", "sound human",
+    "as a real person", "like a real person", "in a human way", "human sounding",
+    "one spoken sentence", "two or three short sentences", "in plain english",
+    "without being robotic", "not too robotic", "conversational tone",
+    "as a youtuber", "like a youtuber", "my persona", "stay in character",
 ]
 
 
@@ -1360,16 +1400,15 @@ def spoken_split(a, b, t, u, roles):
     if b:
         parts.append(f"{b} for {roles['side_b_label']}")
     if t:
-        parts.append(f"{t} calling it even")
+        parts.append(f"{t} calling it a draw")
     if not parts:
-        base = "no judge reached a stable verdict"
+        base = "nobody could pick a winner"
     elif len(parts) == 1:
         base = parts[0]
     else:
         base = ", ".join(parts[:-1]) + " and " + parts[-1]
     if u:
-        base += (f", with {u} thrown out for scoring the running order rather than "
-                 f"the argument")
+        base += f", and {u} thrown out for flip flopping"
     return base
 
 
@@ -1632,13 +1671,13 @@ def poll_summary(results):
 def describe_poll(summary, roles):
     parts = []
     if summary["lean_a"]:
-        parts.append(f"{summary['lean_a']} leaning {roles['side_a_label']}")
+        parts.append(f"{summary['lean_a']} said {roles['side_a_label']}")
     if summary["lean_b"]:
-        parts.append(f"{summary['lean_b']} leaning {roles['side_b_label']}")
+        parts.append(f"{summary['lean_b']} said {roles['side_b_label']}")
     if summary["undecided"]:
-        parts.append(f"{summary['undecided']} genuinely on the fence")
+        parts.append(f"{summary['undecided']} sat on the fence")
     if summary["declined"]:
-        parts.append(f"{summary['declined']} refusing to take a side at all")
+        parts.append(f"{summary['declined']} would not pick a side")
     if not parts:
         return "nobody would answer"
     if len(parts) == 1:
@@ -1647,54 +1686,57 @@ def describe_poll(summary, roles):
 
 
 def build_opening_poll_narration(summary, roles, topic):
+    if summary["lean_a"] > summary["lean_b"]:
+        mood = f"So the room starts out leaning {roles['side_a_label']}"
+    elif summary["lean_b"] > summary["lean_a"]:
+        mood = f"So the room starts out leaning {roles['side_b_label']}"
+    else:
+        mood = "So the room starts out split down the middle"
     return (
-        f"Before anybody argues anything, we asked {summary['asked']} models from "
-        f"{summary['providers']} different labs where they stand. {topic} "
+        f"Before anyone argues anything, we asked {summary['asked']} different AIs, one from "
+        f"each of {summary['providers']} companies, what they already think. {topic} "
         f"{sentence_case(describe_poll(summary, roles))}. "
-        f"On a scale of minus five to plus five they average {summary['mean']:+.1f}, "
-        f"and they are spread from {summary['low']:+.1f} to {summary['high']:+.1f}, "
-        f"so this is not a room that already agrees. "
-        f"That is the position our debaters have to shift."
+        f"{mood}. Now our two debaters get the rest of this video to change their minds."
     )
 
 
 def build_closing_poll_narration(before, after, roles, movement):
-    """Lead on how many models moved. That does not depend on anyone's scale."""
+    """Lead on how many changed their mind. No scales, no averages."""
     moved = movement["toward_a"] + movement["toward_b"]
+    total = moved + movement["unchanged"]
 
     if moved == 0:
-        headline = ("not a single model shifted its position. Two rounds of argument, and "
-                    "the panel is exactly where it started")
+        headline = ("not one of them budged. Two rounds of arguing, and every single AI "
+                    "thinks exactly what it thought before")
     elif movement["toward_a"] and movement["toward_b"]:
-        headline = (f"{movement['toward_a']} moved toward {roles['side_a_label']} and "
-                    f"{movement['toward_b']} moved the other way, so the room pulled apart "
-                    f"rather than together")
+        headline = (f"{movement['toward_a']} shifted toward {roles['side_a_label']} and "
+                    f"{movement['toward_b']} shifted the other way, so the debate pushed "
+                    f"them further apart rather than together")
     else:
         toward = roles["side_a_label"] if movement["toward_a"] else roles["side_b_label"]
-        movable = moved + movement["unchanged"]
-        headline = (f"{moved} of {movable} models moved, every one of them toward "
-                    f"{toward}")
+        headline = (f"{moved} out of {total} shifted, and every one of them shifted "
+                    f"toward {toward}")
 
     crossed = ""
     if movement["crossed"]:
         shown = movement["crossed"][:3]
         names = shown[0] if len(shown) == 1 else ", ".join(shown[:-1]) + " and " + shown[-1]
-        crossed = (f" {names} did not just soften, "
-                   f"{'they' if len(movement['crossed']) > 1 else 'it'} changed sides.")
+        crossed = (f" {names} did not just soften up, "
+                   f"{'they' if len(shown) > 1 else 'it'} switched sides completely.")
 
     return (
-        f"Now the part that matters. We put the same question to the same models again, this "
-        f"time having read every word of the debate. "
+        f"Now the bit that matters. We went back to the same AIs, this time with the whole "
+        f"debate in front of them, and asked the same question again. "
         f"{sentence_case(headline)}.{crossed} "
-        f"The average went from {before['mean']:+.1f} to {after['mean']:+.1f}, "
-        f"and they finished {describe_poll(after, roles)}. "
-        f"That is what these models said, before and after. It is not a measure of who "
-        f"is right, and models built from the same sort of training data are not "
-        f"independent witnesses. Take it for what it is."
+        f"The final count: {describe_poll(after, roles)}. "
+        f"Worth saying, this is what these AIs think, not proof of who is right. And they "
+        f"are all built in fairly similar ways, so them agreeing is not the same as a room "
+        f"full of independent people agreeing."
     )
 
 
 # ----------------------------------------------------------------------------
+# Visuals# ----------------------------------------------------------------------------
 # Visuals
 # ----------------------------------------------------------------------------
 
@@ -2125,7 +2167,8 @@ def generate_scoreboard(rn, res, avg_a, avg_b, cum_a, cum_b, path, roles,
     fs = load_font(28, bold=True)
     fh = load_font(22, bold=True)
     fr = load_font(24)
-    draw.text((W // 2, 50), f"ROUND {rn} SCORES", font=ft, fill=(255, 215, 0), anchor="mt")
+    draw.text((W // 2, 50), f"ROUND {rn} - HOW THE JURY MARKED IT",
+              font=ft, fill=(255, 215, 0), anchor="mt")
     draw.text((W // 2, 115), f"{roles['side_a_label']}  vs  {roles['side_b_label']}",
               font=fs, fill=(255, 255, 255), anchor="mt")
     hy = 190
@@ -2133,7 +2176,7 @@ def generate_scoreboard(rn, res, avg_a, avg_b, cum_a, cum_b, path, roles,
     sa = roles["side_a_label"][:14]
     sb = roles["side_b_label"][:14]
     draw.rectangle([60, hy - 10, W - 60, hy + 45], fill=(25, 35, 70), outline=(255, 215, 0), width=2)
-    draw.text((cx1, hy), "Judge", font=fh, fill=(255, 255, 255))
+    draw.text((cx1, hy), "Juror", font=fh, fill=(255, 255, 255))
     draw.text((cx2, hy), sa, font=fh, fill=(0, 255, 204))
     draw.text((cx3, hy), sb, font=fh, fill=(255, 120, 255))
     draw.text((cx4, hy), "Winner", font=fh, fill=(255, 215, 0))
@@ -2154,15 +2197,15 @@ def generate_scoreboard(rn, res, avg_a, avg_b, cum_a, cum_b, path, roles,
         elif r["winner"] == "TIE":
             wl, col = "TIE", (220, 220, 220)
         else:
-            wl, col = "ABSTAIN", (150, 150, 150)
+            wl, col = "NO CALL", (150, 150, 150)
         draw.text((cx4, y), wl, font=fr, fill=col)
         y += 58
     draw.line([(60, y + 5), (W - 60, y + 5)], fill=(255, 255, 255), width=2)
     y += 25
     if va is not None:
-        split = f"Panel: {va} - {vb}" + (f" ({vt} even)" if vt else "")
+        split = f"Jury: {va} - {vb}" + (f" ({vt} draw)" if vt else "")
         if vu:
-            split += f"   {vu} abstained"
+            split += f"   {vu} thrown out"
         draw.text((W // 2, y), split, font=fs, fill=(255, 255, 255), anchor="mt")
         y += 45
     draw.text((W // 2, y), f"Round Avg: {avg_a:.1f} vs {avg_b:.1f}",
@@ -2222,19 +2265,20 @@ def generate_poll_board(results, summary, roles, path, title, before=None):
     y = top + row_h * len(rows) + 24
     draw.line([(60, y), (W - 60, y)], fill=(255, 255, 255), width=2)
     y += 18
-    line = (f"{summary['lean_a']} {roles['side_a_label']}   |   "
-            f"{summary['lean_b']} {roles['side_b_label']}   |   "
-            f"{summary['undecided']} undecided   |   {summary['declined']} declined")
+    line = (f"{summary['lean_a']} say {roles['side_a_label']}   |   "
+            f"{summary['lean_b']} say {roles['side_b_label']}   |   "
+            f"{summary['undecided']} on the fence   |   "
+            f"{summary['declined']} would not say")
     draw.text((W // 2, y), line, font=fs, fill=(255, 255, 255), anchor="mt")
     y += 44
     if before is None:
-        draw.text((W // 2, y), f"Panel average: {summary['mean']:+.2f}",
+        draw.text((W // 2, y), f"Average lean: {summary['mean']:+.2f}",
                   font=fs, fill=(255, 215, 0), anchor="mt")
     else:
         swing = summary["mean"] - before["mean"]
         draw.text((W // 2, y),
-                  f"Panel average: {before['mean']:+.2f}  \u2192  {summary['mean']:+.2f}"
-                  f"   (swing {swing:+.2f})",
+                  f"Average lean: {before['mean']:+.2f}  \u2192  {summary['mean']:+.2f}"
+                  f"   (moved {swing:+.2f})",
                   font=fs, fill=(255, 215, 0), anchor="mt")
     img.save(path)
 
@@ -2263,20 +2307,20 @@ def generate_verdict_board(path, topic, roles, before, after, movement, votes,
     moved = movement["toward_a"] + movement["toward_b"]
     if moved == 0 or abs(swing) < 0.15:
         persuader, p_colour = "NOBODY MOVED", (200, 200, 200)
-        p_detail = "not one model changed its position"
+        p_detail = "not one AI changed its mind"
     elif movement["toward_a"] > movement["toward_b"]:
         persuader, p_colour = roles["side_a_label"], (0, 255, 204)
-        p_detail = f"{movement['toward_a']} of {moved + movement['unchanged']} models moved their way"
+        p_detail = f"{movement['toward_a']} of {moved + movement['unchanged']} AIs came round"
     elif movement["toward_b"] > movement["toward_a"]:
         persuader, p_colour = roles["side_b_label"], (255, 120, 255)
-        p_detail = f"{movement['toward_b']} of {moved + movement['unchanged']} models moved their way"
+        p_detail = f"{movement['toward_b']} of {moved + movement['unchanged']} AIs came round"
     else:
         persuader, p_colour = "SPLIT", (200, 200, 200)
-        p_detail = "the panel moved both ways in equal numbers"
+        p_detail = "they moved both ways in equal numbers"
 
     if mean_a is None or mean_b is None:
         arguer, a_colour = "NOT SCORED", (150, 150, 150)
-        a_detail = "no judge returned a usable verdict"
+        a_detail = "no juror gave a usable answer"
         a_sub = "nothing was invented to fill the gap"
     else:
         if votes["A"] > votes["B"]:
@@ -2285,9 +2329,9 @@ def generate_verdict_board(path, topic, roles, before, after, movement, votes,
             arguer, a_colour = roles["side_b_label"], (255, 120, 255)
         else:
             arguer, a_colour = "TIED", (200, 200, 200)
-        a_detail = (f"judges scored it {votes['A']}-{votes['B']}"
-                    + (f", {votes['TIE']} even" if votes["TIE"] else "")
-                    + (f", {votes['UNSTABLE']} discarded" if votes["UNSTABLE"] else ""))
+        a_detail = (f"jury split it {votes['A']}-{votes['B']}"
+                    + (f", {votes['TIE']} draw" if votes["TIE"] else "")
+                    + (f", {votes['UNSTABLE']} thrown out" if votes["UNSTABLE"] else ""))
         a_sub = f"average {mean_a:.1f} vs {mean_b:.1f} out of 100"
 
     box_y, box_h = 220, 300
@@ -2311,10 +2355,10 @@ def generate_verdict_board(path, topic, roles, before, after, movement, votes,
     draw.line([(120, y), (W - 120, y)], fill=(255, 255, 255), width=2)
     y += 26
     for line in [
-        "Judges scored blind, with the sides reversed, and any judge that changed its "
-        "mind on the running order was discarded.",
-        "Changed minds is measured by asking the models their own position before and "
-        "after. It measures persuasion, not truth.",
+        "The jury never knew which side was which. Every round was marked twice, both "
+        "ways round, and any juror who flip flopped was thrown out.",
+        "Changed minds means we asked each AI what it thought before the debate and "
+        "again after. It shows who was convincing, not who is right.",
     ]:
         draw.text((W // 2, y), line, font=fs, fill=(190, 190, 190), anchor="mt")
         y += 34
@@ -2438,23 +2482,88 @@ EMOJI_MISSING = set()
 EMOJI_W = 180
 EMOJI_H = 180
 
+# Broad enough that ordinary debate language triggers something. Matched on
+# word stems, so "children", "child" and "childs" all land on the same cue.
 WORD_EMOJI_MAP = {
-    "money": "\U0001F4B0", "cost": "\U0001F4B0", "economy": "\U0001F4B9", "tax": "\U0001F4B8",
-    "jobs": "\U0001F3ED", "work": "\U0001F477", "school": "\U0001F3EB", "education": "\U0001F393",
-    "children": "\U0001F9D2", "kids": "\U0001F9D2", "family": "\U0001F46A",
-    "health": "\U0001FA7A", "medicine": "\U0001F489", "hospital": "\U0001F3E5",
-    "science": "\U0001F52C", "research": "\U0001F52C", "data": "\U0001F4CA",
-    "evidence": "\U0001F50D", "study": "\U0001F4C8", "history": "\U0001F4DC",
-    "law": "\u2696\ufe0f", "court": "\u2696\ufe0f", "rights": "\u270A", "freedom": "\U0001F54A\ufe0f",
-    "government": "\U0001F3DB\ufe0f", "vote": "\U0001F5F3\ufe0f", "war": "\u2694\ufe0f",
-    "climate": "\U0001F30D", "planet": "\U0001F30D", "energy": "\u26A1", "pollution": "\U0001F3ED",
-    "technology": "\U0001F916", "computer": "\U0001F4BB", "internet": "\U0001F310",
-    "universe": "\U0001F30C", "stars": "\u2B50", "dna": "\U0001F9EC", "brain": "\U0001F9E0",
-    "god": "\u2728", "faith": "\U0001F64F", "prayer": "\U0001F64F", "truth": "\U0001F4A1",
-    "pain": "\U0001F623", "suffering": "\U0001F622", "death": "\U0001F5A4", "life": "\U0001F31F",
-    "future": "\U0001F52E", "risk": "\u26A0\ufe0f", "safety": "\U0001F6E1\ufe0f",
-    "food": "\U0001F35E", "water": "\U0001F4A7", "city": "\U0001F3D9\ufe0f", "world": "\U0001F30E",
+    # money and work
+    "money": "\U0001F4B0", "cost": "\U0001F4B0", "price": "\U0001F4B0", "pay": "\U0001F4B0",
+    "wage": "\U0001F4B5", "salary": "\U0001F4B5", "profit": "\U0001F4C8", "econom": "\U0001F4B9",
+    "tax": "\U0001F4B8", "budget": "\U0001F4B8", "debt": "\U0001F4C9", "bank": "\U0001F3E6",
+    "job": "\U0001F3ED", "work": "\U0001F477", "factory": "\U0001F3ED", "busines": "\U0001F4BC",
+    "compan": "\U0001F3E2", "market": "\U0001F6D2", "trade": "\U0001F4E6", "billion": "\U0001F4B0",
+    "million": "\U0001F4B0", "dollar": "\U0001F4B5", "pound": "\U0001F4B7",
+    # people and society
+    "child": "\U0001F9D2", "children": "\U0001F9D2", "kid": "\U0001F9D2", "teenager": "\U0001F9D1", "famil": "\U0001F46A",
+    "parent": "\U0001F468\u200D\U0001F469\u200D\U0001F466", "mother": "\U0001F469", "father": "\U0001F468",
+    "school": "\U0001F3EB", "educat": "\U0001F393", "student": "\U0001F393", "teacher": "\U0001F9D1",
+    "peopl": "\U0001F465", "communit": "\U0001F3D8\ufe0f", "societ": "\U0001F465",
+    "friend": "\U0001F91D", "neighbour": "\U0001F3E1", "home": "\U0001F3E0", "house": "\U0001F3E0",
+    # health
+    "health": "\U0001FA7A", "medicin": "\U0001F489", "hospital": "\U0001F3E5", "doctor": "\U0001F469\u200D\u2695\ufe0f",
+    "vaccin": "\U0001F489", "disease": "\U0001F9A0", "virus": "\U0001F9A0", "cancer": "\U0001F397\ufe0f",
+    "mental": "\U0001F9E0", "sleep": "\U0001F634", "addict": "\U0001F4F1", "drug": "\U0001F48A",
+    # evidence and science
+    "scien": "\U0001F52C", "research": "\U0001F52C", "stud": "\U0001F4C8", "data": "\U0001F4CA",
+    "evidence": "\U0001F50D", "proof": "\U0001F50D", "experiment": "\u2697\ufe0f", "test": "\U0001F9EA",
+    "number": "\U0001F522", "statistic": "\U0001F4CA", "percent": "\U0001F4C8", "survey": "\U0001F4CB",
+    "report": "\U0001F4C4", "record": "\U0001F4DA", "histor": "\U0001F4DC", "book": "\U0001F4D6",
+    "theor": "\U0001F9E0", "logic": "\U0001F9E9", "question": "\u2753", "answer": "\U0001F4A1",
+    # law and politics
+    "law": "\u2696\ufe0f", "legal": "\u2696\ufe0f", "court": "\u2696\ufe0f", "judge": "\U0001F9D1\u200D\u2696\ufe0f",
+    "right": "\u270A", "freedom": "\U0001F54A\ufe0f", "liberty": "\U0001F5FD", "ban": "\U0001F6AB",
+    "govern": "\U0001F3DB\ufe0f", "vote": "\U0001F5F3\ufe0f", "election": "\U0001F5F3\ufe0f",
+    "war": "\u2694\ufe0f", "peace": "\u262E\ufe0f", "crime": "\U0001F6A8", "prison": "\u26D3\ufe0f",
+    "regulat": "\U0001F4CB", "policy": "\U0001F4DC", "polici": "\U0001F4DC",
+    "police": "\U0001F46E", "rule": "\U0001F4CF",
+    # world and environment
+    "climat": "\U0001F30D", "planet": "\U0001F30D", "earth": "\U0001F30E", "world": "\U0001F30E",
+    "energ": "\u26A1", "power": "\u26A1", "oil": "\U0001F6E2\ufe0f", "solar": "\u2600\ufe0f",
+    "pollut": "\U0001F3ED", "carbon": "\U0001F4A8", "forest": "\U0001F332", "ocean": "\U0001F30A",
+    "weather": "\U0001F326\ufe0f", "storm": "\u26C8\ufe0f", "fire": "\U0001F525", "water": "\U0001F4A7",
+    "food": "\U0001F35E", "farm": "\U0001F33E", "animal": "\U0001F98C", "citie": "\U0001F3D9\ufe0f",
+    # technology
+    "technolog": "\U0001F916", "computer": "\U0001F4BB", "internet": "\U0001F310", "phone": "\U0001F4F1",
+    "social media": "\U0001F4F1", "algorithm": "\U0001F9EE", "robot": "\U0001F916", "machine": "\u2699\ufe0f",
+    "screen": "\U0001F4F2", "online": "\U0001F310", "privacy": "\U0001F510",
+    # belief and meaning
+    "god": "\u2728", "faith": "\U0001F64F", "pray": "\U0001F64F", "religio": "\u26EA",
+    "church": "\u26EA", "soul": "\U0001F54A\ufe0f", "moral": "\u2696\ufe0f", "truth": "\U0001F4A1",
+    "belie": "\U0001F4AD", "mirac": "\u2728", "universe": "\U0001F30C", "star": "\u2B50",
+    "creation": "\U0001F31F", "dna": "\U0001F9EC", "brain": "\U0001F9E0", "mind": "\U0001F9E0",
+    "evolut": "\U0001F9EC",
+    # feeling and stakes
+    "pain": "\U0001F623", "suffer": "\U0001F622", "harm": "\u26A0\ufe0f", "death": "\U0001F5A4",
+    "die": "\U0001F5A4", "died": "\U0001F5A4", "dying": "\U0001F5A4",
+    "life": "\U0001F31F", "live": "\U0001F31F", "hope": "\U0001F31F",
+    "fear": "\U0001F628", "danger": "\u26A0\ufe0f", "risk": "\u26A0\ufe0f", "safe": "\U0001F6E1\ufe0f",
+    "protect": "\U0001F6E1\ufe0f", "future": "\U0001F52E", "time": "\u23F3", "year": "\U0001F4C5",
+    "win": "\U0001F3C6", "lose": "\U0001F4C9", "fail": "\u274C", "succe": "\u2705",
+    "problem": "\u26A0\ufe0f", "solution": "\U0001F4A1", "change": "\U0001F504", "grow": "\U0001F331",
 }
+
+# Longest first, so "social media" beats "media" and "evolut" beats "evolve".
+_EMOJI_STEMS = sorted(WORD_EMOJI_MAP.keys(), key=len, reverse=True)
+
+
+# A stem only counts if what follows it is a real word ending. Without this,
+# "star" would fire on "start" and "die" on "diet".
+EMOJI_SUFFIXES = {
+    "", "s", "es", "ed", "ing", "ly", "al", "y", "ies", "er", "ers", "or", "ors",
+    "ion", "ions", "ist", "ists", "ic", "ical", "ment", "ments", "ance", "ence",
+    "ned", "ning", "ged", "ging", "ce", "ces", "e", "le", "les", "ss", "ful", "fs",
+}
+
+
+def emoji_for_word(word):
+    """Match a spoken word to a cue by stem, so plurals and tenses all count."""
+    w = re.sub(r"[^a-z]", "", word.lower())
+    if len(w) < 3:
+        return None
+    for stem in _EMOJI_STEMS:
+        key = stem.replace("_", "").replace(" ", "")
+        if len(key) >= 3 and w.startswith(key) and w[len(key):] in EMOJI_SUFFIXES:
+            return WORD_EMOJI_MAP[stem]
+    return None
 
 
 def emoji_to_codepoint(ec):
@@ -2511,22 +2620,23 @@ def create_emoji_plan(words):
     if not words:
         return []
     plan = []
+    used = set()
     for w in words:
-        cw = re.sub(r"[^a-z]", "", w["text"].lower())
-        if cw not in WORD_EMOJI_MAP:
+        ec = emoji_for_word(w["text"])
+        if not ec:
             continue
         s = float(w["start"])
-        e = float(w["end"]) + 1.3
+        e = float(w["end"]) + 1.6
         if any(not (e < p["start"] or s > p["end"]) for p in plan):
             continue
-        if plan and s - plan[-1]["end"] < 0.9:
+        if plan and s - plan[-1]["end"] < 0.5:
             continue
-        ec = WORD_EMOJI_MAP[cw]
-        if plan and ec == plan[-1].get("emoji"):
+        # Don't show the same picture twice in one turn.
+        if ec in used:
             continue
-        plan.append({"kind": "emoji", "emoji": ec,
-                     "start": max(0.0, s), "end": e})
-        if len(plan) >= 6:
+        used.add(ec)
+        plan.append({"kind": "emoji", "emoji": ec, "start": max(0.0, s), "end": e})
+        if len(plan) >= 10:
             break
     return plan
 
@@ -2879,9 +2989,10 @@ def prepare_scorecard(rn, res, ra, rb, cum_a, cum_b, va, vb, vt, vu, roles):
         "subs": f"score_subs_r{rn}.ass", "video": f"score_video_r{rn}.mp4",
     }
     generate_scoreboard(rn, res, ra, rb, cum_a, cum_b, spec["image"], roles, va, vb, vt, vu)
-    text = (f"Round {rn} is scored. The panel came down {spoken_split(va, vb, vt, vu, roles)}. "
-            f"On points, {roles['side_a_label']} {ra:.1f}, and {roles['side_b_label']} {rb:.1f}. "
-            f"Averaged so far, {cum_a / rn:.1f} to {cum_b / rn:.1f}.")
+    text = (f"Round {rn} is marked. Of the jurors who could pick a winner, "
+            f"{spoken_split(va, vb, vt, vu, roles)}. "
+            f"Out of a hundred for the arguing, {roles['side_a_label']} got {ra:.0f} "
+            f"and {roles['side_b_label']} got {rb:.0f}.")
     words = generate_audio(text, "MOD", spec["audio"])
     generate_subtitles(words, spec["subs"], scorecard=True,
                        audio_file=spec["audio"], full_text=text)
@@ -2907,7 +3018,7 @@ def build_intro(topic, jc, roles):
         f"Tonight's question is this. {topic} "
         f"Arguing {roles['side_a_label']}, on my left. "
         f"Arguing {roles['side_b_label']}, on my right. "
-        f"{number_word(ROUNDS)} rounds, equal time, and {jc} independent AI judges. "
+        f"{number_word(ROUNDS)} rounds, equal time, and {jc} AI jurors marking it. "
         f"{INTRO_RULES}"
     )
 
@@ -2944,32 +3055,31 @@ def build_outro(mean_a, mean_b, votes_a, votes_b, votes_t, votes_u, roles,
                      else movement["toward_b"])
         answering = (movement["toward_a"] + movement["toward_b"]
                      + movement["unchanged"])
-        lines.append(f"So the most persuasive side tonight was {persuader}. "
-                     f"{their_way} of the {answering} models that answered moved "
-                     f"their way.")
+        lines.append(f"So {persuader} was the more convincing side tonight. "
+                     f"{their_way} out of {answering} AIs came round their way.")
     elif movement is not None:
-        lines.append("So the most persuasive side tonight was neither. Nobody on the "
-                     "panel shifted their position at all.")
+        lines.append("So neither side was more convincing. Nobody changed their mind "
+                     "at all.")
 
     if mean_a is None or mean_b is None:
-        lines.append("On the arguing itself we have no score at all. Not one judge "
-                     "returned a usable verdict, so rather than make numbers up we are "
-                     "leaving that column empty.")
+        lines.append("On the arguing itself, we have no marks at all. Not one juror gave "
+                     "us a usable answer, and we would rather leave it blank than invent "
+                     "a number.")
         arguer = None
     elif arguer:
-        lines.append(f"On the arguing itself, judged blind, {arguer} scored higher, "
-                     f"{mean_a:.1f} to {mean_b:.1f} out of a hundred.")
+        lines.append(f"As for who argued it better, the jury gave {arguer} the edge, "
+                     f"{mean_a:.0f} to {mean_b:.0f} out of a hundred.")
     else:
-        lines.append(f"On the arguing itself, judged blind, the panel could not separate "
-                     f"them, {mean_a:.1f} to {mean_b:.1f} out of a hundred.")
+        lines.append(f"As for who argued it better, the jury could not split them, "
+                     f"{mean_a:.0f} and {mean_b:.0f} out of a hundred.")
 
     if persuader and arguer and persuader != arguer:
-        lines.append(f"Which is the interesting part. {arguer} argued it better, and "
+        lines.append(f"And that is the interesting bit. {arguer} argued it better, but "
                      f"{persuader} is the side that actually changed minds.")
 
     if votes_u and counted <= total / 2:
-        lines.append(f"Only {counted} of {total} judgements held up when we reversed the "
-                     f"running order, so treat the scoring lightly.")
+        lines.append(f"Only {counted} of our {total} markings held up when we ran them "
+                     f"the other way round, so take the scores with a pinch of salt.")
 
     lines.append(OUTRO_SIGNOFF)
     return " ".join(lines)
@@ -3352,7 +3462,7 @@ def run_debate_pipeline():
     specs.append(prepare_poll_segment(
         poll_before, sum_before, roles,
         build_opening_poll_narration(sum_before, roles, topic),
-        "opening", "WHERE THE PANEL STANDS - BEFORE"))
+        "opening", "WHAT THE AIs THINK - BEFORE THE DEBATE"))
     pacing.add(specs[-1]["duration"])
 
     cum_a = cum_b = 0.0
@@ -3506,7 +3616,7 @@ def run_debate_pipeline():
     specs.append(prepare_poll_segment(
         poll_after, sum_after, roles,
         build_closing_poll_narration(sum_before, sum_after, roles, movement),
-        "closing", "WHERE THE PANEL STANDS - AFTER", before=sum_before))
+        "closing", "WHAT THE AIs THINK - AFTER THE DEBATE", before=sum_before))
     pacing.add(specs[-1]["duration"])
 
     print(f"\nPanel consensus across all rounds: {votes_a} to {votes_b}"
