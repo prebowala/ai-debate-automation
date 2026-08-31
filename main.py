@@ -2116,17 +2116,37 @@ OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 REPLICATE_API_TOKEN = os.environ.get("REPLICATE_API_TOKEN")
 REPLICATE_IMAGE_MODEL = os.environ.get(
     "REPLICATE_IMAGE_MODEL", "black-forest-labs/flux-schnell")
-CUES_PER_TURN = int(os.environ.get("CUES_PER_TURN", "2"))
+# Stills are cheap, so two a turn is fine; animation is billed per second, so
+# one a turn is the sane default unless it is set explicitly.
+CUES_PER_TURN = int(os.environ.get(
+    "CUES_PER_TURN",
+    "1" if os.environ.get("ANIMATE_CUES", "").strip() not in ("", "0", "false", "no")
+    else "2"))
 
 # Animate cues into short clips instead of drifting a still. The still is
 # generated first and used as the opening frame, so the clip inherits the same
 # drawn style. Check Replicate for the current image to video models; the model
 # and its image input key are both configurable because they change often.
 ANIMATE_CUES = os.environ.get("ANIMATE_CUES", "").strip() not in ("", "0", "false", "no")
+
+# OpenRouter generates video as well as text, on the same key and the same
+# credit balance as the debate itself, so that is the default. Replicate stays
+# available as an alternative.
+VIDEO_PROVIDER = os.environ.get("VIDEO_PROVIDER", "openrouter").strip().lower()
+OPENROUTER_VIDEO_URL = "https://openrouter.ai/api/v1/videos"
+
+# Video is billed per second of output and is by far the most expensive part of
+# a build, so the default order prefers the cheap models. An exact id set in
+# OPENROUTER_VIDEO_MODEL always wins; otherwise the first of these that the
+# account can actually see is used.
+OPENROUTER_VIDEO_MODEL = os.environ.get("OPENROUTER_VIDEO_MODEL", "").strip()
+VIDEO_MODEL_PREFERENCE = ["wan", "seedance", "veo-3.1-fast", "veo", "sora"]
+
 REPLICATE_VIDEO_MODEL = os.environ.get("REPLICATE_VIDEO_MODEL",
                                        "wan-video/wan-2.1-i2v-480p")
 REPLICATE_VIDEO_IMAGE_KEY = os.environ.get("REPLICATE_VIDEO_IMAGE_KEY", "image")
-CUE_CLIP_SECONDS = float(os.environ.get("CUE_CLIP_SECONDS", "5"))
+CUE_CLIP_SECONDS = float(os.environ.get("CUE_CLIP_SECONDS", "4"))
+_VIDEO_MODEL_RESOLVED = None
 ILLUSTRATION_DIR = "illustration_cache"
 os.makedirs(ILLUSTRATION_DIR, exist_ok=True)
 IMAGE_GEN_OK = True
@@ -2245,6 +2265,97 @@ def drop_white_background(src_path, out_path):
     im.save(out_path)
 
 
+def resolve_video_model():
+    """Pick a video model the account can actually see, cheapest first.
+
+    Video model ids change often, so rather than hardcode one, ask the models
+    API which ones output video and match against a preference order.
+    """
+    global _VIDEO_MODEL_RESOLVED
+    if OPENROUTER_VIDEO_MODEL:
+        return OPENROUTER_VIDEO_MODEL
+    if _VIDEO_MODEL_RESOLVED is not None:
+        return _VIDEO_MODEL_RESOLVED
+    ids = []
+    try:
+        r = requests.get(OPENROUTER_MODELS_URL, headers=openrouter_headers(),
+                         params={"output_modalities": "video"}, timeout=30)
+        if r.status_code == 200:
+            ids = [it.get("id", "") for it in r.json().get("data", []) if it.get("id")]
+    except Exception:
+        ids = []
+    chosen = ""
+    for want in VIDEO_MODEL_PREFERENCE:
+        for mid in ids:
+            if want in mid.lower():
+                chosen = mid
+                break
+        if chosen:
+            break
+    if not chosen and ids:
+        chosen = ids[0]
+    _VIDEO_MODEL_RESOLVED = chosen
+    if chosen:
+        print(f"    Video model: {chosen}")
+    else:
+        print("    No video generation model available on this account.")
+    return chosen
+
+
+def _openrouter_video(image_path, prompt, out_path):
+    """Animate a still via OpenRouter's asynchronous video job API."""
+    model = resolve_video_model()
+    if not model:
+        raise RuntimeError("no video model available")
+    with open(image_path, "rb") as fh:
+        data_uri = "data:image/png;base64," + base64.b64encode(fh.read()).decode()
+
+    body = {
+        "model": model,
+        "prompt": prompt,
+        "duration": int(round(CUE_CLIP_SECONDS)),
+        "aspect_ratio": "1:1",
+        "generate_audio": False,
+        # The drawn still becomes the opening frame, so the motion continues
+        # the illustration rather than inventing a new look.
+        "frame_images": [{
+            "type": "image_url",
+            "image_url": {"url": data_uri},
+            "frame_type": "first_frame",
+        }],
+    }
+    r = requests.post(OPENROUTER_VIDEO_URL, headers=openrouter_headers(),
+                      json=body, timeout=120)
+    if r.status_code not in (200, 201, 202):
+        raise RuntimeError(f"{r.status_code}: {r.text[:200]}")
+    job = r.json()
+    poll_url = job.get("polling_url") or f"{OPENROUTER_VIDEO_URL}/{job.get('id')}"
+    status = job.get("status", "pending")
+
+    # Generation takes minutes, so this is a job rather than a request.
+    for _ in range(40):
+        if status == "completed":
+            break
+        if status in ("failed", "cancelled", "expired"):
+            raise RuntimeError(f"{status}: {str(job.get('error'))[:150]}")
+        time.sleep(15)
+        pr = requests.get(poll_url, headers=openrouter_headers(), timeout=60)
+        if pr.status_code != 200:
+            continue
+        job = pr.json()
+        status = job.get("status", status)
+    if status != "completed":
+        raise RuntimeError(f"timed out in state {status}")
+
+    urls = job.get("unsigned_urls") or []
+    if not urls:
+        raise RuntimeError("completed with no video url")
+    vid = requests.get(urls[0], headers=openrouter_headers(), timeout=300)
+    if vid.status_code != 200 or len(vid.content) < 2000:
+        raise RuntimeError(f"download failed ({vid.status_code})")
+    open(out_path, "wb").write(vid.content)
+
+
 def _replicate_video(image_path, prompt, out_path):
     """Animate a still into a short clip with a Replicate image to video model."""
     with open(image_path, "rb") as fh:
@@ -2284,7 +2395,11 @@ def make_cue_clip(scene, motion):
     frame, so the motion inherits the same drawn style rather than arriving in
     some unrelated look. Returns a path to an mp4, or None.
     """
-    if not ANIMATE_CUES or not VIDEO_GEN_OK or not REPLICATE_API_TOKEN:
+    if not ANIMATE_CUES or not VIDEO_GEN_OK or VIDEO_PROVIDER == "none":
+        return None
+    if VIDEO_PROVIDER == "replicate" and not REPLICATE_API_TOKEN:
+        return None
+    if VIDEO_PROVIDER == "openrouter" and not OPENROUTER_API_KEY:
         return None
     still_raw = make_illustration(scene, keep_raw=True)
     if not still_raw:
@@ -2292,13 +2407,18 @@ def make_cue_clip(scene, motion):
     prompt = (f"{motion or scene}. The drawing comes to life with one small natural "
               f"movement. Camera completely still, plain white background, "
               f"{ILLUSTRATION_STYLE}")
-    key = hashlib.md5(f"{REPLICATE_VIDEO_MODEL}|{prompt}".encode()).hexdigest()[:16]
+    tag = (OPENROUTER_VIDEO_MODEL or "auto") if VIDEO_PROVIDER == "openrouter" \
+        else REPLICATE_VIDEO_MODEL
+    key = hashlib.md5(f"{VIDEO_PROVIDER}|{tag}|{prompt}".encode()).hexdigest()[:16]
     cached = os.path.join(ILLUSTRATION_DIR, f"{key}.mp4")
     if not os.path.exists(cached):
         try:
-            _replicate_video(still_raw, prompt, cached)
+            if VIDEO_PROVIDER == "openrouter":
+                _openrouter_video(still_raw, prompt, cached)
+            else:
+                _replicate_video(still_raw, prompt, cached)
         except Exception as e:
-            print(f"    Animation failed ({type(e).__name__}: {str(e)[:100]}); "
+            print(f"    Animation failed ({type(e).__name__}: {str(e)[:120]}); "
                   f"using the still instead.")
             return None
     if not os.path.exists(cached) or os.path.getsize(cached) < 2000:
@@ -2591,6 +2711,14 @@ def print_cost_estimate(panel_size):
           f"{PRICE_PER_M['out']:.0f} dollars per million. Adjust PRICE_PER_M for your roster.")
     if TTS_PROVIDER == "elevenlabs":
         print(f"Plus roughly {chars/1000:.0f}k ElevenLabs characters for the narration.")
+    if ANIMATE_CUES and VIDEO_PROVIDER != "none":
+        clips = turns * CUES_PER_TURN
+        secs = clips * CUE_CLIP_SECONDS
+        print(f"Plus up to {clips} animated cues, about {secs:.0f} seconds of generated "
+              f"video. Video is billed per second and is normally the largest line on "
+              f"the bill: at 5 cents a second that is roughly ${secs * 0.05:.2f}, at 40 "
+              f"cents a second roughly ${secs * 0.40:.2f}. Lower CUES_PER_TURN or "
+              f"CUE_CLIP_SECONDS to cut it.")
 
 
 def preflight_environment():
