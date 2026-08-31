@@ -1,6 +1,6 @@
 __pycache__/
 *.pyc
-emoji_cache/
+illustration_cache/
 concat_list.txt
 segment_*.mp4
 score_video_*.mp4

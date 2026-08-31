@@ -8,8 +8,8 @@ import requests
 import subprocess
 import concurrent.futures
 import time
-from io import BytesIO
 import base64
+import hashlib
 import edge_tts
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
@@ -48,8 +48,6 @@ EST_COMMENTARY_SEC = 22.0
 EST_POLL_SEC = 40.0        # each of the opening and closing poll segments
 COMMENTARY_WORDS = 55
 
-EMOJI_W = 180
-EMOJI_H = 180
 USED_ARGUMENTS = set()
 USED_JUDGE_EXPLANATIONS = set()
 
@@ -216,6 +214,44 @@ INTRO_RULES = (
     "side is which. And before we start, we asked every judge where it already stands, so at "
     "the end we can see exactly who changed their mind."
 )
+# ---------------------------------------------------------------------------
+# What this video actually measures. Every clause here is something the
+# pipeline genuinely does; nothing in it is aspirational. build_method_note()
+# fills in the real numbers from the run and writes it to video_description.txt
+# so the claim published with the video matches the claim the code can support.
+# ---------------------------------------------------------------------------
+METHOD_CLAIMS = [
+    "Two AI models argue assigned sides of the question. They are told which side to "
+    "take, so their arguments are not their own views. They swap sides every round, so "
+    "neither position is carried by whichever model is stronger.",
+
+    "Argument quality is scored by a separate panel. Judges never see which side is "
+    "which, they score every round twice with the two sides swapped, and any judge whose "
+    "verdict reverses when the order is swapped is dropped from the count rather than "
+    "averaged in.",
+
+    "Separately, one model from each participating lab states its own position on the "
+    "question, before the debate and again after reading the full transcript. Each model "
+    "is asked twice with the scale reversed. That before and after change is the headline "
+    "result.",
+
+    "Nothing is scripted or filled in. If a model returns no usable answer, it is left "
+    "out and reported as absent. No score, argument or verdict in this video was written "
+    "by a human or generated as placeholder text.",
+]
+
+METHOD_LIMITS = [
+    "This measures how a specific set of models responded to a specific debate. It is "
+    "not a measure of whether the position is true.",
+
+    "These models are not independent voices. They are trained on overlapping material "
+    "and tuned in similar ways, so agreement between them is weaker evidence than the "
+    "number of models suggests.",
+
+    "A model declining to take a position is reported as declining. It is never counted "
+    "as agreement or filled in.",
+]
+
 OUTRO_SIGNOFF = (
     "Scored blind, with the sides reversed, and any judge that changed its mind on the running "
     "order thrown out. Drop the question you want settled next in the comments, subscribe, and "
@@ -295,7 +331,8 @@ def get_judge_short_name(mid):
 def cleanup_cache():
     for pat in ["*.mp4", "*.mp3", "*.ass", "*.png", "*_list.txt"]:
         for fn in glob.glob(pat):
-            if fn in [OUTPUT_FILE, "background.png", "topic.txt"]:
+            if fn in [OUTPUT_FILE, "background.png", "topic.txt",
+                      "video_description.txt"]:
                 continue
             try:
                 os.remove(fn)
@@ -1498,95 +1535,16 @@ def build_closing_poll_narration(before, after, roles, movement):
         f"time having read every word of the debate. "
         f"{sentence_case(headline)}.{crossed} "
         f"The average went from {before['mean']:+.1f} to {after['mean']:+.1f}, "
-        f"and they finished {describe_poll(after, roles)}."
+        f"and they finished {describe_poll(after, roles)}. "
+        f"That is what these models said, before and after. It is not a measure of who "
+        f"is right, and models built from the same sort of training data are not "
+        f"independent witnesses. Take it for what it is."
     )
 
 
 # ----------------------------------------------------------------------------
 # Visuals
 # ----------------------------------------------------------------------------
-
-def emoji_to_codepoint(ec):
-    codes = []
-    for ch in ec:
-        cp = ord(ch)
-        if cp == 0xfe0f:
-            continue
-        codes.append(f"{cp:x}")
-    return "-".join(codes)
-
-
-EMOJI_CACHE_DIR = "emoji_cache"
-os.makedirs(EMOJI_CACHE_DIR, exist_ok=True)
-# If the emoji CDN is unreachable, stop retrying it on every later segment.
-EMOJI_CDN_OK = True
-# Codepoints the CDN has no artwork for; never requested twice in one build.
-EMOJI_MISSING = set()
-
-
-def create_emoji_asset(ec, idx):
-    """Fetch a Twemoji PNG for `ec`. Returns a path, or None if unavailable.
-
-    There is deliberately no drawn fallback: DejaVu has no emoji glyphs, so
-    drawing the character produced a blank .notdef rectangle on screen. A cue we
-    cannot render properly is simply dropped instead.
-    """
-    global EMOJI_CDN_OK
-    code = emoji_to_codepoint(ec)
-    if not code or code in EMOJI_MISSING:
-        return None
-
-    cached = os.path.join(EMOJI_CACHE_DIR, f"{code}.png")
-    img_data = None
-    if os.path.exists(cached):
-        try:
-            img_data = Image.open(cached).convert("RGBA")
-        except Exception:
-            try:
-                os.remove(cached)
-            except OSError:
-                pass
-
-    if img_data is None and EMOJI_CDN_OK:
-        for version in ("14.0.2", "15.1.0"):
-            url = (f"https://cdn.jsdelivr.net/gh/twitter/twemoji@{version}"
-                   f"/assets/72x72/{code}.png")
-            try:
-                resp = requests.get(url, timeout=8)
-            except requests.exceptions.RequestException:
-                EMOJI_CDN_OK = False
-                print("Emoji CDN unreachable; visual cues disabled for this build.")
-                return None
-            if resp.status_code == 200 and len(resp.content) > 500:
-                try:
-                    img_data = Image.open(BytesIO(resp.content)).convert("RGBA")
-                    img_data.save(cached)
-                    break
-                except Exception:
-                    img_data = None
-
-    if img_data is None or img_data.size[0] <= 10:
-        # No artwork for this codepoint; never ask for it again this build.
-        EMOJI_MISSING.add(code)
-        return None
-
-    try:
-        size = 500
-        canvas = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-        resized = img_data.resize((380, 380), Image.LANCZOS)
-        x = y = (size - 380) // 2
-        shadow = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-        d = ImageDraw.Draw(shadow)
-        d.ellipse([x + 6, y + 6, x + 386, y + 386], fill=(0, 0, 0, 60))
-        shadow = shadow.filter(ImageFilter.GaussianBlur(6))
-        canvas = Image.alpha_composite(canvas, shadow)
-        canvas.paste(resized, (x, y), resized)
-        fn = f"emoji_{idx}.png"
-        canvas.save(fn)
-        return fn
-    except Exception:
-        return None
-
 
 def create_background(pos, glow, fn):
     source = os.path.join(os.path.dirname(os.path.abspath(__file__)), "background.png")
@@ -1925,30 +1883,41 @@ def render_video_segment(bg_path, ui_path, audio_path, subs_path, output_path,
 
     last = "[stage]"
     visual_inputs = []
-    for idx, vis in enumerate(visual_plan):
+    for vis in visual_plan:
         try:
-            ec = vis.get("emoji", "") if isinstance(vis, dict) else str(vis)
-            st = vis.get("start", idx * 2.2) if isinstance(vis, dict) else idx * 2.2
-            et = vis.get("end", st + 3.2) if isinstance(vis, dict) else st + 3.2
-            gp = create_emoji_asset(ec, idx + 1000 + random.randint(0, 9999))
+            scene = vis.get("scene", "") if isinstance(vis, dict) else str(vis)
+            st = float(vis.get("start", 0.0)) if isinstance(vis, dict) else 0.0
+            et = float(vis.get("end", st + 4.0)) if isinstance(vis, dict) else st + 4.0
+            path = make_illustration(scene)
         except Exception:
-            gp = None
-        # No artwork means no cue; drawing a placeholder yields a blank box.
-        if gp:
-            visual_inputs.append((gp, st, et))
-    for idx, (gp, st, et) in enumerate(visual_inputs):
-        fp.append(f"[{3 + idx}:v]scale={EMOJI_W}:{EMOJI_H}[v{idx}]")
-        vx = (VIDEO_W - EMOJI_W) // 2
-        vy = (VIDEO_H - EMOJI_H) // 2 - 50
+            path = None
+        # No artwork means no cue. Nothing is ever drawn as a placeholder.
+        if path:
+            visual_inputs.append((path, st, et))
+
+    for idx, (path, st, et) in enumerate(visual_inputs):
+        span = max(0.8, et - st)
+        # Gentle drift and a soft fade in and out, so a still drawing reads as
+        # a moving element rather than a sticker cut onto the frame.
+        fp.append(
+            f"[{3 + idx}:v]scale={CUE_W}:{CUE_H}:force_original_aspect_ratio=decrease,"
+            f"format=rgba,"
+            f"fade=t=in:st=0:d=0.45:alpha=1,"
+            f"fade=t=out:st={max(0.0, span - 0.5):.2f}:d=0.5:alpha=1,"
+            f"setpts=PTS-STARTPTS[v{idx}]")
+        vx = (VIDEO_W - CUE_W) // 2
+        vy = 210
+        drift = f"{vy}+18*sin((t-{st:.2f})*0.7)"
         nl = f"[tmp{idx}]"
-        fp.append(f"{last}[v{idx}]overlay={vx}:{vy}:enable='between(t,{st:.2f},{et:.2f})'{nl}")
+        fp.append(f"{last}[v{idx}]overlay={vx}:'{drift}'"
+                  f":enable='between(t,{st:.2f},{et:.2f})'{nl}")
         last = nl
 
     safe_subs = subs_path.replace(":", "\\:")
     fp.append(f"{last}format=yuv420p,subtitles={safe_subs}[out]")
 
-    for gp, _, _ in visual_inputs:
-        cmd.extend(["-i", gp])
+    for gp, st, et in visual_inputs:
+        cmd.extend(["-loop", "1", "-t", f"{max(0.8, et - st):.2f}", "-i", gp])
     cmd.extend(["-filter_complex", ";".join(fp), "-map", "[out]", "-map", "2:a",
                 "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-r", str(FPS),
                 "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2",
@@ -1957,11 +1926,6 @@ def render_video_segment(bg_path, ui_path, audio_path, subs_path, output_path,
     if r.returncode != 0:
         print(r.stderr[-8000:])
         raise RuntimeError("Render failed")
-    for gp, _, _ in visual_inputs:
-        try:
-            os.remove(gp)
-        except OSError:
-            pass
     return duration
 
 
@@ -2119,50 +2083,171 @@ def render_scorecard_video(ip, ap, sp, op):
     return dur
 
 
-WORD_EMOJI_MAP = {
-    "money": "\U0001F4B0", "cost": "\U0001F4B0", "economy": "\U0001F4B9", "tax": "\U0001F4B8",
-    "jobs": "\U0001F3ED", "work": "\U0001F477", "school": "\U0001F3EB", "education": "\U0001F393",
-    "children": "\U0001F9D2", "kids": "\U0001F9D2", "family": "\U0001F46A",
-    "health": "\U0001FA7A", "medicine": "\U0001F489", "hospital": "\U0001F3E5",
-    "science": "\U0001F52C", "research": "\U0001F52C", "data": "\U0001F4CA",
-    "evidence": "\U0001F50D", "study": "\U0001F4C8", "history": "\U0001F4DC",
-    "law": "⚖️", "court": "⚖️", "rights": "✊", "freedom": "\U0001F54A️",
-    "government": "\U0001F3DB️", "vote": "\U0001F5F3️", "war": "⚔️",
-    "climate": "\U0001F30D", "planet": "\U0001F30D", "energy": "⚡", "pollution": "\U0001F3ED",
-    "technology": "\U0001F916", "computer": "\U0001F4BB", "internet": "\U0001F310",
-    "universe": "\U0001F30C", "stars": "⭐", "dna": "\U0001F9EC", "brain": "\U0001F9E0",
-    "god": "✨", "faith": "\U0001F64F", "prayer": "\U0001F64F", "truth": "\U0001F4A1",
-    "pain": "\U0001F623", "suffering": "\U0001F622", "death": "\U0001F5A4", "life": "\U0001F31F",
-    "future": "\U0001F52E", "risk": "⚠️", "safety": "\U0001F6E1️",
-    "food": "\U0001F35E", "water": "\U0001F4A7", "city": "\U0001F3D9️", "world": "\U0001F30E",
-}
+# ---------------------------------------------------------------------------
+# Illustrated cues
+#
+# Instead of emoji, each turn gets one or two hand drawn style illustrations of
+# something actually being said. A model picks the moments and describes the
+# scene, an image model draws it, and it is composited over the stage with a
+# slow drift and a soft fade. If anything in that chain is unavailable the cue
+# is dropped: there is no placeholder and nothing is ever drawn as a box.
+# ---------------------------------------------------------------------------
+
+IMAGE_PROVIDER = os.environ.get("IMAGE_PROVIDER", "none").strip().lower()
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
+REPLICATE_API_TOKEN = os.environ.get("REPLICATE_API_TOKEN")
+REPLICATE_IMAGE_MODEL = os.environ.get(
+    "REPLICATE_IMAGE_MODEL", "black-forest-labs/flux-schnell")
+CUES_PER_TURN = int(os.environ.get("CUES_PER_TURN", "2"))
+ILLUSTRATION_DIR = "illustration_cache"
+os.makedirs(ILLUSTRATION_DIR, exist_ok=True)
+IMAGE_GEN_OK = True
+
+# Held constant so every illustration in every video looks like the same hand.
+ILLUSTRATION_STYLE = (
+    "loose hand drawn ink line art with soft watercolour washes, muted natural "
+    "palette, generous white space, plain white background, storybook illustration, "
+    "no text, no words, no lettering, no border, no frame, one simple subject"
+)
+CUE_W = 520
+CUE_H = 520
 
 
-def create_emoji_plan(words):
-    if not words:
+def plan_illustration_cues(text, words, model):
+    """Ask for a couple of drawable moments from what was actually said."""
+    if IMAGE_PROVIDER == "none" or not words:
         return []
-    plan, used = [], []
-    for w in words:
-        cw = re.sub(r"[^a-z]", "", w["text"].lower())
-        if cw not in WORD_EMOJI_MAP:
+    prompt = (
+        "Here is a passage from a spoken debate:\n\n"
+        f"{text[:1500]}\n\n"
+        f"Pick the {CUES_PER_TURN} most vivid concrete moments in it that could be drawn "
+        "as a simple illustration. Concrete means a physical thing, place, person or "
+        "action, never an abstract idea.\n"
+        "For each one give the exact phrase from the passage it belongs to, copied word "
+        "for word, and a short plain description of the picture.\n"
+        'Return ONLY JSON: {"cues": [{"phrase": "...", "scene": "a person picking an '
+        'apple from a branch"}]}'
+    )
+    resp = query_openrouter(prompt, model, timeout=40, max_tokens=400, temperature=0.4,
+                            system="You return only valid JSON. No commentary.")
+    d = extract_json_object(resp)
+    if not d or not isinstance(d.get("cues"), list):
+        return []
+
+    spoken = [w["text"].lower().strip(".,;:!?") for w in words]
+    plan = []
+    for cue in d["cues"][:CUES_PER_TURN]:
+        if not isinstance(cue, dict):
             continue
-        s = float(w["start"])
-        e = float(w["end"]) + 1.3
-        if any(not (e < us or s > ue) for us, ue in used):
+        phrase = str(cue.get("phrase", "")).lower()
+        scene = str(cue.get("scene", "")).strip()
+        if not scene:
             continue
-        if used and s - used[-1][1] < 0.9:
+        keys = [w.strip(".,;:!?") for w in phrase.split() if len(w) > 3]
+        idx = None
+        for i, w in enumerate(spoken):
+            if keys and w == keys[0]:
+                idx = i
+                break
+        if idx is None:
             continue
-        ec = WORD_EMOJI_MAP[cw]
-        if plan and ec == plan[-1]["emoji"]:
+        s = float(words[idx]["start"])
+        e = min(s + 4.5, float(words[-1]["end"]))
+        if any(not (e < p["start"] or s > p["end"]) for p in plan):
             continue
-        plan.append({"emoji": ec, "start": max(0, s), "end": e, "word": w["text"]})
-        used.append((s, e))
-        if len(plan) >= 6:
-            break
+        plan.append({"scene": scene, "start": max(0.0, s - 0.3), "end": e})
     return plan
 
 
-def prepare_segment(text, slot, display_name, topic, sid, judge_voice_index=None):
+def _openai_image(prompt, path):
+    r = requests.post(
+        "https://api.openai.com/v1/images/generations",
+        headers={"Authorization": f"Bearer {OPENAI_API_KEY}",
+                 "Content-Type": "application/json"},
+        json={"model": os.environ.get("OPENAI_IMAGE_MODEL", "gpt-image-1"),
+              "prompt": prompt, "size": "1024x1024", "n": 1},
+        timeout=180)
+    if r.status_code != 200:
+        raise RuntimeError(f"{r.status_code}: {r.text[:160]}")
+    item = r.json()["data"][0]
+    if item.get("b64_json"):
+        open(path, "wb").write(base64.b64decode(item["b64_json"]))
+    else:
+        open(path, "wb").write(requests.get(item["url"], timeout=120).content)
+
+
+def _replicate_image(prompt, path):
+    r = requests.post(
+        f"https://api.replicate.com/v1/models/{REPLICATE_IMAGE_MODEL}/predictions",
+        headers={"Authorization": f"Bearer {REPLICATE_API_TOKEN}",
+                 "Content-Type": "application/json", "Prefer": "wait"},
+        json={"input": {"prompt": prompt, "aspect_ratio": "1:1",
+                        "output_format": "png", "num_outputs": 1}},
+        timeout=180)
+    if r.status_code not in (200, 201):
+        raise RuntimeError(f"{r.status_code}: {r.text[:160]}")
+    out = r.json().get("output")
+    url = out[0] if isinstance(out, list) else out
+    if not url:
+        raise RuntimeError("no image returned")
+    open(path, "wb").write(requests.get(url, timeout=120).content)
+
+
+def drop_white_background(src_path, out_path):
+    """Turn the paper white transparent, keeping the ink and the washes."""
+    im = Image.open(src_path).convert("RGBA")
+    im.thumbnail((CUE_W * 2, CUE_H * 2), Image.LANCZOS)
+    px = im.load()
+    w, h = im.size
+    for y in range(h):
+        for x in range(w):
+            r, g, b, a = px[x, y]
+            m = min(r, g, b)
+            if m > 242:
+                px[x, y] = (r, g, b, 0)
+            elif m > 208:
+                px[x, y] = (r, g, b, int(a * (242 - m) / 34))
+    im.save(out_path)
+
+
+def make_illustration(scene):
+    """Draw one cue. Returns a path with alpha, or None if unavailable."""
+    global IMAGE_GEN_OK
+    if IMAGE_PROVIDER == "none" or not IMAGE_GEN_OK:
+        return None
+    prompt = f"{scene}. {ILLUSTRATION_STYLE}"
+    key = hashlib.md5(f"{IMAGE_PROVIDER}|{prompt}".encode()).hexdigest()[:16]
+    cached = os.path.join(ILLUSTRATION_DIR, f"{key}.png")
+
+    if not os.path.exists(cached):
+        raw = os.path.join(ILLUSTRATION_DIR, f"{key}_raw.png")
+        try:
+            if IMAGE_PROVIDER == "openai" and OPENAI_API_KEY:
+                _openai_image(prompt, raw)
+            elif IMAGE_PROVIDER == "replicate" and REPLICATE_API_TOKEN:
+                _replicate_image(prompt, raw)
+            else:
+                IMAGE_GEN_OK = False
+                print("    No image provider configured; illustrated cues disabled.")
+                return None
+        except Exception as e:
+            print(f"    Illustration failed ({type(e).__name__}: {str(e)[:100]}); cue dropped.")
+            return None
+        try:
+            drop_white_background(raw, cached)
+            os.remove(raw)
+        except Exception:
+            return None
+    try:
+        if Image.open(cached).size[0] < 32:
+            return None
+    except Exception:
+        return None
+    return cached
+
+
+def prepare_segment(text, slot, display_name, topic, sid, judge_voice_index=None,
+                    cue_model=None):
     """Do everything for a segment except the ffmpeg render.
 
     Audio synthesis gives the exact duration pacing needs, so the whole debate
@@ -2178,9 +2263,10 @@ def prepare_segment(text, slot, display_name, topic, sid, judge_voice_index=None
     }
     words = generate_audio(text, slot, spec["audio"], judge_voice_index)
     try:
-        spec["eplan"] = create_emoji_plan(words)
+        model = cue_model or (AVAILABLE_MODELS[0] if AVAILABLE_MODELS else None)
+        spec["cues"] = plan_illustration_cues(text, words, model) if model else []
     except Exception:
-        spec["eplan"] = []
+        spec["cues"] = []
     generate_subtitles(words, spec["subs"], scorecard=False,
                        audio_file=spec["audio"], full_text=text)
     create_background(pos, glow, spec["bg"])
@@ -2214,7 +2300,7 @@ def render_prepared(spec):
     else:
         render_video_segment(spec["bg"], spec["ui"], spec["audio"], spec["subs"],
                              spec["video"], spec["pos"], spec["glow"],
-                             spec["wave_box"], spec["eplan"])
+                             spec["wave_box"], spec["cues"])
     return spec["video"]
 
 
@@ -2280,6 +2366,47 @@ def build_outro(cum_a, cum_b, votes_a, votes_b, votes_t, votes_u, roles, swing=N
                  f"{split_line.strip()}")
     lines.append(OUTRO_SIGNOFF)
     return " ".join(lines)
+
+
+def build_method_note(topic, roles, debaters, judges, poll_roster,
+                      sum_before, sum_after, movement, votes):
+    """A description-ready statement of what this run actually did."""
+    labs = sorted({provider_from_model(m) for m in poll_roster})
+    swing = sum_after["mean"] - sum_before["mean"]
+    moved = movement["toward_a"] + movement["toward_b"]
+    lines = [
+        f"QUESTION: {topic}",
+        "",
+        f"Arguing {roles['side_a_label']} and {roles['side_b_label']}: "
+        f"{get_judge_short_name(debaters[0])} and {get_judge_short_name(debaters[1])}, "
+        f"swapping sides each round.",
+        f"Scoring the arguing: {len(judges)} models "
+        f"({', '.join(get_judge_short_name(j) for j in judges)}).",
+        f"Polled for their own position: {len(poll_roster)} models, one from each of "
+        f"{len(labs)} labs ({', '.join(labs)}).",
+        "",
+        "RESULT",
+        f"Before the debate the panel sat at {sum_before['mean']:+.2f} on a scale of -5 to "
+        f"+5 ({sum_before['lean_a']} leaning {roles['side_a_label']}, "
+        f"{sum_before['lean_b']} leaning {roles['side_b_label']}, "
+        f"{sum_before['undecided']} undecided, {sum_before['declined']} declined).",
+        f"After reading the debate it sat at {sum_after['mean']:+.2f}, a shift of "
+        f"{swing:+.2f}.",
+        f"{moved} model(s) changed position: {movement['toward_a']} toward "
+        f"{roles['side_a_label']}, {movement['toward_b']} toward "
+        f"{roles['side_b_label']}, {movement['unchanged']} unmoved."
+        + (f" Crossed sides: {', '.join(movement['crossed'])}." if movement["crossed"] else ""),
+        f"On argument quality the panel split {votes['A']}-{votes['B']}"
+        + (f" with {votes['TIE']} even" if votes["TIE"] else "")
+        + (f"; {votes['UNSTABLE']} judgement(s) discarded as order driven."
+           if votes["UNSTABLE"] else "."),
+        "",
+        "METHOD",
+    ]
+    lines += [f"- {c}" for c in METHOD_CLAIMS]
+    lines += ["", "WHAT THIS DOES NOT SHOW"]
+    lines += [f"- {c}" for c in METHOD_LIMITS]
+    return "\n".join(lines)
 
 
 def stitch_segments(segs, out):
@@ -2701,8 +2828,19 @@ def run_debate_pipeline():
                         swing=swing),
             "MOD", "MODERATOR", count_speech=False)
 
+    method_note = build_method_note(
+        topic, roles, (ap_model, sk_model), judges, poll_roster,
+        sum_before, sum_after, movement,
+        {"A": votes_a, "B": votes_b, "TIE": votes_t, "UNSTABLE": votes_u})
+    try:
+        open("video_description.txt", "w", encoding="utf-8").write(method_note + "\n")
+        print("\nWrote video_description.txt (paste under the video).")
+    except OSError:
+        pass
+
     try:
         json.dump({"topic": topic, "sides": roles,
+                   "method_note": method_note,
                    "debater_models": {"A": ap_model, "B": sk_model},
                    "judge_models": judges,
                    "turns": turn_attribution,
