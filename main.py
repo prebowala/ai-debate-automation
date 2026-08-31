@@ -134,6 +134,24 @@ PANEL_MODELS = [m.strip() for m in os.environ.get(
     "cohere/command-r-plus"
 ).split(",") if m.strip()]
 
+# Extra models polled for consensus but never used to debate or judge. Reasoning
+# models belong here: they cannot narrate (they leak their scratchpad into
+# speech) but they answer a poll perfectly well.
+POLL_EXTRA_MODELS = [m.strip() for m in os.environ.get(
+    "POLL_EXTRA_MODELS",
+    "deepseek/deepseek-r1,"
+    "google/gemini-2.5-pro,"
+    "anthropic/claude-opus-4.1,"
+    "openai/o4-mini,"
+    "amazon/nova-pro-v1,"
+    "ai21/jamba-1.5-large"
+).split(",") if m.strip()]
+
+# Consensus is not improved by many models from one lab: they share training
+# data and tuning, so they are not independent voices. Breadth of lab is what
+# counts, so no provider gets more than this many seats in the poll.
+MAX_POLL_PER_PROVIDER = 2
+
 # Rough per million token prices, only used to print a cost estimate before a
 # run. Unknown models fall back to the default and are marked approximate.
 PRICE_PER_M = {"in": 3.0, "out": 12.0}
@@ -251,11 +269,20 @@ def provider_from_model(mid):
 
 def get_judge_short_name(mid):
     low = (mid or "").lower()
+    if "o4-mini" in low: return "o4-mini"
+    if "o3" in low: return "o3"
+    if "gpt" in low and "mini" in low: return "GPT-4o mini"
     if "gpt" in low: return "ChatGPT"
+    if "claude" in low and "opus" in low: return "Claude Opus"
+    if "claude" in low and "sonnet" in low: return "Claude Sonnet"
+    if "claude" in low and "haiku" in low: return "Claude Haiku"
     if "claude-3-5" in low: return "Claude 3.5"
     if "claude" in low: return "Claude"
+    if "gemini" in low and "pro" in low: return "Gemini Pro"
+    if "gemini" in low and "flash" in low: return "Gemini Flash"
     if "gemini-2.0" in low: return "Gemini 2.0"
     if "gemini" in low: return "Gemini"
+    if "deepseek" in low and "r1" in low: return "DeepSeek R1"
     if "deepseek" in low: return "DeepSeek"
     if "mistral" in low: return "Mistral"
     if "nemotron" in low: return "Nemotron"
@@ -1313,8 +1340,63 @@ def poll_panel(models, topic, roles, transcript=None):
                 r = None
             if r:
                 results.append(r)
+    # Two models from one lab can share a short name; keep the board readable.
+    tally = {}
+    for r in results:
+        tally[r["display_name"]] = tally.get(r["display_name"], 0) + 1
+    for r in results:
+        if tally[r["display_name"]] > 1:
+            tail = r["model"].split("/")[-1].split(":")[0]
+            r["display_name"] = f"{r['display_name']} ({tail[-12:]})"
     results.sort(key=lambda r: r["display_name"])
     return results
+
+
+def build_poll_roster(debaters, panel):
+    """Everyone whose opinion counts toward consensus.
+
+    This is deliberately wider than the judging panel. A judge is excluded from
+    scoring text it wrote, and a reasoning model is excluded from speaking
+    because it narrates its scratchpad, but neither restriction has anything to
+    do with a model stating its own view on the question. Both belong here.
+    """
+    per_provider = {}
+    roster = []
+    for m in list(debaters) + list(panel) + list(POLL_EXTRA_MODELS):
+        if not m or m in roster:
+            continue
+        prov = provider_from_model(m)
+        if per_provider.get(prov, 0) >= MAX_POLL_PER_PROVIDER:
+            continue
+        per_provider[prov] = per_provider.get(prov, 0) + 1
+        roster.append(m)
+    return roster
+
+
+def poll_movement(before, after):
+    """How many individual models moved, and which way.
+
+    More robust than the change in mean: it does not care what scale each model
+    used, only which direction it went.
+    """
+    b = {r["model"]: r for r in before}
+    toward_a = toward_b = unchanged = 0
+    crossed = []
+    for r in after:
+        prev = b.get(r["model"])
+        if not prev or prev["declined"] or r["declined"]:
+            continue
+        delta = r["position"] - prev["position"]
+        if delta > 0.25:
+            toward_a += 1
+        elif delta < -0.25:
+            toward_b += 1
+        else:
+            unchanged += 1
+        if prev["position"] * r["position"] < 0:
+            crossed.append(r["display_name"])
+    return {"toward_a": toward_a, "toward_b": toward_b,
+            "unchanged": unchanged, "crossed": crossed}
 
 
 def poll_summary(results):
@@ -1324,10 +1406,19 @@ def poll_summary(results):
     lean_a = sum(1 for r in stated if r["position"] > LEAN_THRESHOLD)
     lean_b = sum(1 for r in stated if r["position"] < -LEAN_THRESHOLD)
     undecided = len(stated) - lean_a - lean_b
-    mean = round(sum(r["position"] for r in stated) / len(stated), 2) if stated else 0.0
+    positions = [r["position"] for r in stated]
+    mean = round(sum(positions) / len(positions), 2) if positions else 0.0
+    if len(positions) > 1:
+        var = sum((p - mean) ** 2 for p in positions) / (len(positions) - 1)
+        spread = round(var ** 0.5, 2)
+    else:
+        spread = 0.0
     return {"lean_a": lean_a, "lean_b": lean_b, "undecided": undecided,
             "declined": len(declined), "mean": mean, "stated": len(stated),
-            "asked": len(results)}
+            "asked": len(results), "spread": spread,
+            "low": round(min(positions), 1) if positions else 0.0,
+            "high": round(max(positions), 1) if positions else 0.0,
+            "providers": len({r["provider"] for r in results})}
 
 
 def describe_poll(summary, roles):
@@ -1349,36 +1440,45 @@ def describe_poll(summary, roles):
 
 def build_opening_poll_narration(summary, roles, topic):
     return (
-        f"Before anybody argues anything, we asked all {summary['asked']} judges the question "
-        f"cold. {topic} Here is where they started. "
+        f"Before anybody argues anything, we asked {summary['asked']} models from "
+        f"{summary['providers']} different labs where they stand. {topic} "
         f"{sentence_case(describe_poll(summary, roles))}. "
-        f"On a scale running from minus five to plus five, the panel average sits at "
-        f"{summary['mean']:+.1f}. "
-        f"That is the number our debaters have to move. Let's find out if they can."
+        f"On a scale of minus five to plus five they average {summary['mean']:+.1f}, "
+        f"and they are spread from {summary['low']:+.1f} to {summary['high']:+.1f}, "
+        f"so this is not a room that already agrees. "
+        f"That is the position our debaters have to shift."
     )
 
 
-def build_closing_poll_narration(before, after, roles):
-    swing = after["mean"] - before["mean"]
-    moved_a = after["lean_a"] - before["lean_a"]
-    moved_b = after["lean_b"] - before["lean_b"]
-    if abs(swing) < 0.15:
-        movement = ("the panel did not move at all. Whatever was said in those two rounds, "
-                    "not one position shifted in a way we can measure")
+def build_closing_poll_narration(before, after, roles, movement):
+    """Lead on how many models moved. That does not depend on anyone's scale."""
+    moved = movement["toward_a"] + movement["toward_b"]
+
+    if moved == 0:
+        headline = ("not a single model shifted its position. Two rounds of argument, and "
+                    "the panel is exactly where it started")
+    elif movement["toward_a"] and movement["toward_b"]:
+        headline = (f"{movement['toward_a']} moved toward {roles['side_a_label']} and "
+                    f"{movement['toward_b']} moved the other way, so the room pulled apart "
+                    f"rather than together")
     else:
-        toward = roles["side_a_label"] if swing > 0 else roles["side_b_label"]
-        movement = (f"the panel moved {abs(swing):.1f} points toward {toward}")
-    detail = ""
-    if moved_a > 0:
-        detail = f" {moved_a} model or models crossed over to {roles['side_a_label']}."
-    elif moved_b > 0:
-        detail = f" {moved_b} model or models crossed over to {roles['side_b_label']}."
+        toward = roles["side_a_label"] if movement["toward_a"] else roles["side_b_label"]
+        headline = (f"{moved} of {before['stated']} models moved, every one of them toward "
+                    f"{toward}")
+
+    crossed = ""
+    if movement["crossed"]:
+        shown = movement["crossed"][:3]
+        names = shown[0] if len(shown) == 1 else ", ".join(shown[:-1]) + " and " + shown[-1]
+        crossed = (f" {names} did not just soften, "
+                   f"{'they' if len(movement['crossed']) > 1 else 'it'} changed sides.")
+
     return (
-        f"Now the part that matters. We put the same question to the same judges again, this "
-        f"time with the full transcript in front of them. "
-        f"They finished {describe_poll(after, roles)}. "
-        f"The average went from {before['mean']:+.1f} to {after['mean']:+.1f}, which means "
-        f"{movement}.{detail}"
+        f"Now the part that matters. We put the same question to the same models again, this "
+        f"time having read every word of the debate. "
+        f"{sentence_case(headline)}.{crossed} "
+        f"The average went from {before['mean']:+.1f} to {after['mean']:+.1f}, "
+        f"and they finished {describe_poll(after, roles)}."
     )
 
 
@@ -2411,8 +2511,10 @@ def run_debate_pipeline():
 
     # Where the panel stands before hearing a word. This is the consensus
     # measurement; the round scorecards measure who argued better.
-    print("\nOpening poll: asking the panel where it stands, cold.")
-    poll_before = poll_panel(judges, topic, roles)
+    poll_roster = build_poll_roster((ap_model, sk_model), judges)
+    print(f"\nOpening poll: {len(poll_roster)} models from "
+          f"{len({provider_from_model(m) for m in poll_roster})} labs, asked cold.")
+    poll_before = poll_panel(poll_roster, topic, roles)
     if not poll_before:
         raise DebateGenerationError(
             "No model answered the opening poll, so there is no consensus to measure and "
@@ -2553,7 +2655,7 @@ def run_debate_pipeline():
     print("\nClosing poll: asking the same panel again, with the transcript.")
     transcript = "\n\n".join(
         f"{t['side']}: {t['text']}" for t in turn_transcript)
-    poll_after = poll_panel(judges, topic, roles, transcript=transcript)
+    poll_after = poll_panel(poll_roster, topic, roles, transcript=transcript)
     sum_after = poll_summary(poll_after) if poll_after else sum_before
     for r in poll_after:
         stance = "declined" if r["declined"] else f"{r['position']:+.1f}"
@@ -2561,9 +2663,14 @@ def run_debate_pipeline():
     swing = sum_after["mean"] - sum_before["mean"]
     print(f"  Closing: {describe_poll(sum_after, roles)}; mean {sum_after['mean']:+.2f} "
           f"(swing {swing:+.2f})")
+    movement = poll_movement(poll_before, poll_after)
+    print(f"  Movement: {movement['toward_a']} toward {roles['side_a_label']}, "
+          f"{movement['toward_b']} toward {roles['side_b_label']}, "
+          f"{movement['unchanged']} unmoved"
+          + (f"; crossed sides: {', '.join(movement['crossed'])}" if movement["crossed"] else ""))
     specs.append(prepare_poll_segment(
         poll_after, sum_after, roles,
-        build_closing_poll_narration(sum_before, sum_after, roles),
+        build_closing_poll_narration(sum_before, sum_after, roles, movement),
         "closing", "WHERE THE PANEL STANDS - AFTER", before=sum_before))
     pacing.add(specs[-1]["duration"])
 
@@ -2583,7 +2690,9 @@ def run_debate_pipeline():
                    "cumulative": {"A": round(cum_a, 2), "B": round(cum_b, 2)},
                    "consensus_votes": {"A": votes_a, "B": votes_b, "TIE": votes_t,
                                        "UNSTABLE": votes_u},
-                   "poll": {"before": {"summary": sum_before, "models": poll_before},
+                   "poll": {"roster": poll_roster,
+                            "movement": movement,
+                            "before": {"summary": sum_before, "models": poll_before},
                             "after": {"summary": sum_after, "models": poll_after},
                             "swing": round(sum_after["mean"] - sum_before["mean"], 3)}},
                   open("scores.json", "w", encoding="utf-8"), indent=2)
