@@ -1022,6 +1022,84 @@ def strip_meta(text):
     return clean_response(text)[0]
 
 
+# The register the debaters must hit. This is the difference between an argument
+# that lands with a general audience and one that reads like a seminar paper.
+PLAIN_SPEECH_RULES = (
+    "How to say it:\n"
+    "- Talk the way you would to a friend in a pub who is smart but knows nothing about "
+    "this subject. Not a lecture, not an essay, not a press release.\n"
+    "- Short sentences. Mix a long one in occasionally so it does not get choppy, but "
+    "most should be under fifteen words.\n"
+    "- Everyday words only. If you must use a technical term, explain it in the same "
+    "breath in words a fourteen year old would follow.\n"
+    "- Use pictures people can see: a kid at two in the morning, a bill on a kitchen "
+    "table, a queue outside a hospital. Not abstractions.\n"
+    "- One number, said simply. Nine out of ten, not 89.4 percent. A number a listener "
+    "can hold in their head.\n"
+    "- Contractions throughout. Don't, isn't, they're, that's.\n"
+    "- Never use these words: furthermore, moreover, consequently, thus, hence, "
+    "nevertheless, utilise, facilitate, paradigm, framework, empirical, methodology, "
+    "nuanced, multifaceted, underscores, salient, myriad, plethora, aforementioned.\n"
+    "- Keep the argument just as strong. Simple words, hard punches. Plain speech is not "
+    "a weaker case, it is the same case that more people can follow."
+)
+
+# Words that make a spoken argument sound like a paper being read out.
+ACADEMIC_MARKERS = {
+    "furthermore", "moreover", "consequently", "nevertheless", "notwithstanding",
+    "thus", "hence", "whereby", "wherein", "aforementioned", "utilize", "utilise",
+    "facilitate", "paradigm", "framework", "empirical", "efficacy", "methodology",
+    "fundamentally", "inherently", "substantive", "multifaceted", "nuanced",
+    "underscores", "underscore", "posits", "postulates", "asserts", "delineate",
+    "dichotomy", "ontological", "epistemic", "normative", "salient", "pertinent",
+    "requisite", "myriad", "plethora", "predicated", "contingent", "requisite",
+    "insofar", "vis-a-vis", "heretofore", "thereby", "therein", "albeit",
+}
+
+# Straight swaps that change register without changing meaning.
+PLAIN_SWAPS = {
+    "utilize": "use", "utilise": "use", "commence": "start", "endeavour": "try",
+    "endeavor": "try", "numerous": "many", "furthermore": "and", "moreover": "and",
+    "consequently": "so", "therefore": "so", "thus": "so", "hence": "so",
+    "nevertheless": "even so", "notwithstanding": "even so", "facilitate": "help",
+    "ascertain": "find out", "demonstrates": "shows", "demonstrate": "show",
+    "indicates": "shows", "indicate": "show", "sufficient": "enough",
+    "additional": "more", "approximately": "about", "individuals": "people",
+    "purchase": "buy", "obtain": "get", "requires": "needs", "require": "need",
+    "assist": "help", "attempt": "try", "initiate": "start", "terminate": "end",
+    "subsequently": "then", "prior to": "before", "in order to": "to",
+    "with regard to": "about", "in the event that": "if", "a myriad of": "many",
+    "a plethora of": "plenty of", "the majority of": "most",
+    "substantial": "big", "significant": "big", "considerable": "big",
+}
+
+
+def plain_words(text):
+    """Swap paper words for spoken ones, keeping the sentence's capitalisation."""
+    def swap(m):
+        word = m.group(0)
+        repl = PLAIN_SWAPS[word.lower()]
+        return repl.capitalize() if word[0].isupper() else repl
+
+    for phrase in sorted(PLAIN_SWAPS, key=len, reverse=True):
+        text = re.sub(rf"\b{re.escape(phrase)}\b", swap, text, flags=re.IGNORECASE)
+    return text
+
+
+def reads_academic(text):
+    """True when a turn reads like an essay rather than someone talking."""
+    words = re.findall(r"\b[\w'-]+\b", text.lower())
+    if len(words) < 30:
+        return False
+    sentences = [s for s in re.split(r"(?<=[.!?])\s+", text) if s.strip()]
+    avg_sentence = len(words) / max(1, len(sentences))
+    jargon = sum(1 for w in words if w in ACADEMIC_MARKERS)
+    long_words = sum(1 for w in words if len(w) >= 13)
+    return (avg_sentence > 27
+            or jargon >= 2
+            or (jargon + long_words) / len(words) > 0.06)
+
+
 def generate_turn(topic, roles, side, round_num, turn_num, opponent_last, target_words, model):
     label = roles["side_a_label"] if side == "A" else roles["side_b_label"]
     other = roles["side_b_label"] if side == "A" else roles["side_a_label"]
@@ -1032,13 +1110,14 @@ def generate_turn(topic, roles, side, round_num, turn_num, opponent_last, target
         prompt = (
             f"The debate question is: {topic}\n"
             f"You are arguing the {label} side. You believe that {stance}.\n\n"
-            "This is your opening. Say the one thing that most convinces you, and make it concrete: "
-            "a specific case, study, number, event or story with enough detail that a listener could "
-            "go look it up afterwards. Then say plainly what it means for the question.\n\n"
-            f"Speak for roughly {target_words} words. Talk like a person on a podcast, warm, direct, "
-            "using contractions. Start with the substance in your very first sentence. Do not greet "
-            "anyone, do not name your side, do not describe what you are about to say, and do not "
-            "reason about which example to pick. Pick one and say it as if you always meant to."
+            "This is your opening. Say the one thing that most convinces you, and make it "
+            "real: a specific case, a number, something that actually happened, with enough "
+            "detail that someone could go and check it.\n\n"
+            + PLAIN_SPEECH_RULES
+            + f"\nSpeak for roughly {target_words} words. Start with the substance in your "
+            "very first sentence. Do not greet anyone, do not name your side, do not "
+            "describe what you are about to say, and do not reason about which example to "
+            "pick. Pick one and say it as if you always meant to."
         )
     else:
         prompt = (
@@ -1053,15 +1132,18 @@ def generate_turn(topic, roles, side, round_num, turn_num, opponent_last, target
             "- Give the counter-evidence: a specific case, figure or example that cuts against it.\n"
             "- Then push forward with one fresh reason for your own side that hasn't come up yet.\n\n"
             f"Points already used in this debate, so find something new: {used_str}\n\n"
-            f"Speak for roughly {target_words} words. Contractions, plain speech, some edge to it. "
-            "Your first sentence must already be engaging what they said. Never announce that you "
-            "are about to respond, counter, address or discuss anything, and never weigh options "
-            "out loud. Choose your evidence silently and state it with conviction."
+            + PLAIN_SPEECH_RULES
+            + f"\nSpeak for roughly {target_words} words. Your first sentence must already be "
+            "engaging what they said. Never announce that you are about to respond, counter, "
+            "address or discuss anything, and never weigh options out loud. Choose your "
+            "evidence silently and say it like you mean it."
         )
 
     attempted = []
     best = ""
     best_model = None
+    stiff = ""          # usable, but reads like an essay
+    stiff_model = None
     for m in turn_model_chain(model):
         attempted.append(get_judge_short_name(m))
         resp = query_openrouter(prompt, m, max_tokens=900,
@@ -1093,13 +1175,29 @@ def generate_turn(topic, roles, side, round_num, turn_num, opponent_last, target
                 best, best_model = cleaned, m
             continue
 
+        cleaned = plain_words(cleaned)
+        # An essay-sounding turn is real content but poor television. Hold it
+        # and try another model before settling for it.
+        if reads_academic(cleaned) and not stiff:
+            stiff, stiff_model = cleaned, m
+            continue
+
         cleaned = trim_to_words(cleaned, target_words + 25)
         for s in re.split(r"(?<=[.!?])\s+", cleaned)[:3]:
             if len(s) > 40:
                 USED_ARGUMENTS.add(s[:90])
         return cleaned, m
 
+    if stiff and count_words(stiff) >= count_words(best):
+        print(f"    {label} turn reads formally and no model did better; using it.")
+        stiff = trim_to_words(stiff, target_words + 25)
+        for s in re.split(r"(?<=[.!?])\s+", stiff)[:3]:
+            if len(s) > 40:
+                USED_ARGUMENTS.add(s[:90])
+        return stiff, stiff_model
+
     if best:
+        best = plain_words(best)
         print(f"    {label} turn came in at {count_words(best)} words against a "
               f"{target_words} target; using it as spoken rather than padding.")
         for s in re.split(r"(?<=[.!?])\s+", best)[:3]:
@@ -1437,9 +1535,10 @@ def generate_panel_commentary(model, side, topic, rn, a_text, b_text, roles):
         "Say out loud, in two or three short sentences, why it went that way for you. Name the "
         "actual thing the winning side said, repeat a phrase of theirs back, and say the specific "
         "question the other side left sitting there unanswered.\n"
-        f"About {COMMENTARY_WORDS} words. Talk like a person reacting, not like a report. "
-        "No scores, no numbers, no round number, no preamble, no describing what you are doing, "
-        "and no thinking out loud about what you might say. Just say it."
+        f"About {COMMENTARY_WORDS} words. Talk like someone who just watched it and is "
+        "telling a mate what swung it. Everyday words, short sentences, contractions. "
+        "No jargon, no scores, no numbers, no round number, no preamble, no describing "
+        "what you are doing, and no thinking out loud about what you might say. Just say it."
     )
     resp = query_openrouter(prompt, model, timeout=40, max_tokens=320, temperature=0.88)
     if not resp:
@@ -2482,63 +2581,91 @@ EMOJI_MISSING = set()
 EMOJI_W = 180
 EMOJI_H = 180
 
-# Broad enough that ordinary debate language triggers something. Matched on
-# word stems, so "children", "child" and "childs" all land on the same cue.
+# Built around the words people actually say in an argument, not just topic
+# nouns, because a list of topic nouns leaves most of a spoken turn with
+# nothing on screen. Matched on stems, so children, child and childs all land
+# on the same cue.
 WORD_EMOJI_MAP = {
     # money and work
-    "money": "\U0001F4B0", "cost": "\U0001F4B0", "price": "\U0001F4B0", "pay": "\U0001F4B0",
-    "wage": "\U0001F4B5", "salary": "\U0001F4B5", "profit": "\U0001F4C8", "econom": "\U0001F4B9",
-    "tax": "\U0001F4B8", "budget": "\U0001F4B8", "debt": "\U0001F4C9", "bank": "\U0001F3E6",
-    "job": "\U0001F3ED", "work": "\U0001F477", "factory": "\U0001F3ED", "busines": "\U0001F4BC",
-    "compan": "\U0001F3E2", "market": "\U0001F6D2", "trade": "\U0001F4E6", "billion": "\U0001F4B0",
-    "million": "\U0001F4B0", "dollar": "\U0001F4B5", "pound": "\U0001F4B7",
-    # people and society
-    "child": "\U0001F9D2", "children": "\U0001F9D2", "kid": "\U0001F9D2", "teenager": "\U0001F9D1", "famil": "\U0001F46A",
-    "parent": "\U0001F468\u200D\U0001F469\u200D\U0001F466", "mother": "\U0001F469", "father": "\U0001F468",
+    "money": "\U0001F4B0", "cost": "\U0001F4B0", "price": "\U0001F4B0", "cheap": "\U0001F4B0",
+    "expensive": "\U0001F4B8", "afford": "\U0001F4B8", "wage": "\U0001F4B5", "salar": "\U0001F4B5",
+    "profit": "\U0001F4C8", "econom": "\U0001F4B9", "tax": "\U0001F4B8", "budget": "\U0001F4B8",
+    "debt": "\U0001F4C9", "bank": "\U0001F3E6", "job": "\U0001F3ED", "work": "\U0001F477",
+    "factor": "\U0001F3ED", "busines": "\U0001F4BC", "compan": "\U0001F3E2", "market": "\U0001F6D2",
+    "trade": "\U0001F4E6", "billion": "\U0001F4B0", "million": "\U0001F4B0", "dollar": "\U0001F4B5",
+    "pound": "\U0001F4B7", "buy": "\U0001F6D2", "sell": "\U0001F3F7\ufe0f", "pay": "\U0001F4B3",
+    # people
+    "child": "\U0001F9D2", "children": "\U0001F9D2", "kid": "\U0001F9D2", "teenager": "\U0001F9D1",
+    "famil": "\U0001F46A", "parent": "\U0001F46A", "mother": "\U0001F469", "father": "\U0001F468",
+    "friend": "\U0001F91D", "peopl": "\U0001F465", "person": "\U0001F9CD", "everyone": "\U0001F465",
+    "nobod": "\U0001F937", "somebod": "\U0001F9CD", "someone": "\U0001F9CD", "anyone": "\U0001F465",
+    "communit": "\U0001F3D8\ufe0f", "societ": "\U0001F465", "neighbour": "\U0001F3E1",
     "school": "\U0001F3EB", "educat": "\U0001F393", "student": "\U0001F393", "teacher": "\U0001F9D1",
-    "peopl": "\U0001F465", "communit": "\U0001F3D8\ufe0f", "societ": "\U0001F465",
-    "friend": "\U0001F91D", "neighbour": "\U0001F3E1", "home": "\U0001F3E0", "house": "\U0001F3E0",
-    # health
-    "health": "\U0001FA7A", "medicin": "\U0001F489", "hospital": "\U0001F3E5", "doctor": "\U0001F469\u200D\u2695\ufe0f",
-    "vaccin": "\U0001F489", "disease": "\U0001F9A0", "virus": "\U0001F9A0", "cancer": "\U0001F397\ufe0f",
-    "mental": "\U0001F9E0", "sleep": "\U0001F634", "addict": "\U0001F4F1", "drug": "\U0001F48A",
-    # evidence and science
+    "home": "\U0001F3E0", "house": "\U0001F3E0", "countr": "\U0001F5FA\ufe0f", "citie": "\U0001F3D9\ufe0f",
+    "city": "\U0001F3D9\ufe0f", "world": "\U0001F30E", "nation": "\U0001F5FA\ufe0f",
+    # health and body
+    "health": "\U0001FA7A", "medicin": "\U0001F489", "hospital": "\U0001F3E5", "doctor": "\U0001FA7A",
+    "vaccin": "\U0001F489", "disease": "\U0001F9A0", "virus": "\U0001F9A0", "sick": "\U0001F912",
+    "mental": "\U0001F9E0", "sleep": "\U0001F634", "awake": "\U0001F440", "tired": "\U0001F62B",
+    "addict": "\U0001F4F1", "drug": "\U0001F48A", "brain": "\U0001F9E0", "bod": "\U0001F9CD",
+    # evidence and argument
     "scien": "\U0001F52C", "research": "\U0001F52C", "stud": "\U0001F4C8", "data": "\U0001F4CA",
-    "evidence": "\U0001F50D", "proof": "\U0001F50D", "experiment": "\u2697\ufe0f", "test": "\U0001F9EA",
-    "number": "\U0001F522", "statistic": "\U0001F4CA", "percent": "\U0001F4C8", "survey": "\U0001F4CB",
+    "evidence": "\U0001F50D", "proof": "\U0001F50D", "prove": "\U0001F50D", "experiment": "\u2697\ufe0f",
+    "number": "\U0001F522", "statistic": "\U0001F4CA", "percent": "\U0001F4C8", "surve": "\U0001F4CB",
     "report": "\U0001F4C4", "record": "\U0001F4DA", "histor": "\U0001F4DC", "book": "\U0001F4D6",
-    "theor": "\U0001F9E0", "logic": "\U0001F9E9", "question": "\u2753", "answer": "\U0001F4A1",
-    # law and politics
-    "law": "\u2696\ufe0f", "legal": "\u2696\ufe0f", "court": "\u2696\ufe0f", "judge": "\U0001F9D1\u200D\u2696\ufe0f",
-    "right": "\u270A", "freedom": "\U0001F54A\ufe0f", "liberty": "\U0001F5FD", "ban": "\U0001F6AB",
-    "govern": "\U0001F3DB\ufe0f", "vote": "\U0001F5F3\ufe0f", "election": "\U0001F5F3\ufe0f",
+    "fact": "\U0001F4CC", "truth": "\U0001F4A1", "true": "\u2705", "false": "\u274C",
+    "wrong": "\u274C", "correct": "\u2705", "lie": "\U0001F925", "honest": "\U0001F91D",
+    "doubt": "\U0001F914", "certain": "\U0001F4AF", "argu": "\U0001F5E3\ufe0f", "claim": "\U0001F5E3\ufe0f",
+    "point": "\U0001F449", "question": "\u2753", "answer": "\U0001F4A1", "reason": "\U0001F9E9",
+    "example": "\U0001F4CC", "case": "\U0001F4C1", "stor": "\U0001F4D6", "review": "\U0001F50D",
+    "audit": "\U0001F4CB", "test": "\U0001F9EA", "measur": "\U0001F4CF", "compar": "\u2696\ufe0f",
+    # thinking and feeling
+    "think": "\U0001F4AD", "thought": "\U0001F4AD", "belie": "\U0001F4AD", "idea": "\U0001F4A1",
+    "know": "\U0001F9E0", "understand": "\U0001F9E0", "remember": "\U0001F9E0", "forget": "\U0001F4AD",
+    "agree": "\U0001F44D", "disagree": "\U0001F44E", "admit": "\U0001F64B", "deny": "\U0001F645",
+    "worr": "\U0001F61F", "afraid": "\U0001F628", "fear": "\U0001F628", "angry": "\U0001F621",
+    "happ": "\U0001F642", "sad": "\U0001F622", "love": "\u2764\ufe0f", "hate": "\U0001F620",
+    "care": "\U0001F49B", "hope": "\U0001F31F", "pain": "\U0001F623", "suffer": "\U0001F622",
+    # law, politics, power
+    "law": "\u2696\ufe0f", "legal": "\u2696\ufe0f", "court": "\u2696\ufe0f", "judge": "\u2696\ufe0f",
+    "right": "\u270A", "freedom": "\U0001F54A\ufe0f", "ban": "\U0001F6AB", "allow": "\u2705",
+    "govern": "\U0001F3DB\ufe0f", "police": "\U0001F46E", "vote": "\U0001F5F3\ufe0f", "election": "\U0001F5F3\ufe0f",
     "war": "\u2694\ufe0f", "peace": "\u262E\ufe0f", "crime": "\U0001F6A8", "prison": "\u26D3\ufe0f",
-    "regulat": "\U0001F4CB", "policy": "\U0001F4DC", "polici": "\U0001F4DC",
-    "police": "\U0001F46E", "rule": "\U0001F4CF",
-    # world and environment
-    "climat": "\U0001F30D", "planet": "\U0001F30D", "earth": "\U0001F30E", "world": "\U0001F30E",
-    "energ": "\u26A1", "power": "\u26A1", "oil": "\U0001F6E2\ufe0f", "solar": "\u2600\ufe0f",
-    "pollut": "\U0001F3ED", "carbon": "\U0001F4A8", "forest": "\U0001F332", "ocean": "\U0001F30A",
-    "weather": "\U0001F326\ufe0f", "storm": "\u26C8\ufe0f", "fire": "\U0001F525", "water": "\U0001F4A7",
-    "food": "\U0001F35E", "farm": "\U0001F33E", "animal": "\U0001F98C", "citie": "\U0001F3D9\ufe0f",
+    "regulat": "\U0001F4CB", "polic": "\U0001F4DC", "rule": "\U0001F4CF", "power": "\u26A1",
+    "control": "\U0001F39B\ufe0f", "force": "\U0001F4AA", "protect": "\U0001F6E1\ufe0f", "enforce": "\U0001F46E",
+    # world and things
+    "climat": "\U0001F30D", "planet": "\U0001F30D", "earth": "\U0001F30E", "energ": "\u26A1",
+    "oil": "\U0001F6E2\ufe0f", "solar": "\u2600\ufe0f", "pollut": "\U0001F3ED", "carbon": "\U0001F4A8",
+    "forest": "\U0001F332", "ocean": "\U0001F30A", "weather": "\U0001F326\ufe0f", "fire": "\U0001F525",
+    "water": "\U0001F4A7", "food": "\U0001F35E", "farm": "\U0001F33E", "animal": "\U0001F98C",
+    "car": "\U0001F697", "road": "\U0001F6E3\ufe0f", "build": "\U0001F3D7\ufe0f", "machine": "\u2699\ufe0f",
     # technology
     "technolog": "\U0001F916", "computer": "\U0001F4BB", "internet": "\U0001F310", "phone": "\U0001F4F1",
-    "social media": "\U0001F4F1", "algorithm": "\U0001F9EE", "robot": "\U0001F916", "machine": "\u2699\ufe0f",
-    "screen": "\U0001F4F2", "online": "\U0001F310", "privacy": "\U0001F510",
-    # belief and meaning
+    "algorithm": "\U0001F9EE", "robot": "\U0001F916", "screen": "\U0001F4F2", "online": "\U0001F310",
+    "privac": "\U0001F510", "feed": "\U0001F4F2", "post": "\U0001F4EC", "media": "\U0001F4F0",
+    # belief
     "god": "\u2728", "faith": "\U0001F64F", "pray": "\U0001F64F", "religio": "\u26EA",
-    "church": "\u26EA", "soul": "\U0001F54A\ufe0f", "moral": "\u2696\ufe0f", "truth": "\U0001F4A1",
-    "belie": "\U0001F4AD", "mirac": "\u2728", "universe": "\U0001F30C", "star": "\u2B50",
-    "creation": "\U0001F31F", "dna": "\U0001F9EC", "brain": "\U0001F9E0", "mind": "\U0001F9E0",
-    "evolut": "\U0001F9EC",
-    # feeling and stakes
-    "pain": "\U0001F623", "suffer": "\U0001F622", "harm": "\u26A0\ufe0f", "death": "\U0001F5A4",
-    "die": "\U0001F5A4", "died": "\U0001F5A4", "dying": "\U0001F5A4",
-    "life": "\U0001F31F", "live": "\U0001F31F", "hope": "\U0001F31F",
-    "fear": "\U0001F628", "danger": "\u26A0\ufe0f", "risk": "\u26A0\ufe0f", "safe": "\U0001F6E1\ufe0f",
-    "protect": "\U0001F6E1\ufe0f", "future": "\U0001F52E", "time": "\u23F3", "year": "\U0001F4C5",
-    "win": "\U0001F3C6", "lose": "\U0001F4C9", "fail": "\u274C", "succe": "\u2705",
-    "problem": "\u26A0\ufe0f", "solution": "\U0001F4A1", "change": "\U0001F504", "grow": "\U0001F331",
+    "church": "\u26EA", "soul": "\U0001F54A\ufe0f", "moral": "\u2696\ufe0f", "mirac": "\u2728",
+    "universe": "\U0001F30C", "star": "\u2B50", "creation": "\U0001F31F", "dna": "\U0001F9EC",
+    "evolut": "\U0001F9EC", "design": "\U0001F4D0",
+    # stakes and change
+    "death": "\U0001F5A4", "die": "\U0001F5A4", "died": "\U0001F5A4", "dying": "\U0001F5A4",
+    "life": "\U0001F31F", "live": "\U0001F31F", "born": "\U0001F476", "harm": "\u26A0\ufe0f",
+    "danger": "\u26A0\ufe0f", "risk": "\u26A0\ufe0f", "safe": "\U0001F6E1\ufe0f", "damage": "\U0001F4A5",
+    "problem": "\u26A0\ufe0f", "solution": "\U0001F4A1", "solve": "\U0001F4A1", "fix": "\U0001F527",
+    "break": "\U0001F4A5", "change": "\U0001F504", "grow": "\U0001F331", "rise": "\U0001F4C8",
+    "fall": "\U0001F4C9", "drop": "\U0001F4C9", "win": "\U0001F3C6", "lose": "\U0001F4C9",
+    "fight": "\U0001F94A", "help": "\U0001F91D", "save": "\U0001F6DF", "stop": "\U0001F6D1",
+    "fail": "\u274C", "succe": "\u2705", "future": "\U0001F52E", "past": "\u23EA",
+    # time
+    "year": "\U0001F4C5", "month": "\U0001F4C6", "week": "\U0001F4C6", "day": "\u2600\ufe0f",
+    "morning": "\U0001F305", "night": "\U0001F319", "hour": "\u23F0", "minute": "\u23F1\ufe0f",
+    "decade": "\U0001F4C5", "centur": "\U0001F4DC", "today": "\U0001F4C5", "wait": "\u23F3",
+    "time": "\u23F3", "clock": "\u23F0",
+    # senses
+    "look": "\U0001F440", "watch": "\U0001F440", "see": "\U0001F440", "listen": "\U0001F442",
+    "hear": "\U0001F442", "read": "\U0001F4D6", "write": "\u270D\ufe0f", "speak": "\U0001F5E3\ufe0f",
+    "voice": "\U0001F5E3\ufe0f", "show": "\U0001F449",
 }
 
 # Longest first, so "social media" beats "media" and "evolut" beats "evolve".
@@ -2620,23 +2747,21 @@ def create_emoji_plan(words):
     if not words:
         return []
     plan = []
-    used = set()
+    last_shown = {}
     for w in words:
         ec = emoji_for_word(w["text"])
         if not ec:
             continue
         s = float(w["start"])
-        e = float(w["end"]) + 1.6
-        if any(not (e < p["start"] or s > p["end"]) for p in plan):
+        e = float(w["end"]) + 1.4
+        if plan and s - plan[-1]["end"] < 0.35:
             continue
-        if plan and s - plan[-1]["end"] < 0.5:
+        # The same picture can come back, but not straight away.
+        if s - last_shown.get(ec, -99) < 12.0:
             continue
-        # Don't show the same picture twice in one turn.
-        if ec in used:
-            continue
-        used.add(ec)
+        last_shown[ec] = e
         plan.append({"kind": "emoji", "emoji": ec, "start": max(0.0, s), "end": e})
-        if len(plan) >= 10:
+        if len(plan) >= 20:
             break
     return plan
 
