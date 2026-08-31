@@ -692,7 +692,34 @@ STOP_WORDS = {"a", "an", "the", "is", "are", "was", "were", "be", "been", "do", 
               "have", "had", "there", "really", "actually", "ever"}
 
 
-def _titlecase_label(s, limit=26):
+LABEL_DISPLAY_CHARS = 18
+
+
+def shorten_labels(a, b):
+    """Drop shared opening words, but only when the labels need it.
+
+    A model asked to name the sides often answers "CHRISTIANITY IS TRUE" and
+    "CHRISTIANITY IS FALSE". Cut to fit a table column both read "CHRISTIANITY
+    I", which tells a viewer nothing. Removing the shared opening leaves TRUE
+    and FALSE. Labels that already read differently are left alone.
+    """
+    too_long = max(len(a), len(b)) > LABEL_DISPLAY_CHARS
+    looks_same = a[:LABEL_DISPLAY_CHARS] == b[:LABEL_DISPLAY_CHARS]
+    if not (too_long or looks_same):
+        return a, b
+
+    aw, bw = a.split(), b.split()
+    while len(aw) > 1 and len(bw) > 1 and aw[0] == bw[0]:
+        aw, bw = aw[1:], bw[1:]
+    na, nb = " ".join(aw), " ".join(bw)
+    if not na or not nb or na == nb:
+        return a, b
+    if na in ("IS", "IS NOT", "NOT") or nb in ("IS", "IS NOT", "NOT"):
+        return a, b
+    return na, nb
+
+
+def _titlecase_label(s, limit=18):
     s = re.sub(r"[^\w\s'-]", " ", s or "").strip()
     s = re.sub(r"\s+", " ", s)
     if not s:
@@ -788,6 +815,7 @@ def get_debate_roles(topic, model):
         lb = _titlecase_label(str(d.get("side_b_label", "")))
         if not la or not lb or la == lb:
             continue
+        la, lb = shorten_labels(la, lb)
         return {
             "side_a_label": la,
             "side_a_stance": str(d.get("side_a_stance", "")).strip() or f"{la.title()} is correct",
@@ -1562,7 +1590,15 @@ def generate_panel_commentary(model, side, topic, rn, a_text, b_text, roles):
     cleaned, deliberation, sentence_count = clean_response(resp)
     if is_deliberating(deliberation, sentence_count):
         return None
+    cleaned = plain_words(cleaned)
     if count_words(cleaned) < 18:
+        return None
+    # A reaction nobody can follow is worse than no reaction, and there are
+    # other judges on the same side who can be asked instead.
+    if reads_academic(cleaned):
+        print(f"    {name} reacted in a stiff, essayish way; trying another juror.")
+        return None
+    if not re.search(r"[.!?]", cleaned) or count_words(cleaned) > COMMENTARY_WORDS + 60:
         return None
     key = cleaned.lower()[:80]
     if key in USED_JUDGE_EXPLANATIONS:
@@ -2232,10 +2268,14 @@ def render_video_segment(bg_path, ui_path, audio_path, subs_path, output_path,
             fp.append(f"{last}[v{idx}]overlay={vx}:{vy}:eof_action=pass"
                       f":enable='between(t,{st:.2f},{et:.2f})'[tmp{idx}]")
         elif kind == "emoji":
+            # The stream must be shifted to the moment the cue is due. Without
+            # the offset it plays at the start of the segment and finishes on a
+            # transparent fade-out frame, which overlay then holds, so every
+            # cue after the first one is invisible.
             fp.append(f"[{3 + idx}:v]scale={EMOJI_W}:{EMOJI_H},format=rgba,"
                       f"fade=t=in:st=0:d=0.3:alpha=1,"
                       f"fade=t=out:st={fade_out:.2f}:d=0.4:alpha=1,"
-                      f"setpts=PTS-STARTPTS[v{idx}]")
+                      f"setpts=PTS-STARTPTS+{st:.2f}/TB[v{idx}]")
             ex = (VIDEO_W - EMOJI_W) // 2
             ey = (VIDEO_H - EMOJI_H) // 2 - 50
             fp.append(f"{last}[v{idx}]overlay={ex}:{ey}"
@@ -2246,7 +2286,7 @@ def render_video_segment(bg_path, ui_path, audio_path, subs_path, output_path,
                 f"format=rgba,"
                 f"fade=t=in:st=0:d=0.45:alpha=1,"
                 f"fade=t=out:st={fade_out:.2f}:d=0.5:alpha=1,"
-                f"setpts=PTS-STARTPTS[v{idx}]")
+                f"setpts=PTS-STARTPTS+{st:.2f}/TB[v{idx}]")
             drift = f"{vy}+18*sin((t-{st:.2f})*0.7)"
             fp.append(f"{last}[v{idx}]overlay={vx}:'{drift}'"
                       f":enable='between(t,{st:.2f},{et:.2f})'[tmp{idx}]")
@@ -2288,8 +2328,8 @@ def generate_scoreboard(rn, res, avg_a, avg_b, cum_a, cum_b, path, roles,
               font=fs, fill=(255, 255, 255), anchor="mt")
     hy = 190
     cx1, cx2, cx3, cx4 = 120, 750, 1050, 1350
-    sa = roles["side_a_label"][:14]
-    sb = roles["side_b_label"][:14]
+    sa = roles["side_a_label"][:18]
+    sb = roles["side_b_label"][:18]
     draw.rectangle([60, hy - 10, W - 60, hy + 45], fill=(25, 35, 70), outline=(255, 215, 0), width=2)
     draw.text((cx1, hy), "Juror", font=fh, fill=(255, 255, 255))
     draw.text((cx2, hy), sa, font=fh, fill=(0, 255, 204))
@@ -2719,12 +2759,63 @@ def emoji_to_codepoint(ec):
     return "-".join(codes)
 
 
-def create_emoji_asset(ec):
-    """Twemoji artwork for one emoji, or None.
+EMOJI_FONT_CANDIDATES = [
+    "/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf",
+    "/usr/share/fonts/opentype/noto/NotoColorEmoji.ttf",
+    "/usr/share/fonts/truetype/noto/NotoColorEmoji-Regular.ttf",
+    "/System/Library/Fonts/Apple Color Emoji.ttc",
+]
+# Noto Color Emoji is a bitmap font and only renders at this size.
+EMOJI_FONT_SIZE = 109
+_EMOJI_FONT = None
+_EMOJI_FONT_TRIED = False
 
-    There is no drawn fallback: the font has no emoji glyphs, so drawing the
-    character produced a blank rectangle on screen. A cue we cannot render
-    properly is dropped instead.
+
+def emoji_font():
+    """The local colour emoji font, if this machine has one."""
+    global _EMOJI_FONT, _EMOJI_FONT_TRIED
+    if _EMOJI_FONT_TRIED:
+        return _EMOJI_FONT
+    _EMOJI_FONT_TRIED = True
+    paths = list(EMOJI_FONT_CANDIDATES)
+    paths += sorted(glob.glob("/usr/share/fonts/**/*olorEmoji*", recursive=True))
+    for p in paths:
+        if not os.path.exists(p):
+            continue
+        try:
+            _EMOJI_FONT = ImageFont.truetype(p, EMOJI_FONT_SIZE)
+            print(f"Emoji font: {p}")
+            return _EMOJI_FONT
+        except Exception:
+            continue
+    print("No colour emoji font installed; falling back to the emoji CDN.")
+    return None
+
+
+def _render_emoji_locally(ec, path):
+    """Draw the emoji from the installed font. No network involved."""
+    font = emoji_font()
+    if font is None:
+        return False
+    size = EMOJI_FONT_SIZE * 2
+    im = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    d = ImageDraw.Draw(im)
+    try:
+        d.text((size // 2, size // 2), ec, font=font, anchor="mm", embedded_color=True)
+    except Exception:
+        return False
+    if im.getchannel("A").getextrema()[1] == 0:
+        return False          # nothing drawn, so this glyph is missing
+    im.crop(im.getbbox()).save(path)
+    return True
+
+
+def create_emoji_asset(ec):
+    """Artwork for one emoji, or None.
+
+    Drawn from the installed colour emoji font first, because a CDN that is
+    slow, blocked or missing a codepoint is why cues went missing entirely.
+    There is still no drawn placeholder: a cue with no artwork is dropped.
     """
     global EMOJI_CDN_OK
     code = emoji_to_codepoint(ec)
@@ -2737,16 +2828,24 @@ def create_emoji_asset(ec):
                 return cached
         except Exception:
             pass
+
+    try:
+        if _render_emoji_locally(ec, cached):
+            return cached
+    except Exception:
+        pass
+
     if not EMOJI_CDN_OK:
+        EMOJI_MISSING.add(code)
         return None
     for version in ("14.0.2", "15.1.0"):
-        url = (f"https://cdn.jsdelivr.net/gh/twitter/twemoji@{version}"
+        url = (f"https://cdn.jsdelivr.net/gh/jdecked/twemoji@{version}"
                f"/assets/72x72/{code}.png")
         try:
             resp = requests.get(url, timeout=8)
         except requests.exceptions.RequestException:
             EMOJI_CDN_OK = False
-            print("    Emoji CDN unreachable; visual cues disabled for this build.")
+            print("    Emoji CDN unreachable and no local font; cues disabled.")
             return None
         if resp.status_code == 200 and len(resp.content) > 500:
             try:
@@ -3715,26 +3814,37 @@ def run_debate_pipeline():
         pacing.add(score_spec["duration"])
 
         # One judge from each camp explains the round, but only where that camp exists.
+        camps = []
         a_favs = [r for r in res if r["winner"] == "A"]
         b_favs = [r for r in res if r["winner"] == "B"]
-        picks = []
         if a_favs:
-            picks.append((random.choice(a_favs), "A"))
+            camps.append(("A", a_favs))
         if b_favs:
-            taken = {p[0]["provider"] for p in picks}
-            pool = [r for r in b_favs if r["provider"] not in taken] or b_favs
-            picks.append((random.choice(pool), "B"))
-        for judge, side in picks:
-            text = generate_panel_commentary(judge["model"], side, topic, rn, a_full, b_full, roles)
-            if not text:
-                # Nothing this judge actually said; better silent than scripted.
-                print(f"  {judge['display_name']} gave no usable reasoning; reaction skipped.")
-                continue
-            jvi = JUDGE_VOICE_MAP.get(judge["model"], 0)
-            name = f"JUDGE — {judge['display_name'].upper()} ({judge['provider'].upper()})"
-            print(f"  reaction for {roles['side_a_label'] if side == 'A' else roles['side_b_label']}"
-                  f" by {judge['display_name']} [{judge['model']}]")
-            add_seg(text, "JUDGE", name, jvi=jvi, count_speech=False)
+            camps.append(("B", b_favs))
+
+        used_providers = set()
+        for side, camp in camps:
+            label = roles["side_a_label"] if side == "A" else roles["side_b_label"]
+            # Try several jurors from this camp: one giving a poor reaction is
+            # no reason to lose the segment when others agreed with it.
+            candidates = [r for r in camp if r["provider"] not in used_providers] or camp
+            random.shuffle(candidates)
+            for judge in candidates[:3]:
+                text = generate_panel_commentary(judge["model"], side, topic, rn,
+                                                 a_full, b_full, roles)
+                if not text:
+                    continue
+                used_providers.add(judge["provider"])
+                jvi = JUDGE_VOICE_MAP.get(judge["model"], 0)
+                name = (f"JUDGE — {judge['display_name'].upper()} "
+                        f"({judge['provider'].upper()})")
+                print(f"  reaction for {label} by {judge['display_name']} "
+                      f"[{judge['model']}]")
+                add_seg(text, "JUDGE", name, jvi=jvi, count_speech=False)
+                break
+            else:
+                print(f"  no juror on the {label} side gave a usable reaction; "
+                      f"segment skipped.")
         print(f"  written and voiced so far: {pacing.consumed / 60:.1f} min")
 
     # The same question, to the same models, now having read the whole thing.
