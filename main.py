@@ -474,7 +474,8 @@ def discover_models():
         return FALLBACK_MODELS.copy()
 
 
-def query_openrouter(prompt, mid, timeout=60, max_tokens=800, temperature=0.82, system=None):
+def query_openrouter(prompt, mid, timeout=60, max_tokens=800, temperature=0.82,
+                     system=None, min_chars=60):
     if not OPENROUTER_API_KEY:
         return None
     if not mid:
@@ -495,7 +496,9 @@ def query_openrouter(prompt, mid, timeout=60, max_tokens=800, temperature=0.82, 
             resp = requests.post(OPENROUTER_URL, headers=openrouter_headers(), json=payload, timeout=timeout)
             if resp.status_code == 200:
                 c = resp.json().get("choices", [])[0].get("message", {}).get("content", "")
-                if c and len(c.strip()) > 60:
+                # min_chars guards against a truncated prose turn. JSON replies
+                # are legitimately short, so callers asking for JSON lower it.
+                if c and len(c.strip()) >= min_chars:
                     return c.strip()
         except Exception:
             pass
@@ -678,7 +681,8 @@ def get_debate_roles(topic, model):
     )
     for m in [model] + FALLBACK_MODELS[:3]:
         resp = query_openrouter(prompt, m, timeout=35, max_tokens=250, temperature=0.3,
-                                system="You return only valid JSON. No commentary.")
+                                system="You return only valid JSON. No commentary.",
+                                min_chars=2)
         d = extract_json_object(resp)
         if not d:
             continue
@@ -1027,42 +1031,120 @@ def fair_excerpts(a_text, b_text):
     return a_text[:cap], b_text[:cap]
 
 
-def _score_once(model, topic, rn, first_text, second_text):
+def _num(value):
+    """A number out of whatever the model actually put in the field."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        m = re.search(r"-?\d+(?:\.\d+)?", value)
+        if m:
+            return float(m.group(0))
+    return None
+
+
+def _find_key(d, *names):
+    """Look up a value by any of several spellings, at the top level or nested."""
+    flat = {}
+
+    def walk(obj):
+        if isinstance(obj, dict):
+            for k, v in obj.items():
+                key = re.sub(r"[^a-z0-9]", "", str(k).lower())
+                if key not in flat:
+                    flat[key] = v
+                walk(v)
+        elif isinstance(obj, list):
+            for v in obj:
+                walk(v)
+
+    walk(d)
+    for n in names:
+        key = re.sub(r"[^a-z0-9]", "", n.lower())
+        if key in flat:
+            got = _num(flat[key])
+            if got is not None:
+                return got
+    return None
+
+
+def _scores_from_json(d):
+    """Pull a pair of 0-100 scores out of a judge reply, whatever it called them.
+
+    Models are inconsistent about field names even when told exactly what to
+    return, so rather than insist on one spelling this accepts the shapes they
+    actually produce: the two part rubric, a single total each, or a bare pair.
+    """
+    if not isinstance(d, dict):
+        return None
+    ev1 = _find_key(d, "one_evidence", "debater_one_evidence", "evidence_one", "1_evidence")
+    rb1 = _find_key(d, "one_rebuttal", "debater_one_rebuttal", "rebuttal_one", "1_rebuttal")
+    ev2 = _find_key(d, "two_evidence", "debater_two_evidence", "evidence_two", "2_evidence")
+    rb2 = _find_key(d, "two_rebuttal", "debater_two_rebuttal", "rebuttal_two", "2_rebuttal")
+    if None not in (ev1, rb1, ev2, rb2):
+        return (clamp_score(clamp_half(ev1) + clamp_half(rb1)),
+                clamp_score(clamp_half(ev2) + clamp_half(rb2)))
+
+    one = _find_key(d, "one_total", "debater_one_total", "debater_one", "one", "total_one",
+                    "score_one", "one_score", "a_total", "score_a")
+    two = _find_key(d, "two_total", "debater_two_total", "debater_two", "two", "total_two",
+                    "score_two", "two_score", "b_total", "score_b")
+    if one is not None and two is not None:
+        return clamp_score(one), clamp_score(two)
+    return None
+
+
+def _score_once(model, topic, rn, first_text, second_text, simple=False):
     """One anonymised scoring pass. Returns (first_score, second_score, reason)."""
-    prompt = (
+    header = (
         f"You are judging round {rn} of a debate on this question: {topic}\n\n"
         f"Debater One said:\n{first_text}\n\n"
         f"Debater Two said:\n{second_text}\n\n"
-        "Score each debater on two things separately.\n"
-        "Evidence, 0 to 50: how specific, checkable and relevant their support was.\n"
-        "Rebuttal, 0 to 50: how directly they engaged what the other debater actually said.\n"
-        "Judge the argument as it was made. Do not score based on whether you agree with the "
-        "position being defended, only on how well it was argued.\n"
-        "Length is not quality. Do not reward a debater for saying more, only for saying "
-        "something better supported.\n"
-        'Return ONLY JSON: {"one_evidence": 0, "one_rebuttal": 0, "two_evidence": 0, '
-        '"two_rebuttal": 0, '
-        '"reason": "one spoken sentence naming the specific point that decided it"}'
     )
+    if simple:
+        # Fallback for models that cannot hold the two part rubric.
+        prompt = header + (
+            "Give each debater a score out of 100 for how well they argued. Judge the "
+            "arguing, not whether you agree with the position. Longer is not better.\n"
+            'Reply with nothing but this JSON: {"one_total": 0, "two_total": 0}'
+        )
+    else:
+        prompt = header + (
+            "Score each debater on two things separately.\n"
+            "Evidence, 0 to 50: how specific, checkable and relevant their support was.\n"
+            "Rebuttal, 0 to 50: how directly they engaged what the other debater said.\n"
+            "Judge the argument as it was made. Do not score based on whether you agree "
+            "with the position being defended, only on how well it was argued.\n"
+            "Length is not quality. Do not reward a debater for saying more, only for "
+            "saying something better supported.\n"
+            'Return ONLY JSON: {"one_evidence": 0, "one_rebuttal": 0, "two_evidence": 0, '
+            '"two_rebuttal": 0, '
+            '"reason": "one spoken sentence naming the specific point that decided it"}'
+        )
     resp = query_openrouter(prompt, model, timeout=40, max_tokens=320, temperature=0.0,
-                            system="You return only valid JSON. No commentary.")
-    d = extract_json_object(resp)
-    if not d:
+                            system="You return only valid JSON. No commentary.",
+                            min_chars=2)
+    if not resp:
         return None
-    try:
-        if d.get("one_evidence") is not None and d.get("one_rebuttal") is not None:
-            one = clamp_score(clamp_half(d.get("one_evidence"))
-                              + clamp_half(d.get("one_rebuttal")))
-            two = clamp_score(clamp_half(d.get("two_evidence"))
-                              + clamp_half(d.get("two_rebuttal")))
-        elif d.get("one_total") is not None and d.get("two_total") is not None:
-            one = clamp_score(d.get("one_total"))
-            two = clamp_score(d.get("two_total"))
-        else:
-            return None
-    except Exception:
-        return None
-    return one, two, str(d.get("reason", ""))[:200]
+    pair = _scores_from_json(extract_json_object(resp))
+    if pair is None:
+        # Last resort: the reply is prose but contains the two numbers.
+        if simple:
+            nums = re.findall(r"\b(\d{1,3}(?:\.\d+)?)\b", resp)
+            vals = [float(n) for n in nums if 0 <= float(n) <= 100]
+            if len(vals) >= 2:
+                pair = (clamp_score(vals[0]), clamp_score(vals[1]))
+        if pair is None:
+            return None, resp[:160]
+    d = extract_json_object(resp) or {}
+    reason = ""
+    if isinstance(d, dict):
+        for k, v in d.items():
+            if "reason" in str(k).lower() and isinstance(v, str):
+                reason = v[:200]
+                break
+    return pair[0], pair[1], reason
 
 
 def judge_round(model, topic, rn, ap, sk, roles):
@@ -1081,26 +1163,31 @@ def judge_round(model, topic, rn, ap, sk, roles):
     a_text, b_text = fair_excerpts(ap, sk)
 
     a_scores, b_scores, reasons = [], [], []
+    last_raw = ""
     # Pass 1 shows A first, pass 2 shows B first. Averaging cancels the bias.
+    # Each pass tries the rubric, then a simpler two number form for models
+    # that cannot hold it.
     for a_first in (True, False):
-        out = None
-        for _ in range(2):
-            if a_first:
-                out = _score_once(model, topic, rn, a_text, b_text)
-                if out:
+        for simple in (False, True):
+            first, second = (a_text, b_text) if a_first else (b_text, a_text)
+            out = _score_once(model, topic, rn, first, second, simple=simple)
+            if out and len(out) == 2:
+                last_raw = out[1] or last_raw
+                continue
+            if out:
+                if a_first:
                     a_scores.append(out[0])
                     b_scores.append(out[1])
-                    break
-            else:
-                out = _score_once(model, topic, rn, b_text, a_text)
-                if out:
+                else:
                     b_scores.append(out[0])
                     a_scores.append(out[1])
-                    break
-        if out:
-            reasons.append(out[2])
+                reasons.append(out[2])
+                break
 
     if not a_scores or not b_scores:
+        if last_raw:
+            print(f"    {get_judge_short_name(model)} returned nothing scoreable. "
+                  f"It said: {last_raw[:110]}")
         return None
 
     a = round(sum(a_scores) / len(a_scores), 1)
@@ -1175,10 +1262,12 @@ def evaluate_round(judges, topic, rn, ap, sk, roles, recused=()):
         print(f"    {missing} of {len(sitting)} sitting judges returned no score and were "
               f"left off the round {rn} scorecard.")
     if not results:
-        raise DebateGenerationError(
-            f"No judge returned a usable score for round {rn}. The scorecard would have been "
-            f"invented, so the build stops here instead."
-        )
+        # Omitting a score is not the same as inventing one. The round is
+        # reported as unscored and the build carries on: the consensus poll is
+        # a separate measurement and still stands.
+        print(f"    No judge returned a usable score for round {rn}. The round is "
+              f"recorded as unscored rather than given invented numbers.")
+        return []
     results.sort(key=lambda r: r["display_name"])
     for r in results:
         note = "" if r["passes"] == 2 else f", {r['passes']} of 2 passes only"
@@ -1311,7 +1400,8 @@ def _poll_once(model, topic, roles, transcript, flip):
         '"comment": "one plain sentence saying why"}'
     )
     resp = query_openrouter(prompt, model, timeout=60, max_tokens=300, temperature=0.0,
-                            system="You return only valid JSON. No commentary.")
+                            system="You return only valid JSON. No commentary.",
+                            min_chars=2)
     d = extract_json_object(resp)
     if d is None:
         return None
@@ -2089,7 +2179,7 @@ def generate_poll_board(results, summary, roles, path, title, before=None):
 
 
 def generate_verdict_board(path, topic, roles, before, after, movement, votes,
-                           cum_a, cum_b):
+                           mean_a, mean_b):
     """The closing card: who changed minds, and who argued better.
 
     These are two different results from two different instruments, so they get
@@ -2123,22 +2213,27 @@ def generate_verdict_board(path, topic, roles, before, after, movement, votes,
         persuader, p_colour = "SPLIT", (200, 200, 200)
         p_detail = "the panel moved both ways in equal numbers"
 
-    if votes["A"] > votes["B"]:
-        arguer, a_colour = roles["side_a_label"], (0, 255, 204)
-    elif votes["B"] > votes["A"]:
-        arguer, a_colour = roles["side_b_label"], (255, 120, 255)
+    if mean_a is None or mean_b is None:
+        arguer, a_colour = "NOT SCORED", (150, 150, 150)
+        a_detail = "no judge returned a usable verdict"
+        a_sub = "nothing was invented to fill the gap"
     else:
-        arguer, a_colour = "TIED", (200, 200, 200)
-    a_detail = (f"judges scored it {votes['A']}-{votes['B']}"
-                + (f", {votes['TIE']} even" if votes["TIE"] else "")
-                + (f", {votes['UNSTABLE']} discarded" if votes["UNSTABLE"] else ""))
+        if votes["A"] > votes["B"]:
+            arguer, a_colour = roles["side_a_label"], (0, 255, 204)
+        elif votes["B"] > votes["A"]:
+            arguer, a_colour = roles["side_b_label"], (255, 120, 255)
+        else:
+            arguer, a_colour = "TIED", (200, 200, 200)
+        a_detail = (f"judges scored it {votes['A']}-{votes['B']}"
+                    + (f", {votes['TIE']} even" if votes["TIE"] else "")
+                    + (f", {votes['UNSTABLE']} discarded" if votes["UNSTABLE"] else ""))
+        a_sub = f"average {mean_a:.1f} vs {mean_b:.1f} out of 100"
 
     box_y, box_h = 220, 300
     for i, (title, name, colour, detail, sub) in enumerate([
         ("CHANGED MINDS", persuader, p_colour, p_detail,
          f"panel moved {swing:+.2f} on a -5 to +5 scale"),
-        ("ARGUED BETTER", arguer, a_colour, a_detail,
-         f"average {cum_a / max(1, ROUNDS):.1f} vs {cum_b / max(1, ROUNDS):.1f} out of 100"),
+        ("ARGUED BETTER", arguer, a_colour, a_detail, a_sub),
     ]):
         x0 = 120 + i * (W - 240) // 2
         x1 = x0 + (W - 280) // 2
@@ -2396,7 +2491,8 @@ def plan_illustration_cues(text, words, model):
         '"motion": "the person reaches up and picks one apple from the branch"}]}'
     )
     resp = query_openrouter(prompt, model, timeout=40, max_tokens=400, temperature=0.4,
-                            system="You return only valid JSON. No commentary.")
+                            system="You return only valid JSON. No commentary.",
+                            min_chars=2)
     d = extract_json_object(resp)
     if not d or not isinstance(d.get("cues"), list):
         return []
@@ -2755,7 +2851,7 @@ def build_intro(topic, jc, roles):
     )
 
 
-def build_outro(cum_a, cum_b, votes_a, votes_b, votes_t, votes_u, roles,
+def build_outro(mean_a, mean_b, votes_a, votes_b, votes_t, votes_u, roles,
                 swing=None, movement=None):
     """Closing read: who changed minds, then who argued better, then the sign off.
 
@@ -2794,14 +2890,17 @@ def build_outro(cum_a, cum_b, votes_a, votes_b, votes_t, votes_u, roles,
         lines.append("So the most persuasive side tonight was neither. Nobody on the "
                      "panel shifted their position at all.")
 
-    if arguer:
+    if mean_a is None or mean_b is None:
+        lines.append("On the arguing itself we have no score at all. Not one judge "
+                     "returned a usable verdict, so rather than make numbers up we are "
+                     "leaving that column empty.")
+        arguer = None
+    elif arguer:
         lines.append(f"On the arguing itself, judged blind, {arguer} scored higher, "
-                     f"{cum_a / max(1, ROUNDS):.1f} to {cum_b / max(1, ROUNDS):.1f} "
-                     f"out of a hundred.")
+                     f"{mean_a:.1f} to {mean_b:.1f} out of a hundred.")
     else:
         lines.append(f"On the arguing itself, judged blind, the panel could not separate "
-                     f"them, {cum_a / max(1, ROUNDS):.1f} to "
-                     f"{cum_b / max(1, ROUNDS):.1f} out of a hundred.")
+                     f"them, {mean_a:.1f} to {mean_b:.1f} out of a hundred.")
 
     if persuader and arguer and persuader != arguer:
         lines.append(f"Which is the interesting part. {arguer} argued it better, and "
@@ -2816,7 +2915,7 @@ def build_outro(cum_a, cum_b, votes_a, votes_b, votes_t, votes_u, roles,
 
 
 def build_method_note(topic, roles, debaters, judges, poll_roster,
-                      sum_before, sum_after, movement, votes):
+                      sum_before, sum_after, movement, votes, mean_a=None, mean_b=None):
     """A description-ready statement of what this run actually did."""
     labs = sorted({provider_from_model(m) for m in poll_roster})
     swing = sum_after["mean"] - sum_before["mean"]
@@ -2843,10 +2942,15 @@ def build_method_note(topic, roles, debaters, judges, poll_roster,
         f"{roles['side_a_label']}, {movement['toward_b']} toward "
         f"{roles['side_b_label']}, {movement['unchanged']} unmoved."
         + (f" Crossed sides: {', '.join(movement['crossed'])}." if movement["crossed"] else ""),
-        f"On argument quality the panel split {votes['A']}-{votes['B']}"
-        + (f" with {votes['TIE']} even" if votes["TIE"] else "")
-        + (f"; {votes['UNSTABLE']} judgement(s) discarded as order driven."
-           if votes["UNSTABLE"] else "."),
+        (f"On argument quality the panel split {votes['A']}-{votes['B']}"
+         + (f" with {votes['TIE']} even" if votes["TIE"] else "")
+         + (f"; {votes['UNSTABLE']} judgement(s) discarded as order driven."
+            if votes["UNSTABLE"] else ".")
+         + (f" Average {mean_a:.1f} vs {mean_b:.1f} out of 100."
+            if mean_a is not None else "")
+         ) if mean_a is not None else
+        "On argument quality there is no result: no judge returned a usable verdict, and "
+        "no score was invented to fill the gap.",
         "",
         "METHOD",
     ]
@@ -3019,7 +3123,7 @@ def preflight_models(models, judges_needed):
         return m, query_openrouter(
             "Reply with exactly the word: ready",
             m, timeout=30, max_tokens=20, temperature=0,
-            system="You reply with one word.")
+            system="You reply with one word.", min_chars=2)
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=min(8, len(models))) as ex:
         for f in concurrent.futures.as_completed([ex.submit(probe, m) for m in models[:8]]):
@@ -3118,9 +3222,8 @@ def run_debate_pipeline():
           f"{len({provider_from_model(m) for m in poll_roster})} labs, asked cold.")
     poll_before = poll_panel(poll_roster, topic, roles)
     if not poll_before:
-        raise DebateGenerationError(
-            "No model answered the opening poll, so there is no consensus to measure and "
-            "nothing would be gained by inventing one.")
+        print("  No model answered the opening poll; the consensus segments are skipped "
+              "for this build.")
     sum_before = poll_summary(poll_before)
     for r in poll_before:
         stance = "declined" if r["declined"] else f"{r['position']:+.1f}"
@@ -3140,6 +3243,7 @@ def run_debate_pipeline():
     turn_attribution = []
     turn_transcript = []
     votes_a = votes_b = votes_t = votes_u = 0
+    scored_rounds = 0
     for rn in range(1, ROUNDS + 1):
         print(f"\n--- ROUND {rn} ---")
         a_turns, b_turns = [], []
@@ -3208,6 +3312,15 @@ def run_debate_pipeline():
 
         res = evaluate_round(judges, topic, rn, a_full, b_full, roles,
                              recused=round_writers)
+        if not res:
+            # Unscored: no scorecard, no reactions, nothing added to the totals.
+            all_results.append({"round": rn, "scored": False,
+                                "words": {"A": wa, "B": wb, "gap": round(gap, 3)},
+                                "debater_models": {"A": a_model, "B": b_model},
+                                "judges": []})
+            print(f"  Round {rn} goes unscored; the debate continues.")
+            continue
+        scored_rounds += 1
         ra, rb = calculate_round_average(res)
         cum_a += ra
         cum_b += rb
@@ -3216,7 +3329,7 @@ def run_debate_pipeline():
         votes_b += vb
         votes_t += vt
         votes_u += vu
-        all_results.append({"round": rn, "avg_a": ra, "avg_b": rb,
+        all_results.append({"round": rn, "scored": True, "avg_a": ra, "avg_b": rb,
                             "votes": {"A": va, "B": vb, "TIE": vt, "UNSTABLE": vu},
                             "words": {"A": wa, "B": wb, "gap": round(gap, 3)},
                             "debater_models": {"A": a_model, "B": b_model},
@@ -3280,17 +3393,20 @@ def run_debate_pipeline():
           f"{f' with {votes_t} even' if votes_t else ''}"
           f"{f', {votes_u} abstained as order driven' if votes_u else ''}.")
     votes = {"A": votes_a, "B": votes_b, "TIE": votes_t, "UNSTABLE": votes_u}
-    outro_text = build_outro(cum_a, cum_b, votes_a, votes_b, votes_t, votes_u, roles,
+    mean_a = cum_a / scored_rounds if scored_rounds else None
+    mean_b = cum_b / scored_rounds if scored_rounds else None
+    if scored_rounds < ROUNDS:
+        print(f"\n{ROUNDS - scored_rounds} of {ROUNDS} rounds went unscored.")
+    outro_text = build_outro(mean_a, mean_b, votes_a, votes_b, votes_t, votes_u, roles,
                              swing=swing, movement=movement)
     specs.append(prepare_verdict_segment(
         outro_text,
-        (topic, roles, sum_before, sum_after, movement, votes, cum_a, cum_b)))
+        (topic, roles, sum_before, sum_after, movement, votes, mean_a, mean_b)))
     pacing.add(specs[-1]["duration"])
 
     method_note = build_method_note(
         topic, roles, (ap_model, sk_model), judges, poll_roster,
-        sum_before, sum_after, movement,
-        votes)
+        sum_before, sum_after, movement, votes, mean_a, mean_b)
     try:
         open("video_description.txt", "w", encoding="utf-8").write(method_note + "\n")
         print("\nWrote video_description.txt (paste under the video).")
