@@ -147,10 +147,11 @@ POLL_EXTRA_MODELS = [m.strip() for m in os.environ.get(
     "ai21/jamba-1.5-large"
 ).split(",") if m.strip()]
 
-# Consensus is not improved by many models from one lab: they share training
-# data and tuning, so they are not independent voices. Breadth of lab is what
-# counts, so no provider gets more than this many seats in the poll.
-MAX_POLL_PER_PROVIDER = 2
+# One seat per lab. Models from the same lab share training data and tuning, so
+# a second one is close to a duplicate vote, and giving some labs two seats and
+# others one is an arbitrary weighting rather than a sampling design. If this is
+# raised above one, the aggregation below still counts each lab once.
+MAX_POLL_PER_PROVIDER = int(os.environ.get("MAX_POLL_PER_PROVIDER", "1"))
 
 # Rough per million token prices, only used to print a cost estimate before a
 # run. Unknown models fall back to the default and are marked approximate.
@@ -1360,9 +1361,16 @@ def build_poll_roster(debaters, panel):
     because it narrates its scratchpad, but neither restriction has anything to
     do with a model stating its own view on the question. Both belong here.
     """
+    # A model that just argued a side may be anchored by having argued it, so a
+    # lab's seat goes to a model that did not debate wherever one exists.
+    # A lab's single seat should go to its strongest available model, since that
+    # is what best represents where that lab's system lands. POLL_EXTRA_MODELS is
+    # the curated frontier list, so it is consulted first.
+    debaters = list(debaters)
+    preferred = list(POLL_EXTRA_MODELS) + list(panel)
     per_provider = {}
     roster = []
-    for m in list(debaters) + list(panel) + list(POLL_EXTRA_MODELS):
+    for m in preferred + debaters:
         if not m or m in roster:
             continue
         prov = provider_from_model(m)
@@ -1400,9 +1408,20 @@ def poll_movement(before, after):
 
 
 def poll_summary(results):
-    """Counts and mean lean, with anyone who declined kept visible."""
-    stated = [r for r in results if not r["declined"] and r["position"] is not None]
+    """Counts and mean lean, aggregated one lab at a time.
+
+    Each lab contributes a single position, the average of whatever models of
+    its own answered. With one seat per lab this is the same as counting
+    models; if the cap is ever raised it stops a lab with two seats carrying
+    twice the weight of a lab with one.
+    """
     declined = [r for r in results if r["declined"]]
+    by_lab = {}
+    for r in results:
+        if r["declined"] or r["position"] is None:
+            continue
+        by_lab.setdefault(r["provider"], []).append(r["position"])
+    stated = [{"position": sum(v) / len(v)} for v in by_lab.values()]
     lean_a = sum(1 for r in stated if r["position"] > LEAN_THRESHOLD)
     lean_b = sum(1 for r in stated if r["position"] < -LEAN_THRESHOLD)
     undecided = len(stated) - lean_a - lean_b
@@ -1415,7 +1434,7 @@ def poll_summary(results):
         spread = 0.0
     return {"lean_a": lean_a, "lean_b": lean_b, "undecided": undecided,
             "declined": len(declined), "mean": mean, "stated": len(stated),
-            "asked": len(results), "spread": spread,
+            "asked": len(results), "labs_answering": len(by_lab), "spread": spread,
             "low": round(min(positions), 1) if positions else 0.0,
             "high": round(max(positions), 1) if positions else 0.0,
             "providers": len({r["provider"] for r in results})}
@@ -1463,7 +1482,8 @@ def build_closing_poll_narration(before, after, roles, movement):
                     f"rather than together")
     else:
         toward = roles["side_a_label"] if movement["toward_a"] else roles["side_b_label"]
-        headline = (f"{moved} of {before['stated']} models moved, every one of them toward "
+        movable = moved + movement["unchanged"]
+        headline = (f"{moved} of {movable} models moved, every one of them toward "
                     f"{toward}")
 
     crossed = ""
