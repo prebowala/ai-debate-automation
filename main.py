@@ -26,7 +26,10 @@ FPS = 30
 # once. Three exchanges per side per round preserves the total runtime.
 ROUNDS = 2
 TURNS_PER_SIDE_PER_ROUND = 3
-MAX_JUDGES = 11
+# A wider panel is the honest answer to jurors being thrown out for flip
+# flopping: with half a small panel discarded, the remaining marks carry too
+# much weight. One seat per lab still holds, so widening means more labs.
+MAX_JUDGES = 17
 
 # ---- Runtime budget: the finished video should land between 10 and 15 minutes.
 TARGET_TOTAL_SECONDS = 780.0        # aim for 13:00
@@ -92,6 +95,13 @@ JUDGE_VOICES = [
     "en-AU-NatashaNeural",
     "en-NZ-MitchellNeural",
     "en-US-AriaNeural",
+    "en-GB-ThomasNeural",
+    "en-US-MichelleNeural",
+    "en-CA-LiamNeural",
+    "en-GB-MaisieNeural",
+    "en-US-RogerNeural",
+    "en-IE-EmilyNeural",
+    "en-AU-DuncanNeural",
 ]
 JUDGE_VOICE_MAP = {}
 
@@ -134,6 +144,19 @@ STRONGEST_BY_LAB = {
     "ai21": ["jamba-large", "jamba"],
     "moonshotai": ["kimi-k2", "kimi"],
     "01-ai": ["yi-large", "yi"],
+    "microsoft": ["phi-4", "phi-3", "phi", "mai-"],
+    "perplexity": ["sonar-pro", "sonar"],
+    "z-ai": ["glm-5", "glm-4.6", "glm-4", "glm"],
+    "minimax": ["minimax-m2", "minimax-m1", "minimax"],
+    "liquid": ["lfm-2", "lfm-40b", "lfm"],
+    "baidu": ["ernie-5", "ernie-4", "ernie"],
+    "tencent": ["hunyuan-large", "hunyuan"],
+    "reka": ["reka-core", "reka-flash", "reka"],
+    "nousresearch": ["hermes-4", "hermes-3", "hermes"],
+    "allenai": ["olmo-3", "olmo-2", "olmo"],
+    "inclusionai": ["ling-", "ring-"],
+    "stepfun-ai": ["step-3", "step-"],
+    "arcee-ai": ["afm-", "arcee"],
 }
 
 # The two labs that argue, in order. The rest of the labs make up the panel.
@@ -380,6 +403,30 @@ def get_judge_short_name(mid):
         return "Jamba"
     if "kimi" in name:
         return "Kimi"
+    if "phi" in name:
+        ver = re.search(r"phi-?(\d+(?:\.\d+)?)", name)
+        return f"Phi {ver.group(1)}" if ver else "Phi"
+    if "sonar" in name:
+        return "Sonar"
+    if "glm" in name:
+        ver = re.search(r"glm-?(\d+(?:\.\d+)?)", name)
+        return f"GLM {ver.group(1)}" if ver else "GLM"
+    if "minimax" in name:
+        return "MiniMax"
+    if "lfm" in name:
+        return "LFM"
+    if "ernie" in name:
+        return "ERNIE"
+    if "hunyuan" in name:
+        return "Hunyuan"
+    if "reka" in name:
+        return "Reka"
+    if "hermes" in name:
+        return "Hermes"
+    if "olmo" in name:
+        return "OLMo"
+    if "yi-" in name or name == "yi":
+        return "Yi"
     return provider_from_model(mid)
 
 
@@ -2349,9 +2396,13 @@ def generate_scoreboard(rn, res, avg_a, avg_b, cum_a, cum_b, path, roles,
     draw.text((cx2, hy), sa, font=fh, fill=(0, 255, 204))
     draw.text((cx3, hy), sb, font=fh, fill=(255, 120, 255))
     draw.text((cx4, hy), "Winner", font=fh, fill=(255, 215, 0))
+    # The panel can be large, so rows shrink to fit rather than run off screen.
     y = hy + 65
+    available = 880 - y
+    row_h = max(30, min(58, available // max(1, len(res))))
+    fr = load_font(max(15, min(24, row_h - 22)))
     for idx, r in enumerate(res):
-        draw.rectangle([60, y - 8, W - 60, y + 42],
+        draw.rectangle([60, y - 6, W - 60, y + row_h - 14],
                        fill=(20, 28, 50) if idx % 2 == 0 else (15, 22, 40))
         jt = f"{r['display_name']} ({r['provider']})"
         if len(jt) > 32:
@@ -2368,7 +2419,7 @@ def generate_scoreboard(rn, res, avg_a, avg_b, cum_a, cum_b, path, roles,
         else:
             wl, col = "NO CALL", (150, 150, 150)
         draw.text((cx4, y), wl, font=fr, fill=col)
-        y += 58
+        y += row_h
     draw.line([(60, y + 5), (W - 60, y + 5)], fill=(255, 255, 255), width=2)
     y += 25
     if va is not None:
@@ -2405,8 +2456,9 @@ def generate_poll_board(results, summary, roles, path, title, before=None):
     left, right = 430, W - 430
     mid = (left + right) // 2
     top = 168
-    row_h = 52
-    rows = results[:14]
+    rows = results
+    row_h = max(28, min(52, (860 - top) // max(1, len(rows))))
+    fr = load_font(max(14, min(23, row_h - 25)))
 
     # Scale gridline
     draw.line([(mid, top - 14), (mid, top + row_h * len(rows) + 6)],
@@ -2415,7 +2467,7 @@ def generate_poll_board(results, summary, roles, path, title, before=None):
     for i, r in enumerate(rows):
         y = top + i * row_h
         if i % 2 == 0:
-            draw.rectangle([60, y - 6, W - 60, y + row_h - 12], fill=(20, 28, 50))
+            draw.rectangle([60, y - 5, W - 60, y + row_h - 10], fill=(20, 28, 50))
         name = f"{r['display_name']} ({r['provider']})"
         draw.text((80, y), name[:34], font=fr, fill=(255, 255, 255))
 
@@ -2427,8 +2479,10 @@ def generate_poll_board(results, summary, roles, path, title, before=None):
         x = int(mid + (pos / POLL_SCALE) * (right - mid))
         colour = (0, 255, 204) if pos > LEAN_THRESHOLD else \
                  (255, 120, 255) if pos < -LEAN_THRESHOLD else (220, 220, 220)
-        draw.line([(mid, y + 14), (x, y + 14)], fill=colour, width=5)
-        draw.ellipse([x - 9, y + 5, x + 9, y + 23], fill=colour)
+        my = y + row_h // 3
+        draw.line([(mid, my), (x, my)], fill=colour, width=max(3, row_h // 10))
+        rr = max(5, row_h // 6)
+        draw.ellipse([x - rr, my - rr, x + rr, my + rr], fill=colour)
         draw.text((right + 26, y), f"{pos:+.1f}", font=fr, fill=colour)
 
     y = top + row_h * len(rows) + 24
