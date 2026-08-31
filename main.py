@@ -10,6 +10,7 @@ import concurrent.futures
 import time
 import base64
 import hashlib
+from io import BytesIO
 import edge_tts
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
@@ -1884,21 +1885,27 @@ def render_video_segment(bg_path, ui_path, audio_path, subs_path, output_path,
     last = "[stage]"
     visual_inputs = []
     for vis in visual_plan:
+        if not isinstance(vis, dict):
+            continue
+        st = float(vis.get("start", 0.0))
+        et = float(vis.get("end", st + 4.0))
+        still = None
         try:
-            scene = vis.get("scene", "") if isinstance(vis, dict) else str(vis)
-            motion = vis.get("motion", "") if isinstance(vis, dict) else ""
-            st = float(vis.get("start", 0.0)) if isinstance(vis, dict) else 0.0
-            et = float(vis.get("end", st + 4.0)) if isinstance(vis, dict) else st + 4.0
-            clip = make_cue_clip(scene, motion)
-            if clip:
-                visual_inputs.append((clip, st, et, "video"))
-                continue
-            still = make_illustration(scene)
+            if vis.get("kind") == "emoji":
+                still = create_emoji_asset(vis.get("emoji", ""))
+            else:
+                if CUE_STYLE == "animation":
+                    clip = make_cue_clip(vis.get("scene", ""), vis.get("motion", ""))
+                    if clip:
+                        visual_inputs.append((clip, st, et, "video"))
+                        continue
+                still = make_illustration(vis.get("scene", ""))
         except Exception:
             still = None
         # No artwork means no cue. Nothing is ever drawn as a placeholder.
         if still:
-            visual_inputs.append((still, st, et, "image"))
+            kind = "emoji" if vis.get("kind") == "emoji" else "image"
+            visual_inputs.append((still, st, et, kind))
 
     for idx, (path, st, et, kind) in enumerate(visual_inputs):
         span = max(0.8, et - st)
@@ -1915,6 +1922,15 @@ def render_video_segment(bg_path, ui_path, audio_path, subs_path, output_path,
                 f"fade=t=out:st={fade_out:.2f}:d=0.5:alpha=1,"
                 f"setpts=PTS-STARTPTS+{st:.2f}/TB[v{idx}]")
             fp.append(f"{last}[v{idx}]overlay={vx}:{vy}:eof_action=pass"
+                      f":enable='between(t,{st:.2f},{et:.2f})'[tmp{idx}]")
+        elif kind == "emoji":
+            fp.append(f"[{3 + idx}:v]scale={EMOJI_W}:{EMOJI_H},format=rgba,"
+                      f"fade=t=in:st=0:d=0.3:alpha=1,"
+                      f"fade=t=out:st={fade_out:.2f}:d=0.4:alpha=1,"
+                      f"setpts=PTS-STARTPTS[v{idx}]")
+            ex = (VIDEO_W - EMOJI_W) // 2
+            ey = (VIDEO_H - EMOJI_H) // 2 - 50
+            fp.append(f"{last}[v{idx}]overlay={ex}:{ey}"
                       f":enable='between(t,{st:.2f},{et:.2f})'[tmp{idx}]")
         else:
             fp.append(
@@ -2072,6 +2088,96 @@ def generate_poll_board(results, summary, roles, path, title, before=None):
     img.save(path)
 
 
+def generate_verdict_board(path, topic, roles, before, after, movement, votes,
+                           cum_a, cum_b):
+    """The closing card: who changed minds, and who argued better.
+
+    These are two different results from two different instruments, so they get
+    two panels rather than being blended into one winner.
+    """
+    W, H = VIDEO_W, VIDEO_H
+    img = Image.alpha_composite(
+        Image.new("RGB", (W, H), (12, 16, 32)).convert("RGBA"),
+        Image.new("RGBA", (W, H), (0, 0, 0, 185))).convert("RGB")
+    draw = ImageDraw.Draw(img)
+    ft = load_font(54, bold=True)
+    fh = load_font(30, bold=True)
+    fb = load_font(46, bold=True)
+    fs = load_font(24)
+
+    draw.text((W // 2, 52), "THE VERDICT", font=ft, fill=(255, 215, 0), anchor="mt")
+    draw.text((W // 2, 122), topic[:88], font=fs, fill=(255, 255, 255), anchor="mt")
+
+    swing = after["mean"] - before["mean"]
+    moved = movement["toward_a"] + movement["toward_b"]
+    if moved == 0 or abs(swing) < 0.15:
+        persuader, p_colour = "NOBODY MOVED", (200, 200, 200)
+        p_detail = "not one model changed its position"
+    elif movement["toward_a"] > movement["toward_b"]:
+        persuader, p_colour = roles["side_a_label"], (0, 255, 204)
+        p_detail = f"{movement['toward_a']} of {moved + movement['unchanged']} models moved their way"
+    elif movement["toward_b"] > movement["toward_a"]:
+        persuader, p_colour = roles["side_b_label"], (255, 120, 255)
+        p_detail = f"{movement['toward_b']} of {moved + movement['unchanged']} models moved their way"
+    else:
+        persuader, p_colour = "SPLIT", (200, 200, 200)
+        p_detail = "the panel moved both ways in equal numbers"
+
+    if votes["A"] > votes["B"]:
+        arguer, a_colour = roles["side_a_label"], (0, 255, 204)
+    elif votes["B"] > votes["A"]:
+        arguer, a_colour = roles["side_b_label"], (255, 120, 255)
+    else:
+        arguer, a_colour = "TIED", (200, 200, 200)
+    a_detail = (f"judges scored it {votes['A']}-{votes['B']}"
+                + (f", {votes['TIE']} even" if votes["TIE"] else "")
+                + (f", {votes['UNSTABLE']} discarded" if votes["UNSTABLE"] else ""))
+
+    box_y, box_h = 220, 300
+    for i, (title, name, colour, detail, sub) in enumerate([
+        ("CHANGED MINDS", persuader, p_colour, p_detail,
+         f"panel moved {swing:+.2f} on a -5 to +5 scale"),
+        ("ARGUED BETTER", arguer, a_colour, a_detail,
+         f"average {cum_a / max(1, ROUNDS):.1f} vs {cum_b / max(1, ROUNDS):.1f} out of 100"),
+    ]):
+        x0 = 120 + i * (W - 240) // 2
+        x1 = x0 + (W - 280) // 2
+        cx = (x0 + x1) // 2
+        draw.rounded_rectangle([x0, box_y, x1, box_y + box_h], radius=18,
+                               fill=(20, 28, 50), outline=(255, 255, 255), width=2)
+        draw.text((cx, box_y + 28), title, font=fh, fill=(255, 255, 255), anchor="mt")
+        label = name if len(name) <= 18 else name[:16] + ".."
+        draw.text((cx, box_y + 96), label, font=fb, fill=colour, anchor="mt")
+        draw.text((cx, box_y + 172), detail[:52], font=fs, fill=(220, 220, 220), anchor="mt")
+        draw.text((cx, box_y + 210), sub[:52], font=fs, fill=(160, 160, 160), anchor="mt")
+
+    y = box_y + box_h + 60
+    draw.line([(120, y), (W - 120, y)], fill=(255, 255, 255), width=2)
+    y += 26
+    for line in [
+        "Judges scored blind, with the sides reversed, and any judge that changed its "
+        "mind on the running order was discarded.",
+        "Changed minds is measured by asking the models their own position before and "
+        "after. It measures persuasion, not truth.",
+    ]:
+        draw.text((W // 2, y), line, font=fs, fill=(190, 190, 190), anchor="mt")
+        y += 34
+    img.save(path)
+
+
+def prepare_verdict_segment(narration, path_args, sid="verdict"):
+    """The closing card, spoken over the verdict graphic."""
+    spec = {"kind": "scorecard", "sid": sid,
+            "image": f"verdict_{sid}.png", "audio": f"verdict_audio_{sid}.mp3",
+            "subs": f"verdict_subs_{sid}.ass", "video": f"verdict_video_{sid}.mp4"}
+    generate_verdict_board(spec["image"], *path_args)
+    words = generate_audio(narration, "MOD", spec["audio"])
+    generate_subtitles(words, spec["subs"], scorecard=True,
+                       audio_file=spec["audio"], full_text=narration)
+    spec["duration"] = get_audio_duration(spec["audio"])
+    return spec
+
+
 def prepare_poll_segment(results, summary, roles, narration, sid, title, before=None):
     """Poll graphic plus its spoken read. Rendered later with the rest."""
     spec = {"kind": "scorecard", "sid": sid,
@@ -2110,6 +2216,13 @@ def render_scorecard_video(ip, ap, sp, op):
 # slow drift and a soft fade. If anything in that chain is unavailable the cue
 # is dropped: there is no placeholder and nothing is ever drawn as a box.
 # ---------------------------------------------------------------------------
+
+# How on-screen cues are drawn:
+#   emoji        free, Twemoji artwork, no API of any kind (default)
+#   illustration generated stills, needs IMAGE_PROVIDER and costs a little
+#   animation    short generated clips, needs a video provider and costs a lot
+#   none         no cues at all
+CUE_STYLE = os.environ.get("CUE_STYLE", "emoji").strip().lower()
 
 IMAGE_PROVIDER = os.environ.get("IMAGE_PROVIDER", "none").strip().lower()
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
@@ -2162,9 +2275,111 @@ CUE_W = 520
 CUE_H = 520
 
 
+EMOJI_CACHE_DIR = "emoji_cache"
+os.makedirs(EMOJI_CACHE_DIR, exist_ok=True)
+EMOJI_CDN_OK = True
+EMOJI_MISSING = set()
+EMOJI_W = 180
+EMOJI_H = 180
+
+WORD_EMOJI_MAP = {
+    "money": "\U0001F4B0", "cost": "\U0001F4B0", "economy": "\U0001F4B9", "tax": "\U0001F4B8",
+    "jobs": "\U0001F3ED", "work": "\U0001F477", "school": "\U0001F3EB", "education": "\U0001F393",
+    "children": "\U0001F9D2", "kids": "\U0001F9D2", "family": "\U0001F46A",
+    "health": "\U0001FA7A", "medicine": "\U0001F489", "hospital": "\U0001F3E5",
+    "science": "\U0001F52C", "research": "\U0001F52C", "data": "\U0001F4CA",
+    "evidence": "\U0001F50D", "study": "\U0001F4C8", "history": "\U0001F4DC",
+    "law": "\u2696\ufe0f", "court": "\u2696\ufe0f", "rights": "\u270A", "freedom": "\U0001F54A\ufe0f",
+    "government": "\U0001F3DB\ufe0f", "vote": "\U0001F5F3\ufe0f", "war": "\u2694\ufe0f",
+    "climate": "\U0001F30D", "planet": "\U0001F30D", "energy": "\u26A1", "pollution": "\U0001F3ED",
+    "technology": "\U0001F916", "computer": "\U0001F4BB", "internet": "\U0001F310",
+    "universe": "\U0001F30C", "stars": "\u2B50", "dna": "\U0001F9EC", "brain": "\U0001F9E0",
+    "god": "\u2728", "faith": "\U0001F64F", "prayer": "\U0001F64F", "truth": "\U0001F4A1",
+    "pain": "\U0001F623", "suffering": "\U0001F622", "death": "\U0001F5A4", "life": "\U0001F31F",
+    "future": "\U0001F52E", "risk": "\u26A0\ufe0f", "safety": "\U0001F6E1\ufe0f",
+    "food": "\U0001F35E", "water": "\U0001F4A7", "city": "\U0001F3D9\ufe0f", "world": "\U0001F30E",
+}
+
+
+def emoji_to_codepoint(ec):
+    codes = []
+    for ch in ec:
+        cp = ord(ch)
+        if cp == 0xfe0f:
+            continue
+        codes.append(f"{cp:x}")
+    return "-".join(codes)
+
+
+def create_emoji_asset(ec):
+    """Twemoji artwork for one emoji, or None.
+
+    There is no drawn fallback: the font has no emoji glyphs, so drawing the
+    character produced a blank rectangle on screen. A cue we cannot render
+    properly is dropped instead.
+    """
+    global EMOJI_CDN_OK
+    code = emoji_to_codepoint(ec)
+    if not code or code in EMOJI_MISSING:
+        return None
+    cached = os.path.join(EMOJI_CACHE_DIR, f"{code}.png")
+    if os.path.exists(cached):
+        try:
+            if Image.open(cached).size[0] > 10:
+                return cached
+        except Exception:
+            pass
+    if not EMOJI_CDN_OK:
+        return None
+    for version in ("14.0.2", "15.1.0"):
+        url = (f"https://cdn.jsdelivr.net/gh/twitter/twemoji@{version}"
+               f"/assets/72x72/{code}.png")
+        try:
+            resp = requests.get(url, timeout=8)
+        except requests.exceptions.RequestException:
+            EMOJI_CDN_OK = False
+            print("    Emoji CDN unreachable; visual cues disabled for this build.")
+            return None
+        if resp.status_code == 200 and len(resp.content) > 500:
+            try:
+                Image.open(BytesIO(resp.content)).convert("RGBA").save(cached)
+                return cached
+            except Exception:
+                break
+    EMOJI_MISSING.add(code)
+    return None
+
+
+def create_emoji_plan(words):
+    """Emoji cues anchored to the words that trigger them."""
+    if not words:
+        return []
+    plan = []
+    for w in words:
+        cw = re.sub(r"[^a-z]", "", w["text"].lower())
+        if cw not in WORD_EMOJI_MAP:
+            continue
+        s = float(w["start"])
+        e = float(w["end"]) + 1.3
+        if any(not (e < p["start"] or s > p["end"]) for p in plan):
+            continue
+        if plan and s - plan[-1]["end"] < 0.9:
+            continue
+        ec = WORD_EMOJI_MAP[cw]
+        if plan and ec == plan[-1].get("emoji"):
+            continue
+        plan.append({"kind": "emoji", "emoji": ec,
+                     "start": max(0.0, s), "end": e})
+        if len(plan) >= 6:
+            break
+    return plan
+
+
 def plan_illustration_cues(text, words, model):
     """Ask for a couple of drawable moments from what was actually said."""
-    if IMAGE_PROVIDER == "none" or not words:
+    if CUE_STYLE not in ("illustration", "animation") or not words:
+        return []
+    if IMAGE_PROVIDER == "none":
         return []
     prompt = (
         "Here is a passage from a spoken debate:\n\n"
@@ -2209,7 +2424,7 @@ def plan_illustration_cues(text, words, model):
         e = min(s + span, float(words[-1]["end"]))
         if any(not (e < p["start"] or s > p["end"]) for p in plan):
             continue
-        plan.append({"scene": scene, "motion": motion,
+        plan.append({"kind": "illustration", "scene": scene, "motion": motion,
                      "start": max(0.0, s - 0.3), "end": e})
     return plan
 
@@ -2482,8 +2697,13 @@ def prepare_segment(text, slot, display_name, topic, sid, judge_voice_index=None
     }
     words = generate_audio(text, slot, spec["audio"], judge_voice_index)
     try:
-        model = cue_model or (AVAILABLE_MODELS[0] if AVAILABLE_MODELS else None)
-        spec["cues"] = plan_illustration_cues(text, words, model) if model else []
+        if CUE_STYLE == "emoji":
+            spec["cues"] = create_emoji_plan(words)
+        elif CUE_STYLE in ("illustration", "animation"):
+            model = cue_model or (AVAILABLE_MODELS[0] if AVAILABLE_MODELS else None)
+            spec["cues"] = plan_illustration_cues(text, words, model) if model else []
+        else:
+            spec["cues"] = []
     except Exception:
         spec["cues"] = []
     generate_subtitles(words, spec["subs"], scorecard=False,
@@ -2535,54 +2755,62 @@ def build_intro(topic, jc, roles):
     )
 
 
-def build_outro(cum_a, cum_b, votes_a, votes_b, votes_t, votes_u, roles, swing=None):
-    """Variable result sentence, then the fixed branded sign off.
+def build_outro(cum_a, cum_b, votes_a, votes_b, votes_t, votes_u, roles,
+                swing=None, movement=None):
+    """Closing read: who changed minds, then who argued better, then the sign off.
 
-    The verdict is stated against the number of judgements that actually held
-    up, so a result resting on a handful of stable votes is not presented as if
-    the whole panel agreed.
+    These are kept apart deliberately. Changing minds is measured by asking the
+    models their own position before and after, which is what persuasion
+    actually means. Arguing better is the blind panel scoring the transcript.
+    They can disagree, and when they do that is worth saying out loud.
     """
-    total = votes_a + votes_b + votes_t + votes_u
     counted = votes_a + votes_b + votes_t
+    total = counted + votes_u
 
-    if counted == 0:
-        verdict = ("not one judge reached a verdict that survived reversing the sides, so "
-                   "this one is officially unresolved")
-    elif votes_a > votes_b:
-        verdict = f"the {roles['side_a_label']} side takes it"
+    if votes_a > votes_b:
+        arguer = roles["side_a_label"]
     elif votes_b > votes_a:
-        verdict = f"the {roles['side_b_label']} side takes it"
-    elif cum_a > cum_b:
-        verdict = (f"the panel split evenly, so it goes to {roles['side_a_label']} "
-                   f"on total score")
-    elif cum_b > cum_a:
-        verdict = (f"the panel split evenly, so it goes to {roles['side_b_label']} "
-                   f"on total score")
+        arguer = roles["side_b_label"]
     else:
-        verdict = "this one is a genuine draw"
+        arguer = None
 
-    if counted == 0:
-        split_line = (f"Across {total} judgements, every single one flipped when we reversed "
-                      f"the running order. ")
-    elif votes_u and counted <= total / 2:
-        split_line = (f"Of {total} judgements, only {counted} held up when we reversed the "
-                      f"running order, and those came down "
-                      f"{spoken_split(votes_a, votes_b, votes_t, 0, roles)}. ")
-    else:
-        split_line = (f"Across {total} judgements, the panel came down "
-                      f"{spoken_split(votes_a, votes_b, votes_t, votes_u, roles)}. ")
+    persuader = None
+    if movement:
+        if movement["toward_a"] > movement["toward_b"]:
+            persuader = roles["side_a_label"]
+        elif movement["toward_b"] > movement["toward_a"]:
+            persuader = roles["side_b_label"]
 
     lines = []
-    if swing is not None:
-        if abs(swing) < 0.15:
-            lines.append("So nobody moved on the question itself.")
-        else:
-            toward = roles["side_a_label"] if swing > 0 else roles["side_b_label"]
-            lines.append(f"So the question moved {abs(swing):.1f} points toward {toward}.")
-    lines.append(f"On the arguing, separately, {roles['side_a_label']} averaged "
-                 f"{cum_a / max(1, ROUNDS):.1f} out of a hundred and "
-                 f"{roles['side_b_label']} {cum_b / max(1, ROUNDS):.1f}, so {verdict}. "
-                 f"{split_line.strip()}")
+    if persuader and movement:
+        their_way = (movement["toward_a"] if persuader == roles["side_a_label"]
+                     else movement["toward_b"])
+        answering = (movement["toward_a"] + movement["toward_b"]
+                     + movement["unchanged"])
+        lines.append(f"So the most persuasive side tonight was {persuader}. "
+                     f"{their_way} of the {answering} models that answered moved "
+                     f"their way.")
+    elif movement is not None:
+        lines.append("So the most persuasive side tonight was neither. Nobody on the "
+                     "panel shifted their position at all.")
+
+    if arguer:
+        lines.append(f"On the arguing itself, judged blind, {arguer} scored higher, "
+                     f"{cum_a / max(1, ROUNDS):.1f} to {cum_b / max(1, ROUNDS):.1f} "
+                     f"out of a hundred.")
+    else:
+        lines.append(f"On the arguing itself, judged blind, the panel could not separate "
+                     f"them, {cum_a / max(1, ROUNDS):.1f} to "
+                     f"{cum_b / max(1, ROUNDS):.1f} out of a hundred.")
+
+    if persuader and arguer and persuader != arguer:
+        lines.append(f"Which is the interesting part. {arguer} argued it better, and "
+                     f"{persuader} is the side that actually changed minds.")
+
+    if votes_u and counted <= total / 2:
+        lines.append(f"Only {counted} of {total} judgements held up when we reversed the "
+                     f"running order, so treat the scoring lightly.")
+
     lines.append(OUTRO_SIGNOFF)
     return " ".join(lines)
 
@@ -3051,14 +3279,18 @@ def run_debate_pipeline():
     print(f"\nPanel consensus across all rounds: {votes_a} to {votes_b}"
           f"{f' with {votes_t} even' if votes_t else ''}"
           f"{f', {votes_u} abstained as order driven' if votes_u else ''}.")
-    add_seg(build_outro(cum_a, cum_b, votes_a, votes_b, votes_t, votes_u, roles,
-                        swing=swing),
-            "MOD", "MODERATOR", count_speech=False)
+    votes = {"A": votes_a, "B": votes_b, "TIE": votes_t, "UNSTABLE": votes_u}
+    outro_text = build_outro(cum_a, cum_b, votes_a, votes_b, votes_t, votes_u, roles,
+                             swing=swing, movement=movement)
+    specs.append(prepare_verdict_segment(
+        outro_text,
+        (topic, roles, sum_before, sum_after, movement, votes, cum_a, cum_b)))
+    pacing.add(specs[-1]["duration"])
 
     method_note = build_method_note(
         topic, roles, (ap_model, sk_model), judges, poll_roster,
         sum_before, sum_after, movement,
-        {"A": votes_a, "B": votes_b, "TIE": votes_t, "UNSTABLE": votes_u})
+        votes)
     try:
         open("video_description.txt", "w", encoding="utf-8").write(method_note + "\n")
         print("\nWrote video_description.txt (paste under the video).")

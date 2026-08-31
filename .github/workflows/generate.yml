@@ -29,6 +29,16 @@ jobs:
     - name: Run Debate Video Pipeline
       env:
         OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        # Everything below is optional. With none of it set the build uses free
+        # OpenRouter models, free edge-tts narration and free emoji cues, and
+        # costs nothing beyond the OpenRouter calls themselves.
+        #
+        # USE_PAID_MODELS: "1"                     # pinned paid roster
+        # TTS_PROVIDER: elevenlabs                 # needs ELEVENLABS_API_KEY
+        # ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+        # CUE_STYLE: illustration                  # generated stills, needs IMAGE_PROVIDER
+        # CUE_STYLE: animation                     # generated clips, billed per second
+        # ANIMATE_CUES: "1"
       run: python main.py
 
     - name: Upload Final Video Artifact
@@ -36,3 +46,13 @@ jobs:
       with:
         name: Final_Debate_Video
         path: final_debate_output.mp4
+
+    - name: Upload Description And Scores
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: Debate_Data
+        path: |
+          video_description.txt
+          scores.json
+        if-no-files-found: warn
