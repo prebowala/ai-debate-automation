@@ -754,6 +754,9 @@ STOP_WORDS = {"a", "an", "the", "is", "are", "was", "were", "be", "been", "do", 
 
 
 LABEL_DISPLAY_CHARS = 18
+# A hard backstop only. Labels are normally left at full length and the
+# boards shrink their type to fit them.
+LABEL_MAX_CHARS = 34
 
 
 def shorten_labels(a, b):
@@ -780,14 +783,36 @@ def shorten_labels(a, b):
     return na, nb
 
 
-def _titlecase_label(s, limit=18):
+def _titlecase_label(s):
+    """Clean a single label. Never shortens it: see finalise_labels."""
     s = re.sub(r"[^\w\s'-]", " ", s or "").strip()
     s = re.sub(r"\s+", " ", s)
-    if not s:
-        return ""
-    if len(s) > limit:
-        s = s[:limit].rsplit(" ", 1)[0]
-    return s.upper()
+    return re.sub(r"\s+", " ", s).upper()
+
+
+def finalise_labels(a, b):
+    """Shorten the two labels as a pair, or leave both alone.
+
+    They used to be cut one at a time against a character limit, so a pair
+    like GOD SPOKE TRUTH and SERPENT SPOKE TRUTH came out as GOD SPOKE TRUTH
+    and SERPENT SPOKE: one side kept the word that says what it is claiming
+    and the other lost it. A label that no longer states a position is worse
+    than a long one, and every board can shrink its type to fit, so a cut
+    that would leave the pair lopsided is not made at all.
+    """
+    a, b = shorten_labels(a, b)
+    if max(len(a), len(b)) <= LABEL_MAX_CHARS:
+        return a, b
+
+    def clip(x):
+        return x[:LABEL_MAX_CHARS].rsplit(" ", 1)[0] if len(x) > LABEL_MAX_CHARS else x
+
+    ca, cb = clip(a), clip(b)
+    # Only worth doing if it cuts both, leaves them different, and leaves
+    # neither a bare fragment.
+    if ca != a and cb != b and ca != cb and ca and cb:
+        return ca, cb
+    return a, b
 
 
 def fallback_roles(topic):
@@ -829,6 +854,7 @@ def fallback_roles(topic):
 
         la, lb = _titlecase_label(" ".join(left_words)), _titlecase_label(right)
         if la and lb and la != lb:
+            la, lb = finalise_labels(la, lb)
             return {
                 "side_a_label": la,
                 "side_a_stance": f"the answer to this question is {la.lower()}",
@@ -859,9 +885,11 @@ def get_debate_roles(topic, model):
         "Name the two opposing sides.\n"
         "Return ONLY JSON, no other text:\n"
         '{"side_a_label":"...","side_a_stance":"...","side_b_label":"...","side_b_stance":"..."}\n'
-        "side_a_label and side_b_label: the position itself in at most three words, all caps, "
-        "readable on a name card (for example GOD EXISTS, YES, BAN IT, FREE WILL). They must be "
-        "genuine opposites and must not be identical.\n"
+        "side_a_label and side_b_label: the position itself in at most three words and 20 "
+        "characters, all caps, readable on a name card (for example GOD EXISTS, YES, BAN IT, "
+        "FREE WILL). They must be genuine opposites, must not be identical, and each must "
+        "state a position on its own: someone reading only that label, next to the question, "
+        "should know what that side is claiming.\n"
         "side_a_stance and side_b_stance: one short clause completing the sentence "
         "\"You believe that ...\", written for the debater on that side."
     )
@@ -876,7 +904,7 @@ def get_debate_roles(topic, model):
         lb = _titlecase_label(str(d.get("side_b_label", "")))
         if not la or not lb or la == lb:
             continue
-        la, lb = shorten_labels(la, lb)
+        la, lb = finalise_labels(la, lb)
         return {
             "side_a_label": la,
             "side_a_stance": str(d.get("side_a_stance", "")).strip() or f"{la.title()} is correct",
@@ -2545,16 +2573,20 @@ def generate_scoreboard(rn, res, avg_a, avg_b, cum_a, cum_b, path, roles,
     fr = load_font(24)
     draw.text((W // 2, 50), f"ROUND {rn} - HOW THE JURY MARKED IT",
               font=ft, fill=(255, 215, 0), anchor="mt")
-    draw.text((W // 2, 115), f"{roles['side_a_label']}  vs  {roles['side_b_label']}",
-              font=fs, fill=(255, 255, 255), anchor="mt")
+    versus = f"{roles['side_a_label']}  vs  {roles['side_b_label']}"
+    draw.text((W // 2, 115), versus, font=_fit_font(draw, versus, W - 160, 28, floor=18),
+              fill=(255, 255, 255), anchor="mt")
     hy = 190
     cx1, cx2, cx3, cx4 = 120, 750, 1050, 1350
-    sa = roles["side_a_label"][:18]
-    sb = roles["side_b_label"][:18]
+    # Shrink the headers to their columns. Slicing them to a fixed number of
+    # characters cut the word that says what the side is claiming.
+    sa, sb = roles["side_a_label"], roles["side_b_label"]
+    fha = _fit_font(draw, sa, cx3 - cx2 - 20, 22, floor=13)
+    fhb = _fit_font(draw, sb, cx4 - cx3 - 20, 22, floor=13)
     draw.rectangle([60, hy - 10, W - 60, hy + 45], fill=(25, 35, 70), outline=(255, 215, 0), width=2)
     draw.text((cx1, hy), "Juror", font=fh, fill=(255, 255, 255))
-    draw.text((cx2, hy), sa, font=fh, fill=(0, 255, 204))
-    draw.text((cx3, hy), sb, font=fh, fill=(255, 120, 255))
+    draw.text((cx2, hy + 2), sa, font=fha, fill=(0, 255, 204))
+    draw.text((cx3, hy + 2), sb, font=fhb, fill=(255, 120, 255))
     draw.text((cx4, hy), "Winner", font=fh, fill=(255, 215, 0))
     # The panel can be large, so rows shrink to fit rather than run off screen.
     # The bottom of the frame is left clear for the spoken subtitle line.
@@ -2725,7 +2757,6 @@ def generate_verdict_board(path, topic, roles, before, after, movement, votes,
         Image.new("RGB", (W, H), (12, 16, 32)).convert("RGBA"),
         Image.new("RGBA", (W, H), (0, 0, 0, 185))).convert("RGB")
     draw = ImageDraw.Draw(img)
-    fs = load_font(24)
 
     draw.text((W // 2, 26), "THE VERDICT", font=load_font(44, bold=True),
               fill=(255, 215, 0), anchor="mt")
@@ -2767,8 +2798,12 @@ def generate_verdict_board(path, topic, roles, before, after, movement, votes,
     bar_x = hx0 + 230
     bar_w = hx1 - 60 - bar_x
     fnum = load_font(24, bold=True)
-    draw.text((bar_x, hy0 + 288), roles["side_a_label"][:22], font=fs, fill=A_COL)
-    draw.text((bar_x + bar_w, hy0 + 288), roles["side_b_label"][:22], font=fs,
+    half = bar_w // 2 - 20
+    draw.text((bar_x, hy0 + 288), roles["side_a_label"],
+              font=_fit_font(draw, roles["side_a_label"], half, 24, floor=15, bold=False),
+              fill=A_COL)
+    draw.text((bar_x + bar_w, hy0 + 288), roles["side_b_label"],
+              font=_fit_font(draw, roles["side_b_label"], half, 24, floor=15, bold=False),
               fill=B_COL, anchor="rt")
     for i, (tag, poll) in enumerate((("BEFORE", before), ("AFTER", after))):
         y = hy0 + 322 + i * 62
