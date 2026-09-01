@@ -37,6 +37,10 @@ jobs:
         # DEBATER_LABS: anthropic,openai           # which two labs argue
         # DEBATER_MODELS: a/b,c/d                  # pin exact debaters
         # PANEL_MODELS: a/b,c/d                    # pin the exact panel
+        # JUDGE_VOICES: en-US-EmmaNeural,en-GB-SoniaNeural   # reorder or drop jurors' voices
+        # SIDE_A_VOICE: en-US-BrianNeural          # never a Multilingual voice, they
+        # SIDE_B_VOICE: en-US-AvaNeural            # switch accent mid sentence
+        # MODERATOR_VOICE: en-US-AndrewNeural
         # TTS_PROVIDER: elevenlabs                 # needs ELEVENLABS_API_KEY
         # ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
         # CUE_STYLE: illustration                  # generated stills, needs IMAGE_PROVIDER

@@ -86,30 +86,32 @@ SIDE_B_VOICE = os.environ.get("SIDE_B_VOICE", "en-US-AvaNeural")
 MODERATOR_VOICE = os.environ.get("MODERATOR_VOICE", "en-US-AndrewNeural")
 
 # Used only if a configured voice turns out not to exist on the service.
-VOICE_FALLBACKS = ["en-US-GuyNeural", "en-US-JennyNeural", "en-GB-RyanNeural",
-                   "en-US-AriaNeural", "en-US-DavisNeural"]
+VOICE_FALLBACKS = ["en-US-EmmaNeural", "en-GB-SoniaNeural", "en-GB-RyanNeural",
+                   "en-GB-LibbyNeural", "en-US-SteffanNeural"]
 
-JUDGE_VOICES = [
-    "en-US-JennyNeural",
-    "en-GB-RyanNeural",
-    "en-US-GuyNeural",
-    "en-GB-LibbyNeural",
-    "en-US-DavisNeural",
-    "en-AU-WilliamNeural",
-    "en-CA-ClaraNeural",
-    "en-GB-SoniaNeural",
-    "en-IE-ConnorNeural",
-    "en-AU-NatashaNeural",
-    "en-NZ-MitchellNeural",
-    "en-US-AriaNeural",
-    "en-GB-ThomasNeural",
-    "en-US-MichelleNeural",
-    "en-CA-LiamNeural",
-    "en-GB-MaisieNeural",
-    "en-US-RogerNeural",
-    "en-IE-EmilyNeural",
-    "en-AU-DuncanNeural",
-]
+# The jury's voices, best first. Microsoft's English voices come from several
+# generations and they do not sound alike: the 2019 originals (Jenny, Guy,
+# Aria) and the smaller regional voices are noticeably flatter and more
+# clipped than the current set, and one of them landing on a juror is what
+# made a juror sound robotic. The oldest ones are gone, as is en-GB-Maisie,
+# which is a child's voice and was never right for a juror.
+#
+# Override with JUDGE_VOICES if you prefer different ones, comma separated.
+JUDGE_VOICES = [v.strip() for v in os.environ.get(
+    "JUDGE_VOICES",
+    "en-US-EmmaNeural,"          # current generation, the same family as the debaters
+    "en-GB-SoniaNeural,"
+    "en-GB-RyanNeural,"
+    "en-US-SteffanNeural,"
+    "en-GB-LibbyNeural,"
+    "en-US-EricNeural,"
+    "en-AU-NatashaNeural,"
+    "en-GB-ThomasNeural,"
+    "en-US-MichelleNeural,"
+    "en-AU-WilliamNeural,"
+    "en-US-ChristopherNeural,"
+    "en-CA-ClaraNeural"
+).split(",") if v.strip()]
 JUDGE_VOICE_MAP = {}
 
 # Speaker slot -> (screen position, accent colour)
@@ -1147,6 +1149,48 @@ PLAIN_SPEECH_RULES = (
     "a weaker case, it is the same case that more people can follow."
 )
 
+# How to open a reply. Every turn used to be told to repeat the opponent's
+# words back and then knock them down, so every turn opened the same way and
+# the debate sounded like a form being filled in. Real debaters vary the move.
+# One is picked per turn, in rotation, so the same one never lands twice in a
+# row and the whole debate cycles through them.
+REBUTTAL_MOVES = [
+    "Grant them the point, then show it does not get them where they need to go. "
+    "Something like: fine, that is true, and it still leaves the problem sitting there.",
+
+    "Lead with a case that simply does not fit what they just said. No preamble, "
+    "no summary of their position, just the example that breaks it.",
+
+    "Go at the machinery of their argument. For their story to work, something "
+    "specific has to be true. Say what that thing is and show it is not.",
+
+    "Take the very evidence they leaned on and show it points the other way once "
+    "you look at the whole of it.",
+
+    "Name what they left out. Something big is missing from the picture they "
+    "painted, and once it is back in the picture the conclusion changes.",
+
+    "Follow their reasoning to the place where it stops working. If that is right, "
+    "then this would have to be right too, and plainly it is not.",
+
+    "Put the question to them they have not answered, then answer it yourself the "
+    "way your side answers it.",
+
+    "Agree with the worry underneath their point, and show your side handles that "
+    "worry better than theirs does.",
+]
+
+# Openings that make every turn sound identical. A turn that starts like this is
+# held back and another model is tried first.
+FORMULAIC_OPENERS = (
+    "you say", "you said", "you claim", "you argue", "you tell us", "you told us",
+    "you keep saying",
+    "you just said", "you're saying", "you are saying", "your point", "your claim",
+    "your argument", "my opponent", "the other side says", "they say", "they claim",
+    "we are told", "we're told", "it is claimed", "the claim is",
+)
+
+
 # Words that make a spoken argument sound like a paper being read out.
 ACADEMIC_MARKERS = {
     "furthermore", "moreover", "consequently", "nevertheless", "notwithstanding",
@@ -1189,6 +1233,24 @@ def plain_words(text):
     return text
 
 
+def opens_formulaically(text):
+    """True if the turn starts by reporting what the opponent said.
+
+    Quoting the other side back and labelling it, "you say X, but", is a real
+    debating move, but it was the only one being used, so every turn in the
+    video opened the same way. Mid answer it is fine; this only looks at the
+    opening.
+    """
+    raw = " ".join(text.split()[:14])
+    # A turn that opens on a quotation is quoting the opponent back. Check this
+    # before stripping anything, or the test can never fire.
+    if raw[:1] in ('"', "'", "“", "‘"):
+        return True
+    opening = raw.lower().lstrip("\"'“‘ ")
+    return any(opening.startswith(f) or f" {f}" in opening[:70]
+               for f in FORMULAIC_OPENERS)
+
+
 def reads_academic(text):
     """True when a turn reads like an essay rather than someone talking."""
     words = re.findall(r"\b[\w'-]+\b", text.lower())
@@ -1208,6 +1270,12 @@ def generate_turn(topic, roles, side, round_num, turn_num, opponent_last, target
     other = roles["side_b_label"] if side == "A" else roles["side_a_label"]
     stance = roles["side_a_stance"] if side == "A" else roles["side_b_stance"]
     used_str = "; ".join(list(USED_ARGUMENTS)[-6:])[:400] if USED_ARGUMENTS else "nothing yet"
+
+    # Rotate the line of attack across the whole debate, so no two turns in a
+    # row open the same way and no single move is the house style.
+    turn_index = ((round_num - 1) * TURNS_PER_SIDE_PER_ROUND * 2
+                  + (turn_num - 1) * 2 + (0 if side == "A" else 1))
+    move = REBUTTAL_MOVES[turn_index % len(REBUTTAL_MOVES)]
 
     if not opponent_last:
         prompt = (
@@ -1230,16 +1298,18 @@ def generate_turn(topic, roles, side, round_num, turn_num, opponent_last, target
             f"\"{opponent_last[:1200]}\"\n\n"
             "Answer them the way a real debater does, as one flowing spoken paragraph with no "
             "headings and no numbering:\n"
-            "- Open by repeating back a few of their own words, the specific claim they made, and "
-            "say straight away why it doesn't hold.\n"
+            f"- Take this line of attack: {move}\n"
             "- Give the counter-evidence: a specific case, figure or example that cuts against it.\n"
             "- Then push forward with one fresh reason for your own side that hasn't come up yet.\n\n"
             f"Points already used in this debate, so find something new: {used_str}\n\n"
             + PLAIN_SPEECH_RULES
-            + f"\nSpeak for roughly {target_words} words. Your first sentence must already be "
-            "engaging what they said. Never announce that you are about to respond, counter, "
-            "address or discuss anything, and never weigh options out loud. Choose your "
-            "evidence silently and say it like you mean it."
+            + f"\nSpeak for roughly {target_words} words. It must be obvious which of their "
+            "points you are taking apart, but get there without quoting them back or "
+            "reporting what they said. Do not open with \"you say\", \"you claim\", \"your "
+            "point about\", \"my opponent\", \"they argue\" or a quotation of their words. "
+            "Start on your own feet, in your own words. Never announce that you are about "
+            "to respond, counter, address or discuss anything, and never weigh options out "
+            "loud. Choose your evidence silently and say it like you mean it."
         )
 
     attempted = []
@@ -1279,9 +1349,10 @@ def generate_turn(topic, roles, side, round_num, turn_num, opponent_last, target
             continue
 
         cleaned = plain_words(cleaned)
-        # An essay-sounding turn is real content but poor television. Hold it
-        # and try another model before settling for it.
-        if reads_academic(cleaned) and not stiff:
+        # An essay-sounding turn, or one that opens by reciting what the other
+        # side said, is real content but poor television. Hold it and try
+        # another model before settling for it.
+        if (reads_academic(cleaned) or opens_formulaically(cleaned)) and not stiff:
             stiff, stiff_model = cleaned, m
             continue
 
@@ -1292,7 +1363,8 @@ def generate_turn(topic, roles, side, round_num, turn_num, opponent_last, target
         return cleaned, m
 
     if stiff and count_words(stiff) >= count_words(best):
-        print(f"    {label} turn reads formally and no model did better; using it.")
+        print(f"    {label} turn reads formally or opens by quoting back, and no "
+              f"model did better; using it.")
         stiff = trim_to_words(stiff, target_words + 25)
         for s in re.split(r"(?<=[.!?])\s+", stiff)[:3]:
             if len(s) > 40:
@@ -2317,20 +2389,26 @@ def voice_for_slot(slot, judge_voice_index=None):
     Slight differences in rate and pitch give each speaker a distinct delivery
     and stop the debate sounding like one voice reading both sides.
     """
+    # Pace varies a little between speakers; pitch does not. These are already
+    # different voices, and pushing a neural voice off its own pitch is what
+    # makes it start to sound processed.
     if slot == "A":
         return {"edge_voice": SIDE_A_VOICE, "eleven_voice": ELEVEN_VOICE_A,
-                "rate": "-3%", "pitch": "-2Hz", "stability": 0.42, "style": 0.40}
+                "rate": "-3%", "pitch": "+0Hz", "stability": 0.42, "style": 0.40}
     if slot == "B":
         return {"edge_voice": SIDE_B_VOICE, "eleven_voice": ELEVEN_VOICE_B,
-                "rate": "+3%", "pitch": "+4Hz", "stability": 0.40, "style": 0.45}
+                "rate": "+3%", "pitch": "+0Hz", "stability": 0.40, "style": 0.45}
     if slot == "JUDGE":
         idx = (judge_voice_index or 0) % len(JUDGE_VOICES)
         return {"edge_voice": JUDGE_VOICES[idx],
                 "eleven_voice": ELEVEN_JUDGE_VOICES[idx % len(ELEVEN_JUDGE_VOICES)],
-                # Nudge each judge slightly differently so the panel sounds
-                # like several people rather than one.
-                "rate": f"{-4 + (idx % 5) * 2:+d}%",
-                "pitch": f"{-3 + (idx % 4) * 2:+d}Hz",
+                # A small change of pace, and nothing else. The jurors already
+                # have twelve different voices between them, so they do not
+                # need pitch shifting on top to tell apart, and shifting the
+                # pitch of a neural voice is a good way to make it sound
+                # synthetic.
+                "rate": f"{-2 + (idx % 3) * 2:+d}%",
+                "pitch": "+0Hz",
                 "stability": 0.50, "style": 0.30}
     return {"edge_voice": MODERATOR_VOICE, "eleven_voice": ELEVEN_VOICE_MOD,
             "rate": "-1%", "pitch": "+0Hz", "stability": 0.55, "style": 0.25}
