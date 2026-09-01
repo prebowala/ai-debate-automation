@@ -3670,6 +3670,46 @@ def build_outro(mean_a, mean_b, votes_a, votes_b, votes_t, votes_u, roles,
     return " ".join(lines)
 
 
+def format_timestamp(seconds):
+    """A YouTube chapter timestamp. M:SS under an hour, H:MM:SS over it."""
+    seconds = max(0, int(seconds))
+    h, rem = divmod(seconds, 3600)
+    m, sec = divmod(rem, 60)
+    return f"{h}:{m:02d}:{sec:02d}" if h else f"{m}:{sec:02d}"
+
+
+def build_chapters(specs, rendered):
+    """Chapter timestamps measured off the rendered files, not estimated.
+
+    The segments are concatenated end to end with a stream copy, so the start
+    of each one is the sum of the real durations before it. Anything guessed
+    from the audio would drift, and a chapter mark that lands in the wrong
+    place is worse than no chapter at all.
+    """
+    lines, elapsed = [], 0.0
+    for spec, path in zip(specs, rendered):
+        if spec.get("chapter"):
+            lines.append(f"{format_timestamp(elapsed)} {spec['chapter']}")
+        dur = get_audio_duration(path)
+        if not dur:
+            # One unmeasurable segment makes every later mark wrong.
+            return []
+        elapsed += dur
+    # YouTube ignores the list unless it starts at zero and has three marks.
+    if len(lines) < 3 or not lines[0].startswith("0:00"):
+        return []
+    return lines
+
+
+def insert_chapters(note, chapters):
+    """Put the chapter block under the question, above everything else."""
+    block = "CHAPTERS\n" + "\n".join(chapters)
+    head, sep, rest = note.partition("\n\n")
+    if not sep:
+        return note + "\n\n" + block
+    return head + "\n\n" + block + "\n\n" + rest
+
+
 def build_method_note(topic, roles, debaters, judges, poll_roster,
                       sum_before, sum_after, movement, votes, mean_a=None, mean_b=None):
     """A description-ready statement of what this run actually did."""
@@ -4079,10 +4119,11 @@ def run_debate_pipeline():
     specs = []
     sid = 0
 
-    def add_seg(text, slot, display_name, jvi=None, count_speech=True):
+    def add_seg(text, slot, display_name, jvi=None, count_speech=True, chapter=None):
         """Write and voice a segment. Rendering happens later, in one pass."""
         nonlocal sid
         spec = prepare_segment(text, slot, display_name, topic, sid, jvi)
+        spec["chapter"] = chapter
         specs.append(spec)
         sid += 1
         pacing.add(spec["duration"], count_words(text) if count_speech else None)
@@ -4091,7 +4132,8 @@ def run_debate_pipeline():
     total_turns = ROUNDS * TURNS_PER_SIDE_PER_ROUND * 2
     turns_done = 0
 
-    add_seg(build_intro(topic, roles), "MOD", "MODERATOR", count_speech=False)
+    add_seg(build_intro(topic, roles), "MOD", "MODERATOR", count_speech=False,
+            chapter="The question")
 
     # Where the panel stands before hearing a word. This is the consensus
     # measurement; the round scorecards measure who argued better.
@@ -4119,6 +4161,7 @@ def run_debate_pipeline():
         poll_before, sum_before, roles,
         build_opening_poll_narration(sum_before, roles, topic),
         "opening", "WHAT THE AIs THINK - BEFORE THE DEBATE"))
+    specs[-1]["chapter"] = "Where the AIs stand before"
     pacing.add(specs[-1]["duration"])
 
     cum_a = cum_b = 0.0
@@ -4134,6 +4177,7 @@ def run_debate_pipeline():
         print(f"\n--- ROUND {rn} ---")
         a_turns, b_turns = [], []
         round_writers = set()
+        round_opened = False
 
         # Swap which model argues which side each round, so a stronger model
         # cannot systematically carry one position.
@@ -4182,7 +4226,9 @@ def run_debate_pipeline():
                     last_b_text = text
                 if opener_words is None:
                     opener_words = count_words(text)
-                add_seg(text, side, label)
+                add_seg(text, side, label,
+                        chapter=None if round_opened else f"Round {rn}")
+                round_opened = True
                 turns_done += 1
 
         a_full = "\n\n".join(a_turns)
@@ -4226,6 +4272,7 @@ def run_debate_pipeline():
               f"average {roles['side_a_label']} {ra:.1f} vs {roles['side_b_label']} {rb:.1f}")
 
         score_spec = prepare_scorecard(rn, res, ra, rb, cum_a, cum_b, va, vb, vt, vu, roles)
+        score_spec["chapter"] = f"Round {rn} scored"
         specs.append(score_spec)
         pacing.add(score_spec["duration"])
 
@@ -4284,6 +4331,7 @@ def run_debate_pipeline():
         poll_after, sum_after, roles,
         build_closing_poll_narration(sum_before, sum_after, roles, movement),
         "closing", "WHAT THE AIs THINK - AFTER THE DEBATE", before=sum_before))
+    specs[-1]["chapter"] = "Did anyone change their mind?"
     pacing.add(specs[-1]["duration"])
 
     print(f"\nPanel consensus across all rounds: {votes_a} to {votes_b}"
@@ -4300,6 +4348,7 @@ def run_debate_pipeline():
     specs.append(prepare_verdict_segment(
         outro_text,
         (topic, roles, sum_before, sum_after, movement, votes, mean_a, mean_b)))
+    specs[-1]["chapter"] = "The verdict"
     pacing.add(specs[-1]["duration"])
 
     method_note = build_method_note(
@@ -4348,6 +4397,20 @@ def run_debate_pipeline():
     stitch_segments(segs, OUTPUT_FILE)
     final = get_audio_duration(OUTPUT_FILE) or pacing.consumed
     print(f"\nCOMPLETE: {OUTPUT_FILE}  runtime {int(final // 60)}m {int(final % 60)}s")
+
+    # Only now are the real segment lengths known, so the chapter marks go in
+    # last. The description was already written without them, so a failure
+    # here costs the timestamps and nothing else.
+    chapters = build_chapters(specs, segs)
+    if chapters:
+        try:
+            open("video_description.txt", "w", encoding="utf-8").write(
+                insert_chapters(method_note, chapters) + "\n")
+            print(f"Added {len(chapters)} chapter timestamps to video_description.txt.")
+        except OSError:
+            pass
+    else:
+        print("Could not measure the rendered segments, so no chapter timestamps.")
     cleanup_cache()
 
 
