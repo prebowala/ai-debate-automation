@@ -295,8 +295,9 @@ METHOD_CLAIMS = [
     "picks a different winner the second time is thrown out instead of counted.",
 
     "Separately, one AI from each company is asked what it personally thinks, once before "
-    "the debate and once after reading the whole thing. How many of them changed their "
-    "mind is the main result.",
+    "the debate and once after reading the whole thing. Where they end up after hearing "
+    "both sides is the headline result. How many of them moved, and which side the jury "
+    "marked as the better arguer, are side notes to that.",
 
     "Nothing here is scripted or made up. If an AI gives no usable answer it is left out "
     "and we say so. No argument, score or verdict in this video was written by a person.",
@@ -2081,13 +2082,17 @@ def generate_subtitles(words, fn, scorecard=False, audio_file=None, full_text=No
               "100,100,0,0,1,2,1,2,80,80,40,1\n\n"
               "[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n")
     events = []
-    if scorecard and audio_file and full_text:
-        dur = get_audio_duration(audio_file) or 6.0
-        events.append(f"Dialogue: 0,0:00:00.00,{format_ass_time(dur)},ScoreSub,,0,0,0,,{ass_escape(full_text)}")
-        open(fn, "w", encoding="utf-8").write(header + "\n".join(events) + "\n")
-        return
+    # Scorecards used to carry the whole narration as one static block, which
+    # covered the bottom third of the card for its entire duration. They get
+    # the same timed lines as everything else, sat below the card's content.
+    style = "ScoreSub" if scorecard else "DebateSub"
+    pos_y = 1030 if scorecard else 790
     if not words:
-        open(fn, "w", encoding="utf-8").write(header)
+        if scorecard and audio_file and full_text:
+            dur = get_audio_duration(audio_file) or 6.0
+            events.append(f"Dialogue: 0,0:00:00.00,{format_ass_time(dur)},{style},,0,0,0,,"
+                          f"{ass_escape(full_text)}")
+        open(fn, "w", encoding="utf-8").write(header + "\n".join(events) + "\n")
         return
     if audio_file:
         try:
@@ -2114,10 +2119,11 @@ def generate_subtitles(words, fn, scorecard=False, audio_file=None, full_text=No
 
     def emit(chunk, end):
         s = chunk[0]["start"]
-        txt = "\\N".join([" ".join([ass_escape(c["text"]) for c in chunk[i:i + 10]])
-                          for i in range(0, len(chunk), 10)][:4])
-        events.append(f"Dialogue: 0,{format_ass_time(s)},{format_ass_time(end)},DebateSub,,0,0,0,,"
-                      f"{{\\an2\\pos(960,790)\\q2\\fad(120,120)}}{txt}")
+        per_line = 8 if scorecard else 10
+        txt = "\\N".join([" ".join([ass_escape(c["text"]) for c in chunk[i:i + per_line]])
+                          for i in range(0, len(chunk), per_line)][:4])
+        events.append(f"Dialogue: 0,{format_ass_time(s)},{format_ass_time(end)},{style},,0,0,0,,"
+                      f"{{\\an2\\pos(960,{pos_y})\\q2\\fad(120,120)}}{txt}")
 
     chunk = []
     last_end = 0
@@ -2404,8 +2410,9 @@ def generate_scoreboard(rn, res, avg_a, avg_b, cum_a, cum_b, path, roles,
     draw.text((cx3, hy), sb, font=fh, fill=(255, 120, 255))
     draw.text((cx4, hy), "Winner", font=fh, fill=(255, 215, 0))
     # The panel can be large, so rows shrink to fit rather than run off screen.
+    # The bottom of the frame is left clear for the spoken subtitle line.
     y = hy + 65
-    available = 880 - y
+    available = 790 - y
     row_h = max(30, min(58, available // max(1, len(res))))
     fr = load_font(max(15, min(24, row_h - 22)))
     for idx, r in enumerate(res):
@@ -2456,15 +2463,17 @@ def generate_poll_board(results, summary, roles, path, title, before=None):
     fr = load_font(23)
 
     draw.text((W // 2, 44), title, font=ft, fill=(255, 215, 0), anchor="mt")
-    draw.text((W // 2, 104), f"{roles['side_b_label']}  \u2190   lean   \u2192  "
-                             f"{roles['side_a_label']}",
+    # Side A sits on the left everywhere else in the video, so it sits on the
+    # left here too. The signed value in the right hand column is unchanged.
+    draw.text((W // 2, 104), f"{roles['side_a_label']}  \u2190   lean   \u2192  "
+                             f"{roles['side_b_label']}",
               font=fs, fill=(255, 255, 255), anchor="mt")
 
     left, right = 430, W - 430
     mid = (left + right) // 2
     top = 168
     rows = results
-    row_h = max(28, min(52, (860 - top) // max(1, len(rows))))
+    row_h = max(28, min(52, (790 - top) // max(1, len(rows))))
     fr = load_font(max(14, min(23, row_h - 25)))
 
     # Scale gridline
@@ -2483,14 +2492,17 @@ def generate_poll_board(results, summary, roles, path, title, before=None):
                       fill=(150, 150, 150), anchor="mt")
             continue
         pos = r["position"]
-        x = int(mid + (pos / POLL_SCALE) * (right - mid))
+        x = int(mid - (pos / POLL_SCALE) * (right - mid))
         colour = (0, 255, 204) if pos > LEAN_THRESHOLD else \
                  (255, 120, 255) if pos < -LEAN_THRESHOLD else (220, 220, 220)
         my = y + row_h // 3
         draw.line([(mid, my), (x, my)], fill=colour, width=max(3, row_h // 10))
         rr = max(5, row_h // 6)
         draw.ellipse([x - rr, my - rr, x + rr, my + rr], fill=colour)
-        draw.text((right + 26, y), f"{pos:+.1f}", font=fr, fill=colour)
+        # Strength only, coloured to the side it leans. A signed number here
+        # read as a contradiction once the axis was flipped, and the exact
+        # signed value is in scores.json either way.
+        draw.text((right + 26, y), f"{abs(pos):.1f}", font=fr, fill=colour)
 
     y = top + row_h * len(rows) + 24
     draw.line([(60, y), (W - 60, y)], fill=(255, 255, 255), width=2)
@@ -2513,108 +2525,178 @@ def generate_poll_board(results, summary, roles, path, title, before=None):
     img.save(path)
 
 
+def _fit_font(draw, text, max_w, start, floor=30, bold=True):
+    """Largest font at or below start that keeps text inside max_w."""
+    size = start
+    while size > floor:
+        f = load_font(size, bold=bold)
+        if draw.textlength(text, font=f) <= max_w:
+            return f
+        size -= 4
+    return load_font(floor, bold=bold)
+
+
+def _draw_split_bar(draw, x, y, w, h, counts, colours, font):
+    """One horizontal bar split into segments, each labelled with its count.
+
+    Used for the before and after rows of the verdict card. Seeing the block
+    of colour grow is what makes where the room landed obvious at a glance,
+    without having to read three numbers and work out which one matters.
+    """
+    total = sum(counts)
+    if total <= 0:
+        draw.rounded_rectangle([x, y, x + w, y + h], radius=8, fill=(40, 48, 70))
+        return
+    edges = [x]
+    run = 0
+    for n in counts:
+        run += n
+        edges.append(x + int(round(w * run / total)))
+    for i, (n, colour) in enumerate(zip(counts, colours)):
+        x0, x1 = edges[i], edges[i + 1]
+        if x1 <= x0:
+            continue
+        draw.rectangle([x0, y, x1, y + h], fill=colour)
+        if x1 - x0 >= 34:
+            draw.text(((x0 + x1) // 2, y + h // 2), str(n), font=font,
+                      fill=(10, 14, 28), anchor="mm")
+    draw.rounded_rectangle([x, y, x + w, y + h], radius=6,
+                           outline=(255, 255, 255), width=2)
+
+
 def generate_verdict_board(path, topic, roles, before, after, movement, votes,
                            mean_a, mean_b):
-    """The closing card: who changed minds, and who argued better.
+    """The closing card. Where the AIs land is the answer, so it gets the card.
 
-    These are two different results from two different instruments, so they get
-    two panels rather than being blended into one winner.
+    Everything else on this card is a footnote to that one line. Giving the
+    three results equal boxes, which is what this used to do, read as three
+    competing winners and left people asking which number was the answer.
     """
     W, H = VIDEO_W, VIDEO_H
+    A_COL, B_COL, N_COL = (0, 255, 204), (255, 120, 255), (150, 158, 180)
     img = Image.alpha_composite(
         Image.new("RGB", (W, H), (12, 16, 32)).convert("RGBA"),
         Image.new("RGBA", (W, H), (0, 0, 0, 185))).convert("RGB")
     draw = ImageDraw.Draw(img)
-    ft = load_font(54, bold=True)
-    fh = load_font(30, bold=True)
     fs = load_font(24)
 
-    draw.text((W // 2, 52), "THE VERDICT", font=ft, fill=(255, 215, 0), anchor="mt")
-    draw.text((W // 2, 122), topic[:88], font=fs, fill=(255, 255, 255), anchor="mt")
+    draw.text((W // 2, 26), "THE VERDICT", font=load_font(44, bold=True),
+              fill=(255, 215, 0), anchor="mt")
+    draw.text((W // 2, 84), topic[:92], font=load_font(26), fill=(235, 235, 235),
+              anchor="mt")
 
-    swing = after["mean"] - before["mean"]
     moved = movement["toward_a"] + movement["toward_b"]
     asked = after.get("asked", moved + movement["unchanged"])
+    stated = after.get("stated", asked)
 
     # Where the room finished, which is a different question from which way it
     # moved. A side can gain ground and still be a long way behind.
     if after["lean_a"] > after["lean_b"]:
-        room, room_colour = roles["side_a_label"], (0, 255, 204)
+        room, room_colour = roles["side_a_label"], A_COL
     elif after["lean_b"] > after["lean_a"]:
-        room, room_colour = roles["side_b_label"], (255, 120, 255)
+        room, room_colour = roles["side_b_label"], B_COL
     else:
-        room, room_colour = "SPLIT", (200, 200, 200)
-    room_detail = (f"{max(after['lean_a'], after['lean_b'])} of {asked} AIs end here"
-                   if room != "SPLIT" else "evenly divided")
+        room, room_colour = None, (235, 235, 235)
 
-    if moved == 0 or abs(swing) < 0.15:
+    # ---- The headline: one answer, across the whole card.
+    hx0, hx1, hy0, hh = 110, W - 110, 134, 396
+    draw.rounded_rectangle([hx0, hy0, hx1, hy0 + hh], radius=22,
+                           fill=(20, 28, 50), outline=room_colour, width=4)
+    draw.text(((hx0 + hx1) // 2, hy0 + 20), "WHERE THE AIs LAND",
+              font=load_font(30, bold=True), fill=(190, 198, 220), anchor="mt")
+
+    headline = room if room else "NO CLEAR ANSWER"
+    hf = _fit_font(draw, headline, hx1 - hx0 - 120, 116, floor=44)
+    draw.text(((hx0 + hx1) // 2, hy0 + 64), headline, font=hf,
+              fill=room_colour, anchor="mt")
+
+    if room:
+        detail = (f"{max(after['lean_a'], after['lean_b'])} of the {stated} AIs "
+                  f"finished on this side")
+    else:
+        detail = f"the {stated} AIs finished evenly split, with no side ahead"
+    draw.text(((hx0 + hx1) // 2, hy0 + 196), detail, font=load_font(32),
+              fill=(255, 255, 255), anchor="mt")
+
+    # Before and after, drawn as the same bar twice so the shift is visible
+    # without anyone having to compare two numbers in their head.
+    bar_x = hx0 + 230
+    bar_w = hx1 - 60 - bar_x
+    fnum = load_font(24, bold=True)
+    draw.text((bar_x, hy0 + 250), roles["side_a_label"][:22], font=fs, fill=A_COL)
+    draw.text((bar_x + bar_w, hy0 + 250), roles["side_b_label"][:22], font=fs,
+              fill=B_COL, anchor="rt")
+    for i, (tag, poll) in enumerate((("BEFORE", before), ("AFTER", after))):
+        y = hy0 + 284 + i * 56
+        draw.text((bar_x - 24, y + 20), tag, font=load_font(24, bold=True),
+                  fill=(190, 198, 220), anchor="rm")
+        _draw_split_bar(draw, bar_x, y, bar_w, 40,
+                        [poll["lean_a"], poll["undecided"], poll["lean_b"]],
+                        [A_COL, N_COL, B_COL], fnum)
+
+    # ---- Everything below is explicitly a footnote to the line above.
+    draw.text((W // 2, 548), "TWO SIDE NOTES. NEITHER OF THEM IS THE ANSWER.",
+              font=load_font(24, bold=True), fill=(150, 158, 180), anchor="mt")
+
+    if moved == 0:
         persuader, p_colour = "NOBODY", (200, 200, 200)
         p_detail = "not one AI changed its mind"
-        p_sub = "the room finished where it started"
     elif movement["toward_a"] > movement["toward_b"]:
-        persuader, p_colour = roles["side_a_label"], (0, 255, 204)
-        p_detail = f"{movement['toward_a']} of {asked} AIs moved their way"
-        p_sub = ("and it won them the room" if room == roles["side_a_label"]
-                 else f"but the room still says {room}")
+        persuader, p_colour = roles["side_a_label"], A_COL
+        p_detail = f"{movement['toward_a']} of {stated} AIs moved their way"
     elif movement["toward_b"] > movement["toward_a"]:
-        persuader, p_colour = roles["side_b_label"], (255, 120, 255)
-        p_detail = f"{movement['toward_b']} of {asked} AIs moved their way"
-        p_sub = ("and it won them the room" if room == roles["side_b_label"]
-                 else f"but the room still says {room}")
+        persuader, p_colour = roles["side_b_label"], B_COL
+        p_detail = f"{movement['toward_b']} of {stated} AIs moved their way"
     else:
-        persuader, p_colour = "SPLIT", (200, 200, 200)
+        persuader, p_colour = "NEITHER", (200, 200, 200)
         p_detail = "they moved both ways in equal numbers"
-        p_sub = f"the room still says {room}"
 
     if mean_a is None or mean_b is None:
         arguer, a_colour = "NOT SCORED", (150, 150, 150)
         a_detail = "no juror gave a usable answer"
-        a_sub = "nothing was invented to fill the gap"
+    elif votes["A"] > votes["B"]:
+        arguer, a_colour = roles["side_a_label"], A_COL
+        a_detail = f"the jury went {votes['A']} to {votes['B']}"
+    elif votes["B"] > votes["A"]:
+        arguer, a_colour = roles["side_b_label"], B_COL
+        a_detail = f"the jury went {votes['B']} to {votes['A']}"
     else:
-        if votes["A"] > votes["B"]:
-            arguer, a_colour = roles["side_a_label"], (0, 255, 204)
-        elif votes["B"] > votes["A"]:
-            arguer, a_colour = roles["side_b_label"], (255, 120, 255)
-        else:
-            arguer, a_colour = "TIED", (200, 200, 200)
-        a_detail = (f"jury split it {votes['A']}-{votes['B']}"
-                    + (f", {votes['TIE']} draw" if votes["TIE"] else "")
-                    + (f", {votes['UNSTABLE']} thrown out" if votes["UNSTABLE"] else ""))
-        a_sub = f"average {mean_a:.1f} vs {mean_b:.1f} out of 100"
+        arguer, a_colour = "TIED", (200, 200, 200)
+        a_detail = f"the jury split it {votes['A']} all"
+    if mean_a is not None and (votes["TIE"] or votes["UNSTABLE"]):
+        a_detail += (f", {votes['TIE']} draw" if votes["TIE"] else "")
+        a_detail += (f", {votes['UNSTABLE']} thrown out" if votes["UNSTABLE"] else "")
 
-    panels = [
-        ("WHERE THE AIs LAND", room, room_colour, room_detail,
-         "this is the answer they give"),
-        ("SHIFTED OPINION MOST", persuader, p_colour, p_detail, p_sub),
-        ("ARGUED BETTER", arguer, a_colour, a_detail, a_sub),
+    notes = [
+        ("SHIFTED THE MOST MINDS", persuader, p_colour, p_detail),
+        ("MARKED BETTER ON THE ARGUING", arguer, a_colour, a_detail),
     ]
-    box_y, box_h = 210, 300
-    gap = 30
-    box_w = (W - 240 - gap * (len(panels) - 1)) // len(panels)
-    fb_small = load_font(38, bold=True)
-    for i, (title, name, colour, detail, sub) in enumerate(panels):
-        x0 = 120 + i * (box_w + gap)
-        x1 = x0 + box_w
-        cx = (x0 + x1) // 2
-        draw.rounded_rectangle([x0, box_y, x1, box_y + box_h], radius=18,
-                               fill=(20, 28, 50), outline=(255, 255, 255), width=2)
-        draw.text((cx, box_y + 26), title, font=fh, fill=(255, 255, 255), anchor="mt")
-        label = name if len(name) <= 16 else name[:15] + ".."
-        draw.text((cx, box_y + 92), label, font=fb_small, fill=colour, anchor="mt")
-        draw.text((cx, box_y + 168), detail[:40], font=fs, fill=(220, 220, 220), anchor="mt")
-        draw.text((cx, box_y + 206), sub[:40], font=fs, fill=(160, 160, 160), anchor="mt")
+    ny, nh, gap = 588, 190, 40
+    nw = (hx1 - hx0 - gap) // 2
+    for i, (title, name, colour, detail) in enumerate(notes):
+        x0 = hx0 + i * (nw + gap)
+        cx = x0 + nw // 2
+        draw.rounded_rectangle([x0, ny, x0 + nw, ny + nh], radius=16,
+                               fill=(17, 23, 42), outline=(90, 98, 120), width=2)
+        draw.text((cx, ny + 20), title, font=load_font(26, bold=True),
+                  fill=(190, 198, 220), anchor="mt")
+        nf = _fit_font(draw, name, nw - 60, 52, floor=26)
+        draw.text((cx, ny + 66), name, font=nf, fill=colour, anchor="mt")
+        draw.text((cx, ny + 138), detail[:52], font=fs, fill=(200, 200, 200),
+                  anchor="mt")
 
-    y = box_y + box_h + 60
-    draw.line([(120, y), (W - 120, y)], fill=(255, 255, 255), width=2)
-    y += 26
+    y = ny + nh + 30
+    draw.line([(hx0, y), (hx1, y)], fill=(255, 255, 255), width=2)
+    y += 18
     for line in [
-        "The jury never knew which side was which. Every round was marked twice, both "
-        "ways round, and any juror who flip flopped was thrown out.",
-        "Changed minds means we asked each AI what it thought before the debate and "
-        "again after. It shows who was convincing, not who is right.",
+        "Where they land is what the AIs think after hearing both sides. It is not proof "
+        "of who is right.",
+        "The jury never knew which side was which. Every round was marked twice, both ways "
+        "round, and any juror who flip flopped was thrown out.",
     ]:
-        draw.text((W // 2, y), line, font=fs, fill=(190, 190, 190), anchor="mt")
-        y += 34
+        draw.text((W // 2, y), line, font=load_font(22), fill=(175, 175, 175),
+                  anchor="mt")
+        y += 30
     img.save(path)
 
 
@@ -3366,13 +3448,13 @@ def build_intro(topic, jc, roles):
 
 
 def build_outro(mean_a, mean_b, votes_a, votes_b, votes_t, votes_u, roles,
-                swing=None, movement=None, after=None):
-    """Closing read: who changed minds, then who argued better, then the sign off.
+                swing=None, movement=None, after=None, before=None):
+    """Closing read. Where the room landed is the answer; the rest is footnote.
 
-    These are kept apart deliberately. Changing minds is measured by asking the
-    models their own position before and after, which is what persuasion
-    actually means. Arguing better is the blind panel scoring the transcript.
-    They can disagree, and when they do that is worth saying out loud.
+    The three results used to be read out as a flat list, which left people
+    asking which of the three was the verdict. Only the first one answers the
+    question. Who shifted opinion and who was marked better on the arguing are
+    both said afterwards, and said as side notes, because they are.
     """
     counted = votes_a + votes_b + votes_t
     total = counted + votes_u
@@ -3392,62 +3474,71 @@ def build_outro(mean_a, mean_b, votes_a, votes_b, votes_t, votes_u, roles,
             persuader = roles["side_b_label"]
 
     lines = []
-    # Where the room ended is the headline. Which way it moved is the second
-    # sentence. Leading with movement alone made a side that gained a little
-    # ground sound like it had won, when the room was still against it.
     room = None
     if after and after.get("stated"):
+        stated = after["stated"]
         if after["lean_a"] > after["lean_b"]:
             room = roles["side_a_label"]
         elif after["lean_b"] > after["lean_a"]:
             room = roles["side_b_label"]
         winners = max(after["lean_a"], after["lean_b"])
         if room:
-            lines.append(f"So where do the AIs actually land? {room}. "
-                         f"{winners} of the {after['asked']} we asked finished there.")
+            lines.append(f"So here is the answer. After hearing both sides, the AIs land "
+                         f"on {room}. {winners} of the {stated} of them finished there.")
         else:
-            lines.append("So where do the AIs actually land? Split right down the "
-                         "middle, with no side ahead.")
+            lines.append("So here is the answer, and it is that there isn't one. The AIs "
+                         "finished split down the middle, with neither side ahead.")
+        # Where that same side started, so the headline shows its own working.
+        # Saying both counts side by side sounded like a scoreline and left
+        # people working out which number belonged to which side.
+        if room and before and before.get("stated"):
+            was = (before["lean_a"] if room == roles["side_a_label"]
+                   else before["lean_b"])
+            if winners > was:
+                lines.append(f"That is up from {was} before a word was said.")
+            elif winners < was:
+                lines.append(f"That is down from {was} before the debate, so they lost "
+                             f"ground and still finished ahead.")
+            else:
+                lines.append("That is exactly where they started, so the debate moved "
+                             "nobody onto that side or off it.")
+
+    lines.append("Two side notes, and neither of them changes that.")
 
     if persuader and movement:
         their_way = (movement["toward_a"] if persuader == roles["side_a_label"]
                      else movement["toward_b"])
         if room and persuader != room:
-            lines.append(f"{persuader} did the most to shift opinion, pulling "
-                         f"{their_way} of them their way, but it was not enough to "
-                         f"win the room.")
-        elif room:
-            lines.append(f"And {persuader} is the side that shifted it, bringing "
-                         f"{their_way} of them round.")
+            lines.append(f"First, {persuader} shifted the most minds, pulling "
+                         f"{their_way} of them across, but not enough to take the room.")
         else:
-            lines.append(f"{persuader} shifted the most opinion, pulling "
-                         f"{their_way} of them their way.")
+            lines.append(f"First, {persuader} shifted the most minds, bringing "
+                         f"{their_way} of them round.")
     elif movement is not None:
-        lines.append("Nobody changed their mind at all, so neither side shifted "
-                     "anything.")
+        lines.append("First, nobody shifted anybody. Not one of them changed its mind.")
 
     if mean_a is None or mean_b is None:
-        lines.append("On the arguing itself, we have no marks at all. Not one juror gave "
-                     "us a usable answer, and we would rather leave it blank than invent "
-                     "a number.")
+        lines.append("Second, on the arguing itself we have no marks at all. Not one juror "
+                     "gave us a usable answer, and we would rather leave it blank than "
+                     "invent a number.")
         arguer = None
     elif arguer:
         # Report the count of jurors, not the two averages, which are often a
         # point apart and read as a tie when rounded.
         won = votes_a if arguer == roles["side_a_label"] else votes_b
         lost = votes_b if arguer == roles["side_a_label"] else votes_a
-        lines.append(f"As for who argued it better, the jury went {won} to {lost} "
-                     f"for {arguer}.")
+        lines.append(f"And second, the jury marked {arguer} the better arguer, {won} to "
+                     f"{lost}. That is about how it was argued, not about who is right.")
     else:
-        lines.append("As for who argued it better, the jury could not split them at all.")
+        lines.append("And second, on the arguing itself, the jury could not split them.")
 
     if persuader and arguer and persuader != arguer:
         lines.append(f"Which is the interesting bit. {arguer} argued it better, and "
-                     f"{persuader} is the side that pulled people across.")
+                     f"{persuader} is the side that actually pulled people across.")
 
-    if votes_u and counted <= total / 2:
+    if mean_a is not None and votes_u and counted <= total / 2:
         lines.append(f"Only {counted} of our {total} markings held up when we ran them "
-                     f"the other way round, so take the scores with a pinch of salt.")
+                     f"the other way round, so take that second one with a pinch of salt.")
 
     lines.append(OUTRO_SIGNOFF)
     return " ".join(lines)
@@ -3459,6 +3550,22 @@ def build_method_note(topic, roles, debaters, judges, poll_roster,
     labs = sorted({provider_from_model(m) for m in poll_roster})
     swing = sum_after["mean"] - sum_before["mean"]
     moved = movement["toward_a"] + movement["toward_b"]
+
+    # The headline, worked out once so the description opens on the same
+    # answer the video does.
+    if sum_after["lean_a"] > sum_after["lean_b"]:
+        landed = (f"WHERE THE AIs LANDED: {roles['side_a_label']} - "
+                  f"{sum_after['lean_a']} of the {sum_after['stated']} that answered "
+                  f"finished on that side, against {sum_before['lean_a']} before the "
+                  f"debate.")
+    elif sum_after["lean_b"] > sum_after["lean_a"]:
+        landed = (f"WHERE THE AIs LANDED: {roles['side_b_label']} - "
+                  f"{sum_after['lean_b']} of the {sum_after['stated']} that answered "
+                  f"finished on that side, against {sum_before['lean_b']} before the "
+                  f"debate.")
+    else:
+        landed = ("WHERE THE AIs LANDED: no clear answer. They finished evenly split, "
+                  "with neither side ahead.")
     lines = [
         f"QUESTION: {topic}",
         "",
@@ -3471,6 +3578,12 @@ def build_method_note(topic, roles, debaters, judges, poll_roster,
         f"{len(labs)} labs ({', '.join(labs)}).",
         "",
         "RESULT",
+        # The headline first, in the same words the video uses, so the
+        # description does not read as three competing results either.
+        landed,
+        "Everything below is detail. The two numbers that follow, who shifted the most "
+        "opinion and who the jury marked as the better arguer, are not the answer.",
+        "",
         f"Before the debate the panel sat at {sum_before['mean']:+.2f} on a scale of -5 to "
         f"+5 ({sum_before['lean_a']} leaning {roles['side_a_label']}, "
         f"{sum_before['lean_b']} leaning {roles['side_b_label']}, "
@@ -4057,7 +4170,8 @@ def run_debate_pipeline():
     if scored_rounds < ROUNDS:
         print(f"\n{ROUNDS - scored_rounds} of {ROUNDS} rounds went unscored.")
     outro_text = build_outro(mean_a, mean_b, votes_a, votes_b, votes_t, votes_u, roles,
-                             swing=swing, movement=movement, after=sum_after)
+                             swing=swing, movement=movement, after=sum_after,
+                             before=sum_before)
     specs.append(prepare_verdict_segment(
         outro_text,
         (topic, roles, sum_before, sum_after, movement, votes, mean_a, mean_b)))
