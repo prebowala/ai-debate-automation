@@ -2665,15 +2665,15 @@ def generate_verdict_board(path, topic, roles, before, after, movement, votes,
         room_colour = (235, 235, 235)
 
     # ---- The headline: one winner, across the whole card.
-    hx0, hx1, hy0, hh = 110, W - 110, 134, 396
+    hx0, hx1, hy0, hh = 110, W - 110, 130, 470
     draw.rounded_rectangle([hx0, hy0, hx1, hy0 + hh], radius=22,
                            fill=(20, 28, 50), outline=room_colour, width=4)
-    draw.text(((hx0 + hx1) // 2, hy0 + 20), "WINNER",
+    draw.text(((hx0 + hx1) // 2, hy0 + 20), "WINNER" if room else "RESULT",
               font=load_font(30, bold=True), fill=(255, 215, 0), anchor="mt")
 
     headline = room if room else "NO WINNER"
-    hf = _fit_font(draw, headline, hx1 - hx0 - 120, 116, floor=44)
-    draw.text(((hx0 + hx1) // 2, hy0 + 64), headline, font=hf,
+    hf = _fit_font(draw, headline, hx1 - hx0 - 120, 132, floor=44)
+    draw.text(((hx0 + hx1) // 2, hy0 + 62), headline, font=hf,
               fill=room_colour, anchor="mt")
 
     if room:
@@ -2681,7 +2681,7 @@ def generate_verdict_board(path, topic, roles, before, after, movement, votes,
                   f"finished on this side")
     else:
         detail = f"the {stated} AIs finished evenly split, with neither side ahead"
-    draw.text(((hx0 + hx1) // 2, hy0 + 196), detail, font=load_font(32),
+    draw.text(((hx0 + hx1) // 2, hy0 + 226), detail, font=load_font(34),
               fill=(255, 255, 255), anchor="mt")
 
     # Before and after, drawn as the same bar twice so the shift is visible
@@ -2689,70 +2689,59 @@ def generate_verdict_board(path, topic, roles, before, after, movement, votes,
     bar_x = hx0 + 230
     bar_w = hx1 - 60 - bar_x
     fnum = load_font(24, bold=True)
-    draw.text((bar_x, hy0 + 250), roles["side_a_label"][:22], font=fs, fill=A_COL)
-    draw.text((bar_x + bar_w, hy0 + 250), roles["side_b_label"][:22], font=fs,
+    draw.text((bar_x, hy0 + 288), roles["side_a_label"][:22], font=fs, fill=A_COL)
+    draw.text((bar_x + bar_w, hy0 + 288), roles["side_b_label"][:22], font=fs,
               fill=B_COL, anchor="rt")
     for i, (tag, poll) in enumerate((("BEFORE", before), ("AFTER", after))):
-        y = hy0 + 284 + i * 56
-        draw.text((bar_x - 24, y + 20), tag, font=load_font(24, bold=True),
+        y = hy0 + 322 + i * 62
+        draw.text((bar_x - 24, y + 22), tag, font=load_font(24, bold=True),
                   fill=(190, 198, 220), anchor="rm")
-        _draw_split_bar(draw, bar_x, y, bar_w, 40,
+        _draw_split_bar(draw, bar_x, y, bar_w, 44,
                         [poll["lean_a"], poll["undecided"], poll["lean_b"]],
                         [A_COL, N_COL, B_COL], fnum)
 
-    # ---- Everything below is explicitly a footnote to the line above.
-    caption = ("A CLEAN SWEEP - THE WINNER TOOK BOTH OF THESE AS WELL" if p["sweep"]
-               else "TWO SIDE NOTES. NEITHER OF THEM DECIDES THE WINNER.")
-    draw.text((W // 2, 548), caption, font=load_font(24, bold=True),
-              fill=(255, 215, 0) if p["sweep"] else (150, 158, 180), anchor="mt")
-
-    side_colour = {roles["side_a_label"]: A_COL, roles["side_b_label"]: B_COL}
+    # ---- Everything below is a plain line of text, in one colour.
+    # These used to be two coloured boxes with a side's name in each, which
+    # read as two more verdicts competing with the one above. They are
+    # sentences now, in the same grey as the rest of the small print.
     if p["moved"] == 0:
-        persuader, p_colour = "NOBODY", (200, 200, 200)
-        p_detail = "not one AI changed its mind"
+        shifted = "Nobody shifted anybody: not one AI changed its mind."
     elif p["persuader"]:
-        persuader = p["persuader"]
-        p_colour = side_colour[persuader]
-        p_detail = f"{p['persuader_count']} of {stated} AIs moved their way"
+        shifted = (f"Shifted the most minds: {p['persuader']}, with "
+                   f"{p['persuader_count']} of the {stated} moving their way.")
     else:
-        persuader, p_colour = "NEITHER", (200, 200, 200)
-        p_detail = "they moved both ways in equal numbers"
+        shifted = ("Minds moved both ways in equal numbers, so neither side "
+                   "shifted more than the other.")
 
     if not p["scored"]:
-        arguer, a_colour = "NOT SCORED", (150, 150, 150)
-        a_detail = "no juror gave a usable answer"
+        marked = ("The arguing itself went unmarked: no juror returned a usable score, "
+                  "and none was invented.")
     elif p["arguer"]:
-        arguer = p["arguer"]
-        a_colour = side_colour[arguer]
-        won = max(votes["A"], votes["B"])
-        lost = min(votes["A"], votes["B"])
-        a_detail = f"the jury went {won} to {lost}"
+        won, lost = max(votes["A"], votes["B"]), min(votes["A"], votes["B"])
+        extra = ""
+        if votes["TIE"]:
+            extra += f", {votes['TIE']} calling it a draw"
+        if votes["UNSTABLE"]:
+            extra += f", {votes['UNSTABLE']} thrown out"
+        marked = (f"Marked the better arguer: {p['arguer']}, the jury going {won} to "
+                  f"{lost}{extra}.")
     else:
-        arguer, a_colour = "TIED", (200, 200, 200)
-        a_detail = f"the jury split it {votes['A']} all"
-    if p["scored"] and (votes["TIE"] or votes["UNSTABLE"]):
-        a_detail += (f", {votes['TIE']} draw" if votes["TIE"] else "")
-        a_detail += (f", {votes['UNSTABLE']} thrown out" if votes["UNSTABLE"] else "")
+        marked = f"On the arguing itself the jury could not split them, {votes['A']} all."
 
-    notes = [
-        ("SHIFTED THE MOST MINDS", persuader, p_colour, p_detail),
-        ("MARKED BETTER ON THE ARGUING", arguer, a_colour, a_detail),
-    ]
-    ny, nh, gap = 588, 190, 40
-    nw = (hx1 - hx0 - gap) // 2
-    for i, (title, name, colour, detail) in enumerate(notes):
-        x0 = hx0 + i * (nw + gap)
-        cx = x0 + nw // 2
-        draw.rounded_rectangle([x0, ny, x0 + nw, ny + nh], radius=16,
-                               fill=(17, 23, 42), outline=(90, 98, 120), width=2)
-        draw.text((cx, ny + 20), title, font=load_font(26, bold=True),
-                  fill=(190, 198, 220), anchor="mt")
-        nf = _fit_font(draw, name, nw - 60, 52, floor=26)
-        draw.text((cx, ny + 66), name, font=nf, fill=colour, anchor="mt")
-        draw.text((cx, ny + 138), detail[:52], font=fs, fill=(200, 200, 200),
-                  anchor="mt")
+    if not room:
+        closer = "Neither of those would have settled it either."
+    elif p["sweep"]:
+        closer = "Both of those went the winner's way as well, so it is a clean sweep."
+    else:
+        closer = "Neither of those decides the winner."
 
-    y = ny + nh + 30
+    y = 640
+    for line in (shifted, marked, closer):
+        lf = _fit_font(draw, line, hx1 - hx0, 28, floor=19, bold=False)
+        draw.text((W // 2, y), line, font=lf, fill=(200, 205, 215), anchor="mt")
+        y += 40
+
+    y += 14
     draw.line([(hx0, y), (hx1, y)], fill=(255, 255, 255), width=2)
     y += 18
     for line in [
