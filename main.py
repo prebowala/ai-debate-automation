@@ -2074,6 +2074,52 @@ def ass_escape(t):
     return t.replace("\\", "\\\\").replace("{", r"\{").replace("}", r"\}")
 
 
+def speech_end_seconds(path):
+    """Where the voice actually stops, ignoring the silence the file ends on.
+
+    The synthesised audio ends with a tail of silence that nothing is spoken
+    over. Comparing word timings against the full file duration therefore hides
+    real drift: a segment whose subtitles run a second late can still finish
+    inside the file, so it looks correct and is left alone. The longer the
+    segment, the more drift survives that check, which is why the moderator's
+    intro, the longest single read in the video, drifted the most.
+    """
+    try:
+        r = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-nostats", "-i", path,
+             "-af", "silencedetect=noise=-45dB:d=0.30", "-f", "null", "-"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=60)
+    except Exception:
+        return None
+    total = get_audio_duration(path)
+    if not total:
+        return None
+    # The last stretch of silence is the tail if it reaches the end of the
+    # file, whether ffmpeg leaves it open or closes it off at EOF. A silence
+    # that closes early is just a pause between sentences.
+    last_start, last_end = None, None
+    for line in r.stderr.splitlines():
+        if "silence_start:" in line:
+            try:
+                last_start = float(line.split("silence_start:")[1].strip().split()[0])
+                last_end = None
+            except (ValueError, IndexError):
+                pass
+        elif "silence_end:" in line:
+            try:
+                last_end = float(line.split("silence_end:")[1].strip().split()[0])
+            except (ValueError, IndexError):
+                last_end = total
+    if last_start is None:
+        return total
+    if last_end is not None and last_end < total - 0.15:
+        return total
+    # Ignore an implausible answer rather than dragging every line forward.
+    if last_start < total * 0.5:
+        return total
+    return last_start
+
+
 def generate_subtitles(words, fn, scorecard=False, audio_file=None, full_text=None):
     header = ("[Script Info]\nScriptType: v4.00+\nPlayResX: 1920\nPlayResY: 1080\nWrapStyle: 0\n\n"
               "[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, "
@@ -2102,16 +2148,20 @@ def generate_subtitles(words, fn, scorecard=False, audio_file=None, full_text=No
         try:
             actual = get_audio_duration(audio_file)
             if actual > 1 and words:
-                est = words[-1].get("end", actual)
-                # Only pull timings in when they overrun the audio. Stretching
-                # them to fill it was the old behaviour and it made every
-                # subtitle progressively late, because the file ends with
-                # silence that no word is spoken over.
-                if est > actual + 0.25 and est > 0:
-                    scale = actual / est
-                    for w in words:
-                        w["start"] *= scale
-                        w["end"] *= scale
+                # Where the voice stops, not where the file stops. Stretching
+                # timings to fill the whole file was the old behaviour and it
+                # made every subtitle progressively late; measuring against the
+                # file's full length instead let real drift through untouched.
+                spoken = speech_end_seconds(audio_file) or actual
+                est = words[-1].get("end", spoken)
+                if est > spoken + 0.15 and est > 0:
+                    scale = spoken / est
+                    # A wild correction means the measurement is wrong, not that
+                    # the timings are. Leave them alone rather than wreck them.
+                    if scale >= 0.80:
+                        for w in words:
+                            w["start"] *= scale
+                            w["end"] *= scale
         except Exception:
             pass
 
@@ -2121,13 +2171,13 @@ def generate_subtitles(words, fn, scorecard=False, audio_file=None, full_text=No
         w["start"] = max(0.0, w["start"] - SUBTITLE_LEAD)
         w["end"] = max(w["start"] + 0.2, w["end"] - SUBTITLE_LEAD * 0.5)
 
+    lines = []
+
     def emit(chunk, end):
-        s = chunk[0]["start"]
         per_line = 8 if scorecard else 10
         txt = "\\N".join([" ".join([ass_escape(c["text"]) for c in chunk[i:i + per_line]])
                           for i in range(0, len(chunk), per_line)][:4])
-        events.append(f"Dialogue: 0,{format_ass_time(s)},{format_ass_time(end)},{style},,0,0,0,,"
-                      f"{{\\an2\\pos(960,{pos_y})\\q2\\fad(120,120)}}{txt}")
+        lines.append([chunk[0]["start"], end, txt])
 
     chunk = []
     last_end = 0
@@ -2144,6 +2194,21 @@ def generate_subtitles(words, fn, scorecard=False, audio_file=None, full_text=No
             last_end = w["end"]
     if chunk:
         emit(chunk, last_end)
+
+    # A line that arrives exactly as its first word is spoken reads as late,
+    # because nobody can read it until after they have heard it. Each line is
+    # pulled back into the pause in front of it instead, without ever running
+    # into the line before.
+    prev_end = 0.0
+    for line in lines:
+        line[0] = max(prev_end + 0.05, line[0] - SUBTITLE_GAP_LEAD)
+        line[1] = max(line[1], line[0] + 0.4)
+        prev_end = line[1]
+
+    for start, end, txt in lines:
+        events.append(f"Dialogue: 0,{format_ass_time(start)},{format_ass_time(end)},"
+                      f"{style},,0,0,0,,"
+                      f"{{\\an2\\pos(960,{pos_y})\\q2\\fad(120,120)}}{txt}")
     open(fn, "w", encoding="utf-8").write(header + "\n".join(events) + "\n")
 
 
@@ -2822,6 +2887,10 @@ EMOJI_H = 180
 EMOJI_HOLD_SECONDS = 3.2
 # Subtitles appear this far ahead of the word being spoken.
 SUBTITLE_LEAD = 0.12
+# A line is also pulled back into the pause in front of it by up to this much,
+# so it is already on screen when the sentence starts rather than arriving with
+# it. It never runs into the line before.
+SUBTITLE_GAP_LEAD = 0.6
 
 # Built around the words people actually say in an argument, not just topic
 # nouns, because a list of topic nouns leaves most of a spoken turn with
