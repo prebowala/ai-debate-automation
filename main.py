@@ -46,7 +46,7 @@ MIN_PANEL_SIZE = 2
 
 # Estimates used to reserve room for the non-debate segments while pacing.
 EST_INTRO_SEC = 30.0
-EST_OUTRO_SEC = 38.0
+EST_OUTRO_SEC = 50.0
 EST_SCORECARD_SEC = 16.0
 EST_COMMENTARY_SEC = 22.0
 EST_POLL_SEC = 40.0        # each of the opening and closing poll segments
@@ -271,8 +271,9 @@ INTRO_OPENING = (
 )
 INTRO_RULES = (
     "The two debaters swap sides halfway through, so neither one gets the easier job. And "
-    "before a word is said, we ask the jury what they already think, so at the end we can "
-    "see who changed their mind. Let's get into it."
+    "before a word is said, we ask a separate room of AIs, one from each of the big labs, "
+    "where they already stand, so at the end we can see who changed their mind. Let's get "
+    "into it."
 )
 OUTRO_SIGNOFF = (
     "Every round is marked twice, once each way round, and any juror who flip flops is "
@@ -451,7 +452,10 @@ def cleanup_cache():
 
 
 NUMBER_WORDS = {1: "One", 2: "Two", 3: "Three", 4: "Four", 5: "Five",
-                6: "Six", 7: "Seven", 8: "Eight", 9: "Nine", 10: "Ten"}
+                6: "Six", 7: "Seven", 8: "Eight", 9: "Nine", 10: "Ten",
+                11: "Eleven", 12: "Twelve", 13: "Thirteen", 14: "Fourteen",
+                15: "Fifteen", 16: "Sixteen", 17: "Seventeen", 18: "Eighteen",
+                19: "Nineteen", 20: "Twenty"}
 
 
 def number_word(n):
@@ -2566,11 +2570,11 @@ def _draw_split_bar(draw, x, y, w, h, counts, colours, font):
 
 def generate_verdict_board(path, topic, roles, before, after, movement, votes,
                            mean_a, mean_b):
-    """The closing card. Where the AIs land is the answer, so it gets the card.
+    """The closing card. One winner, named once, in the largest type on screen.
 
-    Everything else on this card is a footnote to that one line. Giving the
-    three results equal boxes, which is what this used to do, read as three
-    competing winners and left people asking which number was the answer.
+    Everything else here is a footnote to that. Giving the three results equal
+    boxes, which is what this used to do, read as three competing winners and
+    left people asking which number was the answer.
     """
     W, H = VIDEO_W, VIDEO_H
     A_COL, B_COL, N_COL = (0, 255, 204), (255, 120, 255), (150, 158, 180)
@@ -2585,36 +2589,33 @@ def generate_verdict_board(path, topic, roles, before, after, movement, votes,
     draw.text((W // 2, 84), topic[:92], font=load_font(26), fill=(235, 235, 235),
               anchor="mt")
 
-    moved = movement["toward_a"] + movement["toward_b"]
-    asked = after.get("asked", moved + movement["unchanged"])
-    stated = after.get("stated", asked)
-
-    # Where the room finished, which is a different question from which way it
-    # moved. A side can gain ground and still be a long way behind.
-    if after["lean_a"] > after["lean_b"]:
-        room, room_colour = roles["side_a_label"], A_COL
-    elif after["lean_b"] > after["lean_a"]:
-        room, room_colour = roles["side_b_label"], B_COL
+    p = verdict_parts(roles, before, after, movement, votes, mean_a, mean_b)
+    room = p["winner"]
+    stated = p["stated"]
+    if room == roles["side_a_label"]:
+        room_colour = A_COL
+    elif room == roles["side_b_label"]:
+        room_colour = B_COL
     else:
-        room, room_colour = None, (235, 235, 235)
+        room_colour = (235, 235, 235)
 
-    # ---- The headline: one answer, across the whole card.
+    # ---- The headline: one winner, across the whole card.
     hx0, hx1, hy0, hh = 110, W - 110, 134, 396
     draw.rounded_rectangle([hx0, hy0, hx1, hy0 + hh], radius=22,
                            fill=(20, 28, 50), outline=room_colour, width=4)
-    draw.text(((hx0 + hx1) // 2, hy0 + 20), "WHERE THE AIs LAND",
-              font=load_font(30, bold=True), fill=(190, 198, 220), anchor="mt")
+    draw.text(((hx0 + hx1) // 2, hy0 + 20), "WINNER",
+              font=load_font(30, bold=True), fill=(255, 215, 0), anchor="mt")
 
-    headline = room if room else "NO CLEAR ANSWER"
+    headline = room if room else "NO WINNER"
     hf = _fit_font(draw, headline, hx1 - hx0 - 120, 116, floor=44)
     draw.text(((hx0 + hx1) // 2, hy0 + 64), headline, font=hf,
               fill=room_colour, anchor="mt")
 
     if room:
-        detail = (f"{max(after['lean_a'], after['lean_b'])} of the {stated} AIs "
+        detail = (f"where the AIs landed: {p['winner_count']} of the {stated} "
                   f"finished on this side")
     else:
-        detail = f"the {stated} AIs finished evenly split, with no side ahead"
+        detail = f"the {stated} AIs finished evenly split, with neither side ahead"
     draw.text(((hx0 + hx1) // 2, hy0 + 196), detail, font=load_font(32),
               fill=(255, 255, 255), anchor="mt")
 
@@ -2635,35 +2636,36 @@ def generate_verdict_board(path, topic, roles, before, after, movement, votes,
                         [A_COL, N_COL, B_COL], fnum)
 
     # ---- Everything below is explicitly a footnote to the line above.
-    draw.text((W // 2, 548), "TWO SIDE NOTES. NEITHER OF THEM IS THE ANSWER.",
-              font=load_font(24, bold=True), fill=(150, 158, 180), anchor="mt")
+    caption = ("A CLEAN SWEEP - THE WINNER TOOK BOTH OF THESE AS WELL" if p["sweep"]
+               else "TWO SIDE NOTES. NEITHER OF THEM DECIDES THE WINNER.")
+    draw.text((W // 2, 548), caption, font=load_font(24, bold=True),
+              fill=(255, 215, 0) if p["sweep"] else (150, 158, 180), anchor="mt")
 
-    if moved == 0:
+    side_colour = {roles["side_a_label"]: A_COL, roles["side_b_label"]: B_COL}
+    if p["moved"] == 0:
         persuader, p_colour = "NOBODY", (200, 200, 200)
         p_detail = "not one AI changed its mind"
-    elif movement["toward_a"] > movement["toward_b"]:
-        persuader, p_colour = roles["side_a_label"], A_COL
-        p_detail = f"{movement['toward_a']} of {stated} AIs moved their way"
-    elif movement["toward_b"] > movement["toward_a"]:
-        persuader, p_colour = roles["side_b_label"], B_COL
-        p_detail = f"{movement['toward_b']} of {stated} AIs moved their way"
+    elif p["persuader"]:
+        persuader = p["persuader"]
+        p_colour = side_colour[persuader]
+        p_detail = f"{p['persuader_count']} of {stated} AIs moved their way"
     else:
         persuader, p_colour = "NEITHER", (200, 200, 200)
         p_detail = "they moved both ways in equal numbers"
 
-    if mean_a is None or mean_b is None:
+    if not p["scored"]:
         arguer, a_colour = "NOT SCORED", (150, 150, 150)
         a_detail = "no juror gave a usable answer"
-    elif votes["A"] > votes["B"]:
-        arguer, a_colour = roles["side_a_label"], A_COL
-        a_detail = f"the jury went {votes['A']} to {votes['B']}"
-    elif votes["B"] > votes["A"]:
-        arguer, a_colour = roles["side_b_label"], B_COL
-        a_detail = f"the jury went {votes['B']} to {votes['A']}"
+    elif p["arguer"]:
+        arguer = p["arguer"]
+        a_colour = side_colour[arguer]
+        won = max(votes["A"], votes["B"])
+        lost = min(votes["A"], votes["B"])
+        a_detail = f"the jury went {won} to {lost}"
     else:
         arguer, a_colour = "TIED", (200, 200, 200)
         a_detail = f"the jury split it {votes['A']} all"
-    if mean_a is not None and (votes["TIE"] or votes["UNSTABLE"]):
+    if p["scored"] and (votes["TIE"] or votes["UNSTABLE"]):
         a_detail += (f", {votes['TIE']} draw" if votes["TIE"] else "")
         a_detail += (f", {votes['UNSTABLE']} thrown out" if votes["UNSTABLE"] else "")
 
@@ -3413,8 +3415,10 @@ def prepare_scorecard(rn, res, ra, rb, cum_a, cum_b, va, vb, vt, vu, roles):
         "subs": f"score_subs_r{rn}.ass", "video": f"score_video_r{rn}.mp4",
     }
     generate_scoreboard(rn, res, ra, rb, cum_a, cum_b, spec["image"], roles, va, vb, vt, vu)
-    text = (f"Round {rn} is marked. Of the jurors who could pick a winner, "
-            f"{spoken_split(va, vb, vt, vu, roles)}. "
+    marked = len(res)
+    text = (f"Round {rn} is marked. {sentence_case(number_word(marked))} "
+            f"{'juror' if marked == 1 else 'jurors'} turned in a score. Of the ones who "
+            f"could pick a winner, {spoken_split(va, vb, vt, vu, roles)}. "
             f"Out of a hundred for the arguing, {roles['side_a_label']} got {ra:.0f} "
             f"and {roles['side_b_label']} got {rb:.0f}.")
     words = generate_audio(text, "MOD", spec["audio"])
@@ -3435,110 +3439,174 @@ def render_prepared(spec):
     return spec["video"]
 
 
-def build_intro(topic, jc, roles):
-    """Fixed branded opening, one variable line naming tonight's question."""
+def build_intro(topic, roles):
+    """Fixed branded opening, one variable line naming tonight's question.
+
+    No juror count here. The panel is picked before the debate, but a juror
+    that gets pulled in to write a turn is recused from marking that round,
+    and one that returns nothing usable is left off the scorecard, so the
+    number spoken here could not be guaranteed by the time the marks come in.
+    Each scorecard says how many actually marked that round instead.
+    """
     return (
         f"{INTRO_OPENING} "
         f"Tonight's question is this. {topic} "
         f"Arguing {roles['side_a_label']}, on my left. "
         f"Arguing {roles['side_b_label']}, on my right. "
-        f"{number_word(ROUNDS)} rounds, equal time, and {jc} AI jurors marking it. "
+        f"{number_word(ROUNDS)} rounds, equal time, and a jury of AIs marking every one "
+        f"of them. "
         f"{INTRO_RULES}"
     )
 
 
-def build_outro(mean_a, mean_b, votes_a, votes_b, votes_t, votes_u, roles,
-                swing=None, movement=None, after=None, before=None):
-    """Closing read. Where the room landed is the answer; the rest is footnote.
+def verdict_parts(roles, before, after, movement, votes, mean_a, mean_b):
+    """The one place that decides who won, so nothing can disagree with it.
 
-    The three results used to be read out as a flat list, which left people
-    asking which of the three was the verdict. Only the first one answers the
-    question. Who shifted opinion and who was marked better on the arguing are
-    both said afterwards, and said as side notes, because they are.
+    The winner is the side the AIs end up on after hearing both cases. That is
+    the question the video asks, so that is what winning means here. Who shifted
+    the most opinion and who was marked the better arguer are reported too, but
+    neither of them decides it.
     """
-    counted = votes_a + votes_b + votes_t
-    total = counted + votes_u
+    a, b = roles["side_a_label"], roles["side_b_label"]
 
-    if votes_a > votes_b:
-        arguer = roles["side_a_label"]
-    elif votes_b > votes_a:
-        arguer = roles["side_b_label"]
+    if after["lean_a"] > after["lean_b"]:
+        winner, w_now, w_was = a, after["lean_a"], (before or {}).get("lean_a")
+    elif after["lean_b"] > after["lean_a"]:
+        winner, w_now, w_was = b, after["lean_b"], (before or {}).get("lean_b")
+    else:
+        winner, w_now, w_was = None, max(after["lean_a"], after["lean_b"]), None
+
+    moved = movement["toward_a"] + movement["toward_b"]
+    if moved == 0:
+        persuader, p_count = None, 0
+    elif movement["toward_a"] > movement["toward_b"]:
+        persuader, p_count = a, movement["toward_a"]
+    elif movement["toward_b"] > movement["toward_a"]:
+        persuader, p_count = b, movement["toward_b"]
+    else:
+        persuader, p_count = None, movement["toward_a"]
+
+    scored = mean_a is not None and mean_b is not None
+    if not scored:
+        arguer = None
+    elif votes["A"] > votes["B"]:
+        arguer = a
+    elif votes["B"] > votes["A"]:
+        arguer = b
     else:
         arguer = None
 
-    persuader = None
-    if movement:
-        if movement["toward_a"] > movement["toward_b"]:
-            persuader = roles["side_a_label"]
-        elif movement["toward_b"] > movement["toward_a"]:
-            persuader = roles["side_b_label"]
+    return {
+        "winner": winner,
+        "winner_count": w_now,
+        "winner_before": w_was,
+        "stated": after.get("stated", 0),
+        "persuader": persuader,
+        "persuader_count": p_count,
+        "moved": moved,
+        "arguer": arguer,
+        "scored": scored,
+        "sweep": bool(winner and persuader == winner and arguer == winner),
+    }
+
+
+def build_outro(mean_a, mean_b, votes_a, votes_b, votes_t, votes_u, roles,
+                swing=None, movement=None, after=None, before=None):
+    """Closing read. Opens on the winner, closes on the winner.
+
+    The two other results are said in between and said as side notes, because
+    neither of them settles the question. Ending on them left the video with no
+    clear winner at the point people remember most, which is the last thing
+    said, so the last thing said is now the winner.
+    """
+    counted = votes_a + votes_b + votes_t
+    total = counted + votes_u
+    votes = {"A": votes_a, "B": votes_b, "TIE": votes_t, "UNSTABLE": votes_u}
+    p = verdict_parts(roles, before, after or {"lean_a": 0, "lean_b": 0, "stated": 0},
+                      movement or {"toward_a": 0, "toward_b": 0, "unchanged": 0},
+                      votes, mean_a, mean_b)
+    winner, persuader, arguer = p["winner"], p["persuader"], p["arguer"]
 
     lines = []
-    room = None
     if after and after.get("stated"):
-        stated = after["stated"]
-        if after["lean_a"] > after["lean_b"]:
-            room = roles["side_a_label"]
-        elif after["lean_b"] > after["lean_a"]:
-            room = roles["side_b_label"]
-        winners = max(after["lean_a"], after["lean_b"])
-        if room:
+        if winner:
             lines.append(f"So here is the answer. After hearing both sides, the AIs land "
-                         f"on {room}. {winners} of the {stated} of them finished there.")
+                         f"on {winner}. {p['winner_count']} of the {p['stated']} of them "
+                         f"finished there.")
         else:
             lines.append("So here is the answer, and it is that there isn't one. The AIs "
                          "finished split down the middle, with neither side ahead.")
         # Where that same side started, so the headline shows its own working.
         # Saying both counts side by side sounded like a scoreline and left
         # people working out which number belonged to which side.
-        if room and before and before.get("stated"):
-            was = (before["lean_a"] if room == roles["side_a_label"]
-                   else before["lean_b"])
-            if winners > was:
+        if winner and p["winner_before"] is not None:
+            was = p["winner_before"]
+            if p["winner_count"] > was:
                 lines.append(f"That is up from {was} before a word was said.")
-            elif winners < was:
+            elif p["winner_count"] < was:
                 lines.append(f"That is down from {was} before the debate, so they lost "
                              f"ground and still finished ahead.")
             else:
                 lines.append("That is exactly where they started, so the debate moved "
                              "nobody onto that side or off it.")
 
-    lines.append("Two side notes, and neither of them changes that.")
+    lines.append("Two side notes, and neither of them decides it.")
 
     if persuader and movement:
-        their_way = (movement["toward_a"] if persuader == roles["side_a_label"]
-                     else movement["toward_b"])
-        if room and persuader != room:
+        if winner and persuader != winner:
             lines.append(f"First, {persuader} shifted the most minds, pulling "
-                         f"{their_way} of them across, but not enough to take the room.")
+                         f"{p['persuader_count']} of them across, but not enough to take "
+                         f"the room.")
         else:
             lines.append(f"First, {persuader} shifted the most minds, bringing "
-                         f"{their_way} of them round.")
-    elif movement is not None:
+                         f"{p['persuader_count']} of them round.")
+    elif p["moved"] == 0:
         lines.append("First, nobody shifted anybody. Not one of them changed its mind.")
+    else:
+        lines.append(f"First, neither side shifted more minds than the other. "
+                     f"{sentence_case(number_word(p['moved']))} of them moved, and they "
+                     f"moved both ways.")
 
-    if mean_a is None or mean_b is None:
+    if not p["scored"]:
         lines.append("Second, on the arguing itself we have no marks at all. Not one juror "
                      "gave us a usable answer, and we would rather leave it blank than "
                      "invent a number.")
-        arguer = None
     elif arguer:
         # Report the count of jurors, not the two averages, which are often a
         # point apart and read as a tie when rounded.
         won = votes_a if arguer == roles["side_a_label"] else votes_b
         lost = votes_b if arguer == roles["side_a_label"] else votes_a
+        caveat = ("" if arguer != winner else
+                  " That is about how it was argued, not about who is right.")
         lines.append(f"And second, the jury marked {arguer} the better arguer, {won} to "
-                     f"{lost}. That is about how it was argued, not about who is right.")
+                     f"{lost}.{caveat}")
     else:
         lines.append("And second, on the arguing itself, the jury could not split them.")
 
-    if persuader and arguer and persuader != arguer:
-        lines.append(f"Which is the interesting bit. {arguer} argued it better, and "
-                     f"{persuader} is the side that actually pulled people across.")
-
-    if mean_a is not None and votes_u and counted <= total / 2:
+    if p["scored"] and votes_u and counted <= total / 2:
         lines.append(f"Only {counted} of our {total} markings held up when we ran them "
                      f"the other way round, so take that second one with a pinch of salt.")
+
+    # The last thing said is who won, because that is the thing people take
+    # away from the end of a video.
+    if not winner:
+        lines.append("So nobody wins this one. The AIs finished split, and neither side "
+                     "could take the room.")
+    elif p["sweep"]:
+        lines.append(f"So the winner tonight is {winner}, and it is a clean sweep. It took "
+                     f"the room, it shifted the most minds, and the jury marked it the "
+                     f"better arguer.")
+    elif arguer and arguer != winner:
+        lines.append(f"So the winner tonight is {winner}. {arguer} was marked the better "
+                     f"arguer, but arguing well and being believed are two different "
+                     f"things, and {winner} is where the AIs ended up.")
+    elif persuader and persuader != winner:
+        lines.append(f"So the winner tonight is {winner}. {persuader} pulled more of them "
+                     f"across, but not enough, and {winner} is still where the AIs ended "
+                     f"up.")
+    else:
+        lines.append(f"So the winner tonight is {winner}. That is where the AIs ended up "
+                     f"once they had heard both sides.")
 
     lines.append(OUTRO_SIGNOFF)
     return " ".join(lines)
@@ -3551,21 +3619,20 @@ def build_method_note(topic, roles, debaters, judges, poll_roster,
     swing = sum_after["mean"] - sum_before["mean"]
     moved = movement["toward_a"] + movement["toward_b"]
 
-    # The headline, worked out once so the description opens on the same
-    # answer the video does.
-    if sum_after["lean_a"] > sum_after["lean_b"]:
-        landed = (f"WHERE THE AIs LANDED: {roles['side_a_label']} - "
-                  f"{sum_after['lean_a']} of the {sum_after['stated']} that answered "
-                  f"finished on that side, against {sum_before['lean_a']} before the "
-                  f"debate.")
-    elif sum_after["lean_b"] > sum_after["lean_a"]:
-        landed = (f"WHERE THE AIs LANDED: {roles['side_b_label']} - "
-                  f"{sum_after['lean_b']} of the {sum_after['stated']} that answered "
-                  f"finished on that side, against {sum_before['lean_b']} before the "
-                  f"debate.")
+    # The headline, taken from the same helper the video uses so the
+    # description cannot name a different winner.
+    p = verdict_parts(roles, sum_before, sum_after, movement, votes, mean_a, mean_b)
+    if p["winner"]:
+        landed = (f"WINNER: {p['winner']} - this is where the AIs landed once they had "
+                  f"heard both sides. {p['winner_count']} of the {p['stated']} that "
+                  f"answered finished on that side, against {p['winner_before']} before "
+                  f"the debate.")
+        if p["sweep"]:
+            landed += (" A clean sweep: it also shifted the most minds and was marked "
+                       "the better arguer.")
     else:
-        landed = ("WHERE THE AIs LANDED: no clear answer. They finished evenly split, "
-                  "with neither side ahead.")
+        landed = ("WINNER: nobody. The AIs finished evenly split, with neither side "
+                  "ahead.")
     lines = [
         f"QUESTION: {topic}",
         "",
@@ -3581,8 +3648,8 @@ def build_method_note(topic, roles, debaters, judges, poll_roster,
         # The headline first, in the same words the video uses, so the
         # description does not read as three competing results either.
         landed,
-        "Everything below is detail. The two numbers that follow, who shifted the most "
-        "opinion and who the jury marked as the better arguer, are not the answer.",
+        "Everything below is detail. The two results that follow, who shifted the most "
+        "opinion and who the jury marked as the better arguer, do not decide the winner.",
         "",
         f"Before the debate the panel sat at {sum_before['mean']:+.2f} on a scale of -5 to "
         f"+5 ({sum_before['lean_a']} leaning {roles['side_a_label']}, "
@@ -3966,7 +4033,7 @@ def run_debate_pipeline():
     total_turns = ROUNDS * TURNS_PER_SIDE_PER_ROUND * 2
     turns_done = 0
 
-    add_seg(build_intro(topic, len(judges), roles), "MOD", "MODERATOR", count_speech=False)
+    add_seg(build_intro(topic, roles), "MOD", "MODERATOR", count_speech=False)
 
     # Where the panel stands before hearing a word. This is the consensus
     # measurement; the round scorecards measure who argued better.
