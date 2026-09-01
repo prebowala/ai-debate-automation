@@ -264,10 +264,10 @@ PANEL_PROVIDERS = [
 # closes the same way each time. Only the middle of the intro and the result
 # sentence of the outro change with the topic.
 # ---------------------------------------------------------------------------
-CHANNEL_NAME = "the AI Debate Arena"
+CHANNEL_NAME = "Talked Round"
 INTRO_OPENING = (
-    "Welcome to the AI Debate Arena, where two artificial intelligences argue opposite "
-    "sides of the same question, and a jury of other AIs decides who made the better case."
+    "Welcome to Talked Round, where we ask a room full of AIs what they think, get two of "
+    "them to argue it out, then ask again and see which ones got talked round."
 )
 INTRO_RULES = (
     "The two debaters swap sides halfway through, so neither one gets the easier job. And "
@@ -277,7 +277,7 @@ INTRO_RULES = (
 OUTRO_SIGNOFF = (
     "Every round is marked twice, once each way round, and any juror who flip flops is "
     "thrown out. Tell us what you want settled next in the comments, subscribe, and we "
-    "will see you in the ring."
+    "will see you next time."
 )
 
 # ---------------------------------------------------------------------------
@@ -580,7 +580,7 @@ def openrouter_headers():
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
         "Content-Type": "application/json",
         "HTTP-Referer": "https://openrouter.ai/",
-        "X-Title": "AI Debate Arena",
+        "X-Title": CHANNEL_NAME,
     }
 
 
