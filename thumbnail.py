@@ -11,9 +11,18 @@ Two layouts, both from the same episode config:
   split  - the two sources, each with the line it actually says
   clash  - the two lines alone, with the one word that differs picked out
 
-Run it with no arguments to render every episode in EPISODES to thumbs/.
+  python thumbnail.py                    every episode in EPISODES
+  python thumbnail.py genesis-lie        just that one
+  python thumbnail.py who-moved-david \\
+      --tag "2 SAMUEL 24" \\
+      --left  GOD   "THE LORD MOVED DAVID" \\
+      --right SATAN "SATAN PROVOKED DAVID"
+
+The last form needs no edit to this file. Add an episode to EPISODES only
+when you want to keep it around and re-render it later.
 """
 
+import argparse
 import os
 import sys
 
@@ -59,6 +68,27 @@ EPISODES = [
         "clash_highlight": None,
     },
 ]
+
+
+def differing_word(a, b):
+    """The one word that separates two otherwise identical lines.
+
+    The Genesis pair is "you shall surely die" against "you shall not surely
+    die". Lighting up that single word is the whole thumbnail, so it is worth
+    finding rather than typing, and it is only correct when exactly one word
+    differs.
+    """
+    def norm(t):
+        return [w.strip('",.?!;:').upper() for w in t.split()]
+
+    wa, wb = norm(a), norm(b)
+    extra = [w for w in wb if w not in wa]
+    missing = [w for w in wa if w not in wb]
+    if len(extra) == 1 and not missing:
+        return extra[0]
+    if len(missing) == 1 and not extra:
+        return missing[0]
+    return None
 
 
 def font(size, bold=True):
@@ -184,6 +214,8 @@ def render_clash(ep, path):
 
     half = 560
     hl = ep.get("clash_highlight")
+    if hl is None:
+        hl = differing_word(ep["left_line"], ep["right_line"])
     for side, x0, colour in (("left", 40, TEAL), ("right", W - 600, MAGENTA)):
         line = ep[f"{side}_line"]
         f = font(58)
@@ -209,16 +241,60 @@ def render_clash(ep, path):
     return path
 
 
-def main():
+def render(ep):
+    """Both layouts for one episode. Returns the paths written."""
     os.makedirs(OUT_DIR, exist_ok=True)
+    return [
+        render_split(ep, os.path.join(OUT_DIR, f"{ep['slug']}-split.png")),
+        render_clash(ep, os.path.join(OUT_DIR, f"{ep['slug']}-clash.png")),
+    ]
+
+
+def main():
+    ap = argparse.ArgumentParser(
+        description="Render Talked Round thumbnails, 1280x720, two layouts each.",
+        epilog="With no arguments, renders every episode listed in EPISODES.")
+    ap.add_argument("slug", nargs="?",
+                    help="render only this episode from EPISODES")
+    ap.add_argument("--tag", help="the gold badge, e.g. \"GENESIS 3\"")
+    ap.add_argument("--left", nargs=2, metavar=("BIG", "LINE"),
+                    help="teal side: one or two words, then the line it says")
+    ap.add_argument("--right", nargs=2, metavar=("BIG", "LINE"),
+                    help="magenta side: one or two words, then the line it says")
+    ap.add_argument("--highlight", metavar="WORD",
+                    help="word to pick out in gold; found automatically when "
+                         "the two lines differ by exactly one")
+    args = ap.parse_args()
+
+    if args.left or args.right:
+        missing = [n for n, v in (("--tag", args.tag), ("--left", args.left),
+                                  ("--right", args.right), ("slug", args.slug))
+                   if not v]
+        if missing:
+            ap.error("a one-off needs all of: slug, " + ", ".join(
+                m for m in missing if m != "slug") or "")
+        episodes = [{
+            "slug": args.slug,
+            "tag": args.tag,
+            "left_big": args.left[0], "left_line": args.left[1],
+            "right_big": args.right[0], "right_line": args.right[1],
+            "clash_highlight": args.highlight,
+        }]
+    elif args.slug:
+        episodes = [e for e in EPISODES if e["slug"] == args.slug]
+        if not episodes:
+            ap.error(f"no episode named {args.slug!r}. Known: "
+                     + ", ".join(e["slug"] for e in EPISODES))
+    else:
+        episodes = EPISODES
+
     made = []
-    for ep in EPISODES:
-        made.append(render_split(ep, os.path.join(OUT_DIR, f"{ep['slug']}-split.png")))
-        made.append(render_clash(ep, os.path.join(OUT_DIR, f"{ep['slug']}-clash.png")))
-    for p in made:
-        kb = os.path.getsize(p) // 1024
-        print(f"  {p}  ({kb} KB)")
+    for ep in episodes:
+        made += render(ep)
+    for path in made:
+        print(f"  {path}  ({os.path.getsize(path) // 1024} KB)")
     print(f"\n{len(made)} thumbnails at {W}x{H}. YouTube's limit is 2 MB.")
+    return 0
 
 
 if __name__ == "__main__":
