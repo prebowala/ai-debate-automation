@@ -54,7 +54,7 @@ jobs:
         name: Final_Debate_Video
         path: final_debate_output.mp4
 
-    - name: Upload Description And Scores
+    - name: Upload Description, Scores And Thumbnails
       if: always()
       uses: actions/upload-artifact@v4
       with:
@@ -62,4 +62,5 @@ jobs:
         path: |
           video_description.txt
           scores.json
+          thumbs/
         if-no-files-found: warn

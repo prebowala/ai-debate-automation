@@ -3823,6 +3823,82 @@ def insert_chapters(note, chapters):
     return head + "\n\n" + block + "\n\n" + rest
 
 
+def thumbnail_copy(topic, roles, model):
+    """Ask for the few words a thumbnail can carry, with a fallback.
+
+    A thumbnail is read at about two hundred pixels wide, so it lives or dies
+    on two or three words. The run knows the side labels, but those are name
+    card labels: often a whole clause, and sometimes YES and NO, which tells a
+    viewer scrolling past nothing at all. So we ask for the subjects in
+    conflict instead, and for each side's claim in a handful of words.
+
+    Nothing here is presented as a quotation, deliberately. A misremembered
+    verse on a thumbnail would be exactly the kind of invention the rest of
+    this pipeline refuses to make.
+    """
+    prompt = (
+        f'A debate is being staged on this question: "{topic}".\n'
+        f'One side argues {roles["side_a_stance"]}. '
+        f'The other argues {roles["side_b_stance"]}.\n\n'
+        "Write the text for the video thumbnail. Return ONLY JSON:\n"
+        '{"tag":"...","left_big":"...","left_line":"...","right_big":"...",'
+        '"right_line":"..."}\n'
+        "tag: where this comes from, at most three words, all caps. A book and "
+        "chapter if the question is about a passage, otherwise the subject.\n"
+        "left_big and right_big: ONE or TWO words naming the two sides the way a "
+        "viewer would recognise them, all caps. Name the people, books or things "
+        "in conflict, not the answers: GOD and SERPENT, not YES and NO.\n"
+        "left_line and right_line: what each side claims, at most six words, all "
+        "caps. Write them as close to parallel as you can, so a viewer sees where "
+        "they part. Do not quote anything; state the claim in your own words."
+    )
+    for m in [model] + FALLBACK_MODELS[:3]:
+        d = extract_json_object(query_openrouter(
+            prompt, m, timeout=35, max_tokens=250, temperature=0.4,
+            system="You return only valid JSON. No commentary.", min_chars=2))
+        if not d:
+            continue
+        got = {k: _titlecase_label(str(d.get(k, ""))) for k in
+               ("tag", "left_big", "left_line", "right_big", "right_line")}
+        if all(got.values()) and got["left_big"] != got["right_big"]:
+            return got
+
+    # Nothing usable came back: the labels and stances still make a thumbnail.
+    # Cut on whole words, and not on a word that leaves the line dangling. A
+    # line ending "ABOUT WHAT" reads as though the render broke.
+    trailing = {"THE", "A", "AN", "OF", "ABOUT", "THAT", "WHAT", "WHICH", "TO",
+                "IN", "ON", "FOR", "AND", "OR", "WITH", "IS", "WAS", "WOULD"}
+
+    def clip(text, words):
+        parts = _titlecase_label(text).split()[:words]
+        while len(parts) > 2 and parts[-1] in trailing:
+            parts.pop()
+        return " ".join(parts)
+
+    print("  thumbnail copy came from the side labels; no model gave a usable set.")
+    return {
+        "tag": clip(topic, 4),
+        "left_big": roles["side_a_label"],
+        "left_line": clip(roles["side_a_stance"], 6),
+        "right_big": roles["side_b_label"],
+        "right_line": clip(roles["side_b_stance"], 6),
+    }
+
+
+def build_thumbnail(topic, roles, model):
+    """Render both thumbnail layouts for this episode. Never fatal."""
+    try:
+        import thumbnail
+    except Exception as e:
+        print(f"  no thumbnail ({type(e).__name__}: {e}).")
+        return []
+    copy = thumbnail_copy(topic, roles, model)
+    ep = {"slug": "episode", "clash_highlight": None, **copy}
+    made = thumbnail.render(ep)
+    print(f"  {copy['left_big']} / {copy['right_big']}  -  tag {copy['tag']}")
+    return made
+
+
 def build_method_note(topic, roles, debaters, judges, poll_roster,
                       sum_before, sum_after, movement, votes, mean_a=None, mean_b=None):
     """A description-ready statement of what this run actually did."""
@@ -4212,6 +4288,15 @@ def run_debate_pipeline():
     print(f"Sides: {roles['side_a_label']} (Brian, left) vs {roles['side_b_label']} (Ava, right)")
     print(f"  A stance: {roles['side_a_stance']}")
     print(f"  B stance: {roles['side_b_stance']}")
+
+    # Cheap, and written before anything expensive runs, so a failure later
+    # still leaves a thumbnail to upload with whatever else survived.
+    print("\nThumbnail:")
+    try:
+        for path in build_thumbnail(topic, roles, ap_model):
+            print(f"  wrote {path}")
+    except Exception as e:
+        print(f"  no thumbnail this run ({type(e).__name__}: {e}).")
     if resolved_panel:
         judges = pin_panel(resolved_panel, (ap_model, sk_model))
     else:

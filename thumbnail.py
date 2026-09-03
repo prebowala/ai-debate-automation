@@ -106,6 +106,25 @@ def fit(draw, text, max_w, start, floor=28, bold=True):
     return font(floor, bold)
 
 
+def fit_wrapped(draw, text, max_w, max_lines, start, floor=40, bold=True):
+    """Largest size where text fits max_w across at most max_lines lines.
+
+    A side label is sometimes a whole clause. Shrinking such a label to fit on
+    one line makes it unreadable in a feed, and clipping it loses the word that
+    says what the side claims, so it is allowed to wrap instead.
+    """
+    size = start
+    while size > floor:
+        f = font(size, bold)
+        rows = wrap(draw, text, f, max_w)
+        if len(rows) <= max_lines and all(
+                draw.textlength(r, font=f) <= max_w for r in rows):
+            return f, rows
+        size -= 4
+    f = font(floor, bold)
+    return f, wrap(draw, text, f, max_w)
+
+
 def wrap(draw, text, f, max_w):
     lines, line = [], ""
     for word in text.split():
@@ -153,7 +172,7 @@ def base_image(ep):
 
 
 def draw_tag(d, text):
-    f = font(30)
+    f = fit(d, text, 520, 30, floor=18)
     tw = d.textlength(text, font=f)
     d.rounded_rectangle([44, 36, 44 + tw + 44, 36 + 56], radius=8, fill=GOLD)
     d.text((44 + 22, 36 + 28), text, font=f, fill=(12, 16, 26), anchor="lm")
@@ -177,14 +196,19 @@ def render_split(ep, path):
     """Big source name, and underneath it the line that source actually gives."""
     img, d = base_image(ep)
     draw_tag(d, ep["tag"])
-    draw_vs(d)
 
     half = 540
+    # The badge sits between the two labels, so it only goes in when both of
+    # them are single line and there is a gap for it to sit in.
+    probe = ImageDraw.Draw(Image.new("RGB", (1, 1)))
+    if all(len(fit_wrapped(probe, ep[f"{s_}_big"], half - 80, 2, 150, floor=52)[1]) == 1
+           for s_ in ("left", "right")):
+        draw_vs(d)
     for side, x_centre, colour in (("left", 320, TEAL), ("right", 962, MAGENTA)):
         big = ep[f"{side}_big"]
         line = ep[f"{side}_line"]
         # Narrower than the column so the word clears the badge and the edge.
-        fb = fit(d, big, half - 80, 150, floor=60)
+        fb, big_rows = fit_wrapped(d, big, half - 80, 2, 150, floor=52)
 
         fl = font(36)
         rows = wrap(d, line, fl, half - 40)
@@ -194,10 +218,13 @@ def render_split(ep, path):
 
         # Centre the whole block in the space between tag and footer, so the
         # two sides sit level however many lines each of them needs.
-        block = fb.size + 46 + len(rows) * (fl.size + 12)
+        big_h = len(big_rows) * (fb.size + 8)
+        block = big_h + 40 + len(rows) * (fl.size + 12)
         y = (130 + 630) // 2 - block // 2
-        shadowed(d, (x_centre, y + fb.size // 2), big, fb, colour)
-        y += fb.size + 46
+        for row in big_rows:
+            shadowed(d, (x_centre, y + fb.size // 2), row, fb, colour)
+            y += fb.size + 8
+        y += 40
         for row in rows:
             shadowed(d, (x_centre, y + fl.size // 2), row, fl, WHITE, blur=3)
             y += fl.size + 12
