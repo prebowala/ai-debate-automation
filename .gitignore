@@ -13,3 +13,6 @@ bg_*.png
 ui_*.png
 emoji_*.png
 final_debate_output.mp4
+
+# Rendered thumbnails: regenerate with `python thumbnail.py`
+thumbs/
