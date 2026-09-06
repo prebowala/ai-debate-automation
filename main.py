@@ -1793,23 +1793,34 @@ def _poll_once(model, topic, roles, transcript, flip):
     else:
         pos_label, neg_label = roles["side_a_label"], roles["side_b_label"]
 
-    preamble = ""
+    # The two polls must differ only by the transcript. They used to differ in
+    # what they asked as well: the opening one asked a model where it
+    # personally stood on a question cold, and the closing one asked it to
+    # assess a debate it had just read. On a doctrinal question the first is
+    # the kind of thing a model is trained to decline and the second is not,
+    # so most of the panel refused before the debate and none refused after,
+    # and the before and after counts were never measuring the same thing.
     if transcript:
         preamble = (f"Here is the full transcript of a debate on this question.\n\n"
                     f"{transcript[:14000]}\n\n"
-                    "Having read it, answer for yourself.\n\n")
+                    f"Weigh it up along with whatever else you know.\n\n")
+    else:
+        preamble = "Weigh up what you know about this question.\n\n"
 
     prompt = (
         f"{preamble}"
         f"Question: {topic}\n\n"
-        f"Where do you personally stand? Give a whole number from -{POLL_SCALE} to "
-        f"+{POLL_SCALE}, where +{POLL_SCALE} means you are confident that "
-        f"{pos_label} is correct, -{POLL_SCALE} means you are confident that "
-        f"{neg_label} is correct, and 0 means you genuinely have no lean either way.\n"
-        "This is your own view, not a summary of what others think.\n"
-        "If you are unwilling to take any position on this question, set position to null "
-        "instead of picking a number. That is a legitimate answer and will be reported "
-        "as such.\n"
+        f"Which way do you come down? Give a whole number from -{POLL_SCALE} to "
+        f"+{POLL_SCALE}, where +{POLL_SCALE} means you judge {pos_label} clearly "
+        f"correct, -{POLL_SCALE} means you judge {neg_label} clearly correct, and 0 "
+        f"means you weighed it and can see no reason to prefer either.\n"
+        "This is your own assessment, not a report of what most people believe and not "
+        "a summary of the arguments on each side.\n"
+        # Naming what each answer means, so a genuine tie and a refusal to
+        # engage do not both end up as null and get read as the same thing.
+        "Use 0 if you weighed it and it came out even. Use null only if you cannot "
+        "assess it at all, not merely because the subject is contested or because you "
+        "would rather not have a view. Either answer is reported honestly.\n"
         'Return ONLY JSON: {"position": 0, "confidence": 0, '
         '"comment": "one plain sentence saying why"}'
     )
@@ -1817,6 +1828,15 @@ def _poll_once(model, topic, roles, transcript, flip):
                             system="You return only valid JSON. No commentary.",
                             min_chars=2)
     d = extract_json_object(resp)
+    if d is None:
+        # No usable JSON is a formatting failure, not a refusal, so it is worth
+        # one more go. An explicit null is a real answer and is never retried:
+        # pressing a model that declined would be manufacturing the data.
+        resp = query_openrouter(prompt + "\n\nReturn the JSON object and nothing else.",
+                                model, timeout=60, max_tokens=300, temperature=0.0,
+                                system="You return only valid JSON. No commentary.",
+                                min_chars=2)
+        d = extract_json_object(resp)
     if d is None:
         return None
     if "position" not in d or d.get("position") is None:
@@ -3995,7 +4015,18 @@ def build_method_note(topic, roles, debaters, judges, poll_roster,
         f"{sum_before['lean_b']} leaning {roles['side_b_label']}, "
         f"{sum_before['undecided']} undecided, {sum_before['declined']} declined).",
         f"After reading the debate it sat at {sum_after['mean']:+.2f}, a shift of "
-        f"{swing:+.2f}.",
+        f"{swing:+.2f} ({sum_after['lean_a']} leaning {roles['side_a_label']}, "
+        f"{sum_after['lean_b']} leaning {roles['side_b_label']}, "
+        f"{sum_after['undecided']} undecided, {sum_after['declined']} declined).",
+        # The two polls are only comparable if the same models answered both.
+        # When they did not, say so here rather than leaving a reader to work
+        # it out from two counts twenty words apart.
+        (f"NOTE: {sum_before['stated']} models gave a position before the debate and "
+         f"{sum_after['stated']} after, so the two counts are not measuring the same "
+         f"panel. Movement below is over the {movement.get('compared', 0)} that "
+         f"answered both times."
+         if sum_before["stated"] != sum_after["stated"] else
+         f"The same {sum_after['stated']} models answered both times."),
         f"{moved} model(s) changed position: {movement['toward_a']} toward "
         f"{roles['side_a_label']}, {movement['toward_b']} toward "
         f"{roles['side_b_label']}, {movement['unchanged']} unmoved."
@@ -4570,6 +4601,10 @@ def run_debate_pipeline():
         stance = "declined" if r["declined"] else f"{r['position']:+.1f}"
         print(f"    {r['display_name']}: {stance}")
     swing = sum_after["mean"] - sum_before["mean"]
+    if sum_before["stated"] != sum_after["stated"]:
+        print(f"  NOTE: {sum_before['stated']} answered the opening poll and "
+              f"{sum_after['stated']} the closing one. Before and after are not the "
+              f"same panel; movement is over the models common to both.")
     print(f"  Closing: {describe_poll(sum_after, roles)}; mean {sum_after['mean']:+.2f} "
           f"(swing {swing:+.2f})")
     movement = poll_movement(poll_before, poll_after)
