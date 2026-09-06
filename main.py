@@ -2880,18 +2880,21 @@ def generate_verdict_board(path, topic, roles, before, after, movement, votes,
     else:
         marked = f"On the arguing itself the jury could not split them, {votes['A']} all."
 
-    if p["soft"]:
-        closer = (f"A direction, not a majority: {p['undecided']} of the {stated} would "
-                  f"not pick a side at all.")
-    elif not room:
-        closer = "Neither of those would have settled it either."
+    # A soft result needs both notes: that neither side note decides it, and
+    # that the headline itself is a lean. Saying only the second used to drop
+    # the first exactly when a viewer is most likely to conflate them.
+    if not room:
+        closers = ["Neither of those would have settled it either."]
     elif p["sweep"]:
-        closer = "Both of those went the winner's way as well, so it is a clean sweep."
+        closers = ["Both of those went the winner's way as well, so it is a clean sweep."]
     else:
-        closer = "Neither of those decides the winner."
+        closers = ["Neither of those decides the winner."]
+    if p["soft"]:
+        closers.append(f"And the winner is a lean, not a majority: {p['undecided']} of "
+                       f"the {stated} would not pick a side at all.")
 
     y = 640
-    for line in (shifted, marked, closer):
+    for line in [shifted, marked] + closers:
         lf = _fit_font(draw, line, hx1 - hx0, 28, floor=19, bold=False)
         draw.text((W // 2, y), line, font=lf, fill=(200, 205, 215), anchor="mt")
         y += 40
