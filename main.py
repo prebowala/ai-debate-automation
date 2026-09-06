@@ -1946,7 +1946,11 @@ def poll_movement(before, after):
         if prev["position"] * r["position"] < 0:
             crossed.append(r["display_name"])
     return {"toward_a": toward_a, "toward_b": toward_b,
-            "unchanged": unchanged, "crossed": crossed}
+            "unchanged": unchanged, "crossed": crossed,
+            # Only models that gave a position both times can be compared. Say
+            # how many that was: "nobody changed their mind" means very little
+            # if it was measured over two of them.
+            "compared": toward_a + toward_b + unchanged}
 
 
 def poll_summary(results):
@@ -2786,8 +2790,8 @@ def generate_verdict_board(path, topic, roles, before, after, movement, votes,
               fill=room_colour, anchor="mt")
 
     if room:
-        detail = (f"where the AIs landed: {p['winner_count']} of the {stated} "
-                  f"finished on this side")
+        detail = (f"{p['winner_count']} picked this side, {p['loser_count']} the other, "
+                  f"{p['undecided']} would not pick")
     else:
         detail = f"the {stated} AIs finished evenly split, with neither side ahead"
     draw.text(((hx0 + hx1) // 2, hy0 + 226), detail, font=load_font(34),
@@ -2805,20 +2809,35 @@ def generate_verdict_board(path, topic, roles, before, after, movement, votes,
     draw.text((bar_x + bar_w, hy0 + 288), roles["side_b_label"],
               font=_fit_font(draw, roles["side_b_label"], half, 24, floor=15, bold=False),
               fill=B_COL, anchor="rt")
+    # Each bar is drawn to the size of its own panel. Stretching both to the
+    # full width made a poll that only two labs answered look the same size as
+    # one that seven answered, so the change between them read as minds moving
+    # when it was mostly more of them answering.
+    widest = max(1, before.get("stated", 0), after.get("stated", 0))
     for i, (tag, poll) in enumerate((("BEFORE", before), ("AFTER", after))):
         y = hy0 + 322 + i * 62
+        total = poll["lean_a"] + poll["undecided"] + poll["lean_b"]
         draw.text((bar_x - 24, y + 22), tag, font=load_font(24, bold=True),
                   fill=(190, 198, 220), anchor="rm")
-        _draw_split_bar(draw, bar_x, y, bar_w, 44,
+        this_w = max(60, int(bar_w * total / widest))
+        _draw_split_bar(draw, bar_x, y, this_w, 44,
                         [poll["lean_a"], poll["undecided"], poll["lean_b"]],
                         [A_COL, N_COL, B_COL], fnum)
+        if total < widest:
+            draw.text((bar_x + this_w + 16, y + 22),
+                      f"only {total} answered", font=load_font(22),
+                      fill=(150, 158, 180), anchor="lm")
 
     # ---- Everything below is a plain line of text, in one colour.
     # These used to be two coloured boxes with a side's name in each, which
     # read as two more verdicts competing with the one above. They are
     # sentences now, in the same grey as the rest of the small print.
     if p["moved"] == 0:
-        shifted = "Nobody shifted anybody: not one AI changed its mind."
+        n = p["compared"]
+        shifted = (f"Nobody shifted anybody: of the {n} that gave a position both "
+                   f"times, not one changed its mind."
+                   if n else
+                   "Nobody could be tracked: no AI gave a usable position both times.")
     elif p["persuader"]:
         shifted = (f"Shifted the most minds: {p['persuader']}, with "
                    f"{p['persuader_count']} of the {stated} moving their way.")
@@ -2841,7 +2860,10 @@ def generate_verdict_board(path, topic, roles, before, after, movement, votes,
     else:
         marked = f"On the arguing itself the jury could not split them, {votes['A']} all."
 
-    if not room:
+    if p["soft"]:
+        closer = (f"A direction, not a majority: {p['undecided']} of the {stated} would "
+                  f"not pick a side at all.")
+    elif not room:
         closer = "Neither of those would have settled it either."
     elif p["sweep"]:
         closer = "Both of those went the winner's way as well, so it is a clean sweep."
@@ -3642,10 +3664,13 @@ def verdict_parts(roles, before, after, movement, votes, mean_a, mean_b):
 
     if after["lean_a"] > after["lean_b"]:
         winner, w_now, w_was = a, after["lean_a"], (before or {}).get("lean_a")
+        l_now = after["lean_b"]
     elif after["lean_b"] > after["lean_a"]:
         winner, w_now, w_was = b, after["lean_b"], (before or {}).get("lean_b")
+        l_now = after["lean_a"]
     else:
         winner, w_now, w_was = None, max(after["lean_a"], after["lean_b"]), None
+        l_now = w_now
 
     moved = movement["toward_a"] + movement["toward_b"]
     if moved == 0:
@@ -3670,8 +3695,15 @@ def verdict_parts(roles, before, after, movement, votes, mean_a, mean_b):
     return {
         "winner": winner,
         "winner_count": w_now,
+        "loser_count": l_now,
         "winner_before": w_was,
+        "undecided": after.get("undecided", 0),
         "stated": after.get("stated", 0),
+        "stated_before": (before or {}).get("stated"),
+        "compared": movement.get("compared", 0),
+        # A win where more of the room sat on the fence than picked the winning
+        # side is a direction, not a majority, and must not be shown as one.
+        "soft": bool(winner and after.get("undecided", 0) >= w_now),
         "persuader": persuader,
         "persuader_count": p_count,
         "moved": moved,
@@ -3703,7 +3735,11 @@ def build_outro(mean_a, mean_b, votes_a, votes_b, votes_t, votes_u, roles,
         if winner:
             lines.append(f"So here is the answer. After hearing both sides, the AIs land "
                          f"on {winner}. {p['winner_count']} of the {p['stated']} of them "
-                         f"finished there.")
+                         f"finished there, against {p['loser_count']} the other way.")
+            if p["soft"]:
+                lines.append(f"Worth saying plainly: {p['undecided']} of them would not "
+                             f"pick a side at all, so this is a direction rather than a "
+                             f"majority.")
         else:
             lines.append("So here is the answer, and it is that there isn't one. The AIs "
                          "finished split down the middle, with neither side ahead.")
@@ -3732,7 +3768,15 @@ def build_outro(mean_a, mean_b, votes_a, votes_b, votes_t, votes_u, roles,
             lines.append(f"First, {persuader} shifted the most minds, bringing "
                          f"{p['persuader_count']} of them round.")
     elif p["moved"] == 0:
-        lines.append("First, nobody shifted anybody. Not one of them changed its mind.")
+        # Say what that was measured over. Only models that gave a position
+        # both times can be compared, and on a question most of them declined
+        # the first time, that can be very few.
+        n = p["compared"]
+        lines.append(
+            f"First, nobody shifted anybody. Of the {n} that gave us a position both "
+            f"times, not one changed its mind." if n else
+            "First, we cannot say whether anyone shifted. Not one AI gave us a usable "
+            "position both before and after.")
     else:
         lines.append(f"First, neither side shifted more minds than the other. "
                      f"{sentence_case(number_word(p['moved']))} of them moved, and they "
@@ -3775,6 +3819,9 @@ def build_outro(mean_a, mean_b, votes_a, votes_b, votes_t, votes_u, roles,
         lines.append(f"So the winner tonight is {winner}. {persuader} pulled more of them "
                      f"across, but not enough, and {winner} is still where the AIs ended "
                      f"up.")
+    elif p["soft"]:
+        lines.append(f"So {winner} takes it, on the votes of the ones that would vote. "
+                     f"Call that a lean rather than a verdict.")
     else:
         lines.append(f"So the winner tonight is {winner}. That is where the AIs ended up "
                      f"once they had heard both sides.")
@@ -3914,6 +3961,11 @@ def build_method_note(topic, roles, debaters, judges, poll_roster,
                   f"heard both sides. {p['winner_count']} of the {p['stated']} that "
                   f"answered finished on that side, against {p['winner_before']} before "
                   f"the debate.")
+        landed += (f" {p['loser_count']} finished on the other side and "
+                   f"{p['undecided']} would not pick one.")
+        if p["soft"]:
+            landed += (" More of them declined to pick a side than picked the winning "
+                       "one, so this is a direction rather than a majority.")
         if p["sweep"]:
             landed += (" A clean sweep: it also shifted the most minds and was marked "
                        "the better arguer.")
